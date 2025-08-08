@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YZSocialC - DHT Network</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 12px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            margin: 0;
+            font-size: 2.5em;
+            font-weight: 700;
+        }
+        
+        .header p {
+            margin: 10px 0 0 0;
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+        
+        .main-content {
+            padding: 30px;
+        }
+        
+        .status-bar {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 30px;
+            border-left: 4px solid #28a745;
+        }
+        
+        .status-item {
+            display: inline-block;
+            margin-right: 30px;
+            font-weight: 500;
+        }
+        
+        .status-value {
+            color: #007bff;
+            font-weight: 700;
+        }
+        
+        #node-id {
+            font-family: monospace;
+            font-size: 12px;
+            word-break: break-all;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .card-header {
+            background: #495057;
+            color: white;
+            padding: 15px 20px;
+            font-weight: 600;
+            font-size: 1.1em;
+        }
+        
+        .card-body {
+            padding: 20px;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 14px;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #007bff, #0056b3);
+            color: white;
+        }
+        
+        .btn-success {
+            background: linear-gradient(135deg, #28a745, #1e7e34);
+            color: white;
+        }
+        
+        .btn-warning {
+            background: linear-gradient(135deg, #ffc107, #e0a800);
+            color: #212529;
+        }
+        
+        .btn-danger {
+            background: linear-gradient(135deg, #dc3545, #c82333);
+            color: white;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(0,0,0,0.2);
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .form-control {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #e9ecef;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.3s ease;
+        }
+        
+        .form-control:focus {
+            outline: none;
+            border-color: #007bff;
+            box-shadow: 0 0 0 3px rgba(0,123,255,0.1);
+        }
+        
+        .log-container {
+            grid-column: 1 / -1;
+        }
+        
+        .log-output {
+            background: #2d3748;
+            color: #e2e8f0;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 13px;
+            padding: 20px;
+            height: 300px;
+            overflow-y: auto;
+            border-radius: 6px;
+            line-height: 1.5;
+        }
+        
+        .log-entry {
+            margin-bottom: 5px;
+            word-break: break-word;
+        }
+        
+        .log-timestamp {
+            color: #a0aec0;
+            margin-right: 10px;
+        }
+        
+        .log-level-info { color: #63b3ed; }
+        .log-level-warn { color: #f6e05e; }
+        .log-level-error { color: #fc8181; }
+        .log-level-success { color: #68d391; }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        
+        .stat-item {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 6px;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 2em;
+            font-weight: 700;
+            color: #007bff;
+            display: block;
+        }
+        
+        .stat-label {
+            font-size: 0.9em;
+            color: #6c757d;
+            margin-top: 5px;
+        }
+        
+        .peer-list {
+            max-height: 200px;
+            overflow-y: auto;
+            background: #f8f9fa;
+            border-radius: 6px;
+            padding: 10px;
+        }
+        
+        .peer-item {
+            padding: 8px 12px;
+            background: white;
+            margin-bottom: 5px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .peer-id {
+            flex: 1;
+            word-break: break-all;
+            font-size: 11px;
+        }
+        
+        .peer-status {
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        
+        .peer-status.connected {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .peer-status.connecting {
+            background: #fff3cd;
+            color: #856404;
+        }
+        
+        .peer-status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #007bff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .wasm-container {
+            background: #fff;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
+            border: 2px dashed #dee2e6;
+            text-align: center;
+            min-height: 200px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+        }
+        
+        .wasm-placeholder {
+            color: #6c757d;
+            font-style: italic;
+        }
+        
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .controls {
+                flex-direction: column;
+            }
+            
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>YZSocialC</h1>
+            <p>Browser-based Kademlia DHT with WebRTC</p>
+        </div>
+        
+        <div class="main-content">
+            <div class="status-bar">
+                <div class="status-item">
+                    <span>Status: </span>
+                    <span class="status-value" id="dht-status">Initializing...</span>
+                </div>
+                <div class="status-item">
+                    <span>Node ID: </span>
+                    <span class="status-value" id="node-id">-</span>
+                </div>
+                <div class="status-item">
+                    <span>Peers: </span>
+                    <span class="status-value" id="peer-count">0</span>
+                </div>
+                <div class="status-item">
+                    <span>Storage: </span>
+                    <span class="status-value" id="storage-count">0</span>
+                </div>
+            </div>
+            
+            <div class="grid">
+                <div class="card">
+                    <div class="card-header">DHT Operations</div>
+                    <div class="card-body">
+                        <div class="controls">
+                            <button class="btn btn-primary" id="start-dht">
+                                <span class="loading" id="start-loading" style="display: none;"></span>
+                                Start DHT
+                            </button>
+                            <button class="btn btn-danger" id="stop-dht" disabled>Stop DHT</button>
+                        </div>
+                        
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="store-key" placeholder="Key">
+                            <input type="text" class="form-control" id="store-value" placeholder="Value">
+                            <button class="btn btn-success" id="store-btn">Store</button>
+                        </div>
+                        
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="get-key" placeholder="Key to retrieve">
+                            <button class="btn btn-warning" id="get-btn">Get</button>
+                        </div>
+                        
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="invite-node-id" placeholder="Node ID to invite to DHT">
+                            <button class="btn btn-info" id="invite-btn" style="background: linear-gradient(135deg, #20c997, #17a2b8);">Invite</button>
+                        </div>
+                        
+                        <div class="controls">
+                            <button class="btn btn-primary" id="debug-connection-btn" style="background: linear-gradient(135deg, #6f42c1, #563d7c);">Check DHT Signaling</button>
+                            <button class="btn btn-primary" id="debug-phantom-btn" style="background: linear-gradient(135deg, #e83e8c, #c2185b);">Force Peer Discovery</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-header">Network Statistics</div>
+                    <div class="card-body">
+                        <div class="stats-grid">
+                            <div class="stat-item">
+                                <span class="stat-value" id="stat-total-peers">0</span>
+                                <div class="stat-label">Total Peers</div>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-value" id="stat-connected-peers">0</span>
+                                <div class="stat-label">Connected</div>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-value" id="stat-routing-table">0</span>
+                                <div class="stat-label">Routing Table</div>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-value" id="stat-storage-items">0</span>
+                                <div class="stat-label">Stored Items</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-header">Connected Peers</div>
+                    <div class="card-body">
+                        <div class="peer-list" id="peer-list">
+                            <div class="wasm-placeholder">No peers connected</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-header">WebAssembly UI</div>
+                    <div class="card-body">
+                        <div class="wasm-container" id="wasm-container">
+                            <div class="wasm-placeholder">
+                                <strong>WebAssembly UI Component</strong><br>
+                                Advanced DHT visualization and controls will be loaded here
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card log-container">
+                    <div class="card-header">
+                        Activity Log
+                        <button class="btn btn-primary" id="clear-log" style="float: right; padding: 6px 12px; font-size: 12px;">Clear</button>
+                    </div>
+                    <div class="card-body" style="padding: 0;">
+                        <div class="log-output" id="log-output"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- WebAssembly module will be injected here -->
+    <script id="wasm-loader"></script>
+    
+    <!-- Main application bundle -->
+    <script src="bundle.js"></script>
+</body>
+</html>
