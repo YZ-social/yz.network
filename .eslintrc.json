@@ -1,0 +1,45 @@
+{
+  "env": {
+    "browser": true,
+    "es2021": true,
+    "node": true
+  },
+  "extends": [
+    "eslint:recommended"
+  ],
+  "parserOptions": {
+    "ecmaVersion": 2022,
+    "sourceType": "module"
+  },
+  "rules": {
+    "no-console": "off",
+    "no-unused-vars": "warn",
+    "no-undef": "error",
+    "semi": "off",
+    "quotes": "off",
+    "indent": "off",
+    "no-constant-condition": "warn",
+    "no-empty": "warn"
+  },
+  "globals": {
+    "window": "readonly",
+    "document": "readonly",
+    "navigator": "readonly",
+    "WebSocket": "readonly",
+    "RTCPeerConnection": "readonly",
+    "RTCDataChannel": "readonly",
+    "RTCSessionDescription": "readonly",
+    "RTCIceCandidate": "readonly",
+    "global": "readonly",
+    "process": "readonly",
+    "Buffer": "readonly",
+    "jest": "readonly",
+    "describe": "readonly",
+    "test": "readonly",
+    "expect": "readonly",
+    "beforeEach": "readonly",
+    "afterEach": "readonly",
+    "beforeAll": "readonly",
+    "afterAll": "readonly"
+  }
+}

@@ -117,5 +117,4 @@ global.console = {
   error: originalConsole.error // Always show errors
 };
 
-// Test timeout configuration
-jest.setTimeout(10000);
+// Test timeout configured in jest.config.js
