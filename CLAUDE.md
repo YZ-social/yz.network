@@ -24,6 +24,7 @@ npm install
 - `npm run dev` - Start development server with hot reload
 - `npm run build` - Build for production
 - `npm run bootstrap` - Start bootstrap server for peer discovery
+- `npm run bootstrap:genesis` - Start bootstrap server in genesis mode
 - `npm test` - Run tests
 - `npm run lint` - Run ESLint
 - `npm run clean` - Clean build artifacts
@@ -33,6 +34,8 @@ npm install
 - `npm run cleanup` - Alias for shutdown
 - `npm run kill-ports` - Kill processes on default ports
 - `npm run restart` - Shutdown and restart bootstrap server
+- `npm run restart:genesis` - Shutdown and restart bootstrap server in genesis mode
+- `npm run start-all` - Start all services
 
 **Bootstrap Server:**
 - `node src/bootstrap/server.js` - Start signaling server on port 8080
@@ -51,6 +54,7 @@ npm install
 **Core Classes (`src/core/`):**
 - `DHTNodeId.js` - 160-bit node identifiers with XOR distance calculations
 - `DHTNode.js` - Represents peers in the DHT network
+- `DHTDataID.js` - Data identifiers for DHT storage
 - `KBucket.js` - K-bucket implementation for routing table
 - `InvitationToken.js` - Cryptographic chain-of-trust token system for secure peer invitations
 
@@ -136,7 +140,7 @@ npm install
 
 **Architecture Decisions:**
 - Uses native WebRTC API with Perfect Negotiation Pattern for maximum control and reliability
-- Moved away from SimplePeer and PeerJS to eliminate external dependencies and improve collision handling
+- Migrated away from SimplePeer and PeerJS to eliminate external dependencies and improve collision handling
 - **Hybrid Signaling Architecture**: Bootstrap signaling for new clients, direct DHT messaging for existing members
 - **Message Queue System**: Ordered processing prevents race conditions and ensures reliable message delivery
 - **DHT-Based Message Routing**: Multi-hop message delivery through existing DHT connections
