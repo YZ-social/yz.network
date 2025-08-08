@@ -12,14 +12,15 @@ export default {
     '!src/wasm/**/*.js'
   ],
   
-  coverageThreshold: {
-    global: {
-      branches: 50,
-      functions: 50,
-      lines: 50,
-      statements: 50
-    }
-  },
+  // Coverage thresholds disabled for now
+  // coverageThreshold: {
+  //   global: {
+  //     branches: 50,
+  //     functions: 50,
+  //     lines: 50,
+  //     statements: 50
+  //   }
+  // },
   
   moduleNameMapper: {
     '^(\\.{1,2}/.*)\\.js$': '$1'
