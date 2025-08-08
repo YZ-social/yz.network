@@ -1652,6 +1652,7 @@ export class KademliaDHT extends EventEmitter {
       const peerId = node.id.toString();
       const isConnected = this.webrtc.isConnected(peerId);
       if (!isConnected) {
+        // Node not connected, but we still track it as a potential contact
       }
       return isConnected;
     });
@@ -1680,7 +1681,7 @@ export class KademliaDHT extends EventEmitter {
 
     const results = await Promise.allSettled(storePromises);
     const successes = results.filter(r => r.status === 'fulfilled').length;
-    const failures = results.filter(r => r.status === 'rejected');
+    // const failures = results.filter(r => r.status === 'rejected');
     
     
     // Add to republish queue
@@ -1922,7 +1923,7 @@ export class KademliaDHT extends EventEmitter {
               }
             }
             return discoveredNodes;
-          }).catch(error => {
+          }).catch(_error => {
             // Suppress individual bucket refresh errors
           })
         );
@@ -1981,7 +1982,7 @@ export class KademliaDHT extends EventEmitter {
             }
           }
           return discoveredNodes;
-        }).catch(error => {
+        }).catch(_error => {
         })
       );
       

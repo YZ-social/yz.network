@@ -446,7 +446,7 @@ export class BootstrapClient extends EventEmitter {
     this.isDestroyed = true;
 
     // Clear pending requests
-    for (const [requestId, request] of this.pendingRequests.entries()) {
+    for (const [_requestId, request] of this.pendingRequests.entries()) {
       clearTimeout(request.timeout);
       request.reject(new Error('BootstrapClient destroyed'));
     }

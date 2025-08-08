@@ -1,4 +1,4 @@
-import { DHTNodeId } from './DHTNodeId.js';
+// import { DHTNodeId } from './DHTNodeId.js';
 
 /**
  * Represents a K-bucket in the Kademlia routing table
@@ -168,7 +168,7 @@ export class KBucket {
    * Get bucket statistics
    */
   getStats() {
-    const now = Date.now();
+    // const now = Date.now();
     return {
       size: this.nodes.length,
       capacity: this.k,

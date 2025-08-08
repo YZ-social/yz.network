@@ -209,7 +209,7 @@ export class RoutingTable {
   /**
    * Check if a bucket can be split
    */
-  canSplitBucket(bucketIndex, nodeId) {
+  canSplitBucket(bucketIndex, _nodeId) {
     const bucket = this.buckets[bucketIndex];
     
     // Can only split if bucket is full and it's the bucket that contains our local node
@@ -281,7 +281,7 @@ export class RoutingTable {
    * Get routing table statistics
    */
   getStats() {
-    const bucketStats = this.buckets.map((bucket, index) => bucket.getStats());
+    const bucketStats = this.buckets.map((bucket, _index) => bucket.getStats());
     const allNodes = this.getAllNodes();
     
     return {
