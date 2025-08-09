@@ -10,6 +10,8 @@
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
     "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
+    "test:network": "node test/local/dht-network-test.js",
+    "test:concept": "node test/local/basic-dht-concept-test.js",
     "bootstrap": "node src/bootstrap/server.js",
     "bootstrap:genesis": "node src/bootstrap/server.js -createNewDHT",
     "lint": "eslint src/**/*.js",
@@ -24,7 +26,8 @@
   "dependencies": {
     "@noble/ed25519": "^2.0.0",
     "crypto-js": "^4.2.0",
-    "events": "^3.3.0"
+    "events": "^3.3.0",
+    "werift": "^0.20.0"
   },
   "devDependencies": {
     "@babel/core": "^7.23.0",

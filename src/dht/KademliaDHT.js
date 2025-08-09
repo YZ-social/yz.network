@@ -613,7 +613,26 @@ export class KademliaDHT extends EventEmitter {
         publicKey: this.keyPair?.publicKey,
         isNative: this.keyPair?.isNative
       });
-      console.log(`✅ Temporarily reconnected to bootstrap for invitation`);
+      
+      // CRITICAL FIX: Wait for registration to complete before sending invitation
+      console.log(`⏳ Waiting for registration confirmation from bootstrap server...`);
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          this.bootstrap.removeListener('registered', onRegistered);
+          reject(new Error('Registration timeout - bootstrap server did not confirm registration'));
+        }, 5000); // 5 second timeout for registration
+        
+        const onRegistered = (message) => {
+          console.log(`✅ Registration confirmed by bootstrap server`);
+          clearTimeout(timeout);
+          this.bootstrap.removeListener('registered', onRegistered);
+          resolve();
+        };
+        
+        this.bootstrap.once('registered', onRegistered);
+      });
+      
+      console.log(`✅ Temporarily reconnected to bootstrap for invitation with registration confirmed`);
     } catch (error) {
       console.error(`❌ Failed to reconnect to bootstrap for invitation:`, error);
       throw error;

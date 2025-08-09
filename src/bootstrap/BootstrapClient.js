@@ -23,6 +23,7 @@ export class BootstrapClient extends EventEmitter {
     this.localNodeId = null;
     this.pendingRequests = new Map(); // requestId -> { resolve, reject, timeout }
     this.isDestroyed = false;
+    this.deliberateDisconnect = false; // Track if disconnect was intentional
   }
 
   /**
@@ -84,7 +85,14 @@ export class BootstrapClient extends EventEmitter {
           
           if (!this.isDestroyed) {
             this.emit('disconnected', { code: event.code, reason: event.reason });
-            this.scheduleReconnect();
+            
+            // Only auto-reconnect if this wasn't a deliberate disconnect
+            if (!this.deliberateDisconnect) {
+              this.scheduleReconnect();
+            } else {
+              console.log('Deliberate disconnect - not auto-reconnecting');
+              this.deliberateDisconnect = false; // Reset flag
+            }
           }
         };
 
@@ -430,6 +438,7 @@ export class BootstrapClient extends EventEmitter {
    */
   disconnect() {
     if (this.ws) {
+      this.deliberateDisconnect = true; // Mark as intentional disconnect
       this.ws.close(1000, 'Manual disconnect');
       this.ws = null;
     }

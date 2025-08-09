@@ -54,6 +54,26 @@ export class InvitationToken {
     try {
       // Dynamic import for code splitting
       this._nobleEd25519 = await import('@noble/ed25519');
+      
+      // Configure for Node.js environment
+      if (typeof process !== 'undefined' && process.versions && process.versions.node) {
+        const crypto = await import('crypto');
+        if (this._nobleEd25519.ed25519) {
+          // Handle both named and default exports
+          const ed25519 = this._nobleEd25519.ed25519 || this._nobleEd25519;
+          if (ed25519.etc && !ed25519.etc.sha512Sync) {
+            ed25519.etc.sha512Sync = (...m) => crypto.createHash('sha512').update(Buffer.concat(m)).digest();
+            console.log('🔧 Configured ed25519 for Node.js environment');
+          }
+        } else {
+          // Direct access to the library
+          if (this._nobleEd25519.etc && !this._nobleEd25519.etc.sha512Sync) {
+            this._nobleEd25519.etc.sha512Sync = (...m) => crypto.createHash('sha512').update(Buffer.concat(m)).digest();
+            console.log('🔧 Configured ed25519 for Node.js environment');
+          }
+        }
+      }
+      
       console.log('📚 Loaded @noble/ed25519 library for crypto operations');
       return this._nobleEd25519;
     } catch (error) {
