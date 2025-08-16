@@ -284,14 +284,14 @@ export class BootstrapClient extends EventEmitter {
   /**
    * Send invitation token via bootstrap server
    */
-  async sendInvitation(inviteeNodeId, invitationToken) {
+  async sendInvitation(inviteeNodeId, invitationToken, timeout = 30000) {
     try {
       const response = await this.sendRequest({
         type: 'send_invitation',
         targetPeerId: inviteeNodeId,  // Changed from inviteeNodeId to match server expectation
         invitationToken,
         inviterNodeId: this.localNodeId
-      });
+      }, timeout);
       
       return { success: true, data: response };
     } catch (error) {

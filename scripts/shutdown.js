@@ -2,6 +2,7 @@
 
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { PIDRegistry } from './pid-registry.js';
 
 const execAsync = promisify(exec);
 
@@ -12,6 +13,7 @@ class ServerShutdown {
   constructor() {
     this.ports = [3000, 8080, 8081]; // Dev server, bootstrap, fallback bootstrap
     this.isWindows = process.platform === 'win32';
+    this.pidRegistry = new PIDRegistry();
   }
 
   /**
@@ -86,7 +88,16 @@ class ServerShutdown {
     
     let killedAny = false;
 
-    // Kill processes by port
+    // First, kill all tracked processes from PID registry
+    console.log('\n📋 Checking PID registry for tracked processes...');
+    const trackedKilled = await this.pidRegistry.killAll();
+    if (trackedKilled > 0) {
+      console.log(`✅ Killed ${trackedKilled} tracked processes`);
+      killedAny = true;
+    }
+
+    // Then kill processes by port (for any untracked processes)
+    console.log('\n📡 Checking ports for untracked processes...');
     for (const port of this.ports) {
       console.log(`\n📡 Checking port ${port}...`);
       
@@ -97,12 +108,12 @@ class ServerShutdown {
         continue;
       }
 
-      console.log(`  🎯 Found ${pids.length} process(es) on port ${port}: ${pids.join(', ')}`);
+      console.log(`  🎯 Found ${pids.length} untracked process(es) on port ${port}: ${pids.join(', ')}`);
       
       for (const pid of pids) {
         const success = await this.killProcess(pid);
         if (success) {
-          console.log(`  ✓ Killed process ${pid}`);
+          console.log(`  ✓ Killed untracked process ${pid}`);
           killedAny = true;
         }
       }
@@ -125,9 +136,10 @@ class ServerShutdown {
     if (!allFree) {
       console.log('\n💥 Some ports still occupied. Using nuclear option...');
       await this.killAllNodeProcesses();
+      killedAny = true;
     }
 
-    if (killedAny || !allFree) {
+    if (killedAny) {
       console.log('\n✅ Shutdown complete! All servers stopped.');
     } else {
       console.log('\n✅ No servers were running.');

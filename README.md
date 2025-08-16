@@ -4,11 +4,13 @@ A browser-based Distributed Hash Table (DHT) implementation using the Kademlia a
 
 ## Features
 
-- **Kademlia DHT**: Complete implementation with k-buckets and XOR distance routing
-- **Native WebRTC**: Direct peer-to-peer connections using Perfect Negotiation Pattern
+- **Kademlia DHT**: Literature-compliant implementation with adaptive refresh and k-buckets
+- **Native WebRTC**: Direct peer-to-peer connections with Perfect Negotiation Pattern and keep-alive
 - **Minimal Server Dependency**: Bootstrap server only for initial peer discovery
 - **Chain of Trust Security**: Cryptographic invitation tokens prevent unauthorized access
-- **DHT-Based Signaling**: WebRTC negotiation through DHT storage after initial connection
+- **DHT-Based Signaling**: Complete WebRTC negotiation through DHT messaging with signal handling
+- **Adaptive Performance**: 15s refresh for new nodes, 10min for established (following literature)
+- **Connection Resilience**: Keep-alive for inactive tabs, emergency discovery bypass, connection health monitoring
 - **Browser-First**: No Node.js dependencies in client code
 
 ## Quick Start
@@ -62,6 +64,7 @@ npm run bootstrap:genesis  # Start in genesis mode
 npm run shutdown        # Kill all servers
 npm run restart         # Restart bootstrap server
 
+
 # Debugging
 npm run kill-ports      # Kill processes on default ports
 npm run start-all       # Start all services
@@ -84,6 +87,18 @@ await YZSocialC.testGet('key')
 YZSocialC.inviteNewClient('node_id')
 YZSocialC.dht.createInvitationToken('node_id')
 
+// Adaptive refresh system (Literature-Compliant)
+YZSocialC.getAdaptiveRefreshStatus()
+YZSocialC.forceAdaptiveRefresh()
+YZSocialC.refreshStaleBuckets()
+
+// WebRTC keep-alive and signaling (FIXED)
+YZSocialC.getKeepAliveStatus()
+YZSocialC.testKeepAlivePing()
+YZSocialC.simulateTabVisibilityChange()
+YZSocialC.checkConnectionHealth()
+YZSocialC.debugWebRTCStates()
+
 // Network discovery
 YZSocialC.refreshBuckets()
 YZSocialC.triggerPeerDiscovery()
@@ -91,15 +106,31 @@ YZSocialC.triggerPeerDiscovery()
 // Debug tools
 YZSocialC.debugConnectionState()
 YZSocialC.debugRoutingTable()
+YZSocialC.getTrafficStats()
+YZSocialC.investigatePhantomPeer('node_id')
 ```
+
+## Testing
+
+### Browser Testing (Web UI)
+
+1. Start bootstrap server: `npm run bootstrap:genesis`
+2. Start dev server: `npm run dev`
+3. Open browser to dev server URL
+4. First client becomes genesis peer automatically
+5. Use invite button to add more peers
+
+
 
 ## Architecture
 
 - **DHT Layer**: `src/dht/` - Kademlia implementation and routing
 - **Core Classes**: `src/core/` - Node IDs, DHT nodes, k-buckets, invitation tokens
 - **Network Layer**: `src/network/` - WebRTC management and overlay networking
+  - `WebRTCManager.js` - Browser WebRTC using native APIs
 - **Bootstrap**: `src/bootstrap/` - Initial peer discovery server
 - **UI**: `src/ui/` - Network visualization and controls
+- **Testing**: `test/` - Browser test suites
 
 ## Network Flow
 
@@ -121,16 +152,21 @@ YZSocialC.debugRoutingTable()
 ## Configuration
 
 - **k = 20**: Kademlia bucket size
-- **alpha = 3**: Lookup parallelism
-- **refresh = 30s**: K-bucket maintenance frequency
+- **alpha = 3**: Lookup parallelism  
+- **adaptive refresh**: 15s (new nodes) → 60s (medium) → 10min (established, literature-compliant)
 - **timeout = 30s**: WebRTC connection timeout
 - **max connections = 50**: Concurrent peer limit
+- **keep-alive**: 30s (active tabs) / 10s (inactive tabs)
+- **rate limiting**: 10s minimum between find_node requests (emergency bypass available)
+- **emergency discovery**: Rate limit bypass for new/isolated nodes
 
-## Browser Requirements
+## Requirements
 
+### Browser Testing
 - Modern browser with WebRTC DataChannel support
 - WebAssembly support recommended for UI components
 - HTTPS required for production WebRTC
+
 
 ## License
 

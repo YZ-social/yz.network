@@ -187,12 +187,21 @@ class BootstrapServer {
     }
 
     // Register new peer
-    this.peers.set(nodeId, {
+    const peerData = {
       ws,
       lastSeen: Date.now(),
       metadata: message.metadata || {},
       isGenesisPeer: isGenesisPeer
-    });
+    };
+
+    // Log WebSocket connection information if present
+    if (peerData.metadata.nodeType === 'nodejs' && peerData.metadata.listeningAddress) {
+      console.log(`📡 Node.js peer registered with WebSocket server: ${peerData.metadata.listeningAddress}`);
+    } else if (peerData.metadata.nodeType === 'browser') {
+      console.log(`🌐 Browser peer registered`);
+    }
+
+    this.peers.set(nodeId, peerData);
     
     this.connections.set(ws, nodeId);
 
@@ -648,21 +657,51 @@ class BootstrapServer {
       return;
     }
 
-    // Forward the invitation token to the target peer
-    this.sendMessage(targetPeer.ws, {
+    // Get inviter peer information for WebSocket coordination
+    const inviterPeer = this.peers.get(requestingNodeId);
+    const inviterMetadata = inviterPeer ? inviterPeer.metadata : {};
+
+    // Forward the invitation token to the target peer with WebSocket coordination info
+    const invitationMessage = {
       type: 'invitation_received',
       fromPeer: requestingNodeId,
       toPeer: targetPeerId,
       invitationToken: invitationToken,
       timestamp: Date.now()
-    });
+    };
+
+    // Include WebSocket connection coordination information
+    if (inviterMetadata.nodeType === 'nodejs' && inviterMetadata.listeningAddress) {
+      invitationMessage.websocketCoordination = {
+        inviterNodeType: 'nodejs',
+        inviterListeningAddress: inviterMetadata.listeningAddress,
+        instructions: 'Connect to inviter WebSocket server after accepting invitation'
+      };
+      console.log(`🔗 Including WebSocket coordination for Node.js inviter: ${inviterMetadata.listeningAddress}`);
+    } else if (inviterMetadata.nodeType === 'browser') {
+      // Check if target is Node.js
+      if (targetPeer.metadata.nodeType === 'nodejs' && targetPeer.metadata.listeningAddress) {
+        invitationMessage.websocketCoordination = {
+          inviterNodeType: 'browser',
+          targetListeningAddress: targetPeer.metadata.listeningAddress,
+          instructions: 'Inviter should connect to your WebSocket server after invitation acceptance'
+        };
+        console.log(`🔗 Including reverse WebSocket coordination for Browser → Node.js: ${targetPeer.metadata.listeningAddress}`);
+      }
+    }
+
+    this.sendMessage(targetPeer.ws, invitationMessage);
 
     // Confirm to the inviter that the invitation was sent
-    this.sendResponse(ws, message.requestId, {
+    // Include target peer metadata so inviter knows how to connect
+    const response = {
       success: true,
       targetPeerId: targetPeerId,
-      message: 'Invitation token forwarded to target peer'
-    });
+      message: 'Invitation token forwarded to target peer',
+      targetPeerMetadata: targetPeer.metadata // Include target's metadata for transport selection
+    };
+
+    this.sendResponse(ws, message.requestId, response);
 
   }
 

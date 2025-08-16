@@ -36,6 +36,21 @@ export class WebRTCManager extends EventEmitter {
     this.localNodeId = null;
     this.isDestroyed = false;
     this.isInitialized = false;
+
+    // Keep-alive system for browser tab visibility
+    this.keepAliveIntervals = new Map(); // peerId -> intervalId
+    this.keepAlivePings = new Map(); // peerId -> Set of pending pings
+    this.keepAliveResponses = new Map(); // peerId -> last response timestamp
+    this.keepAliveTimeouts = new Map(); // peerId -> Set of timeout IDs
+    this.isTabVisible = true;
+    this.keepAliveInterval = 30000; // 30 seconds for active tabs
+    this.keepAliveIntervalHidden = 10000; // 10 seconds for inactive tabs
+    this.keepAliveTimeout = 60000; // 60 seconds to wait for pong response
+    
+    // Initialize Page Visibility API if available
+    if (typeof document !== 'undefined') {
+      this.setupVisibilityHandling();
+    }
   }
 
   /**
@@ -52,6 +67,55 @@ export class WebRTCManager extends EventEmitter {
     
     console.log(`🚀 Initializing WebRTC with node ID: ${localNodeId}`);
     this.emit('initialized', { localNodeId });
+  }
+
+  /**
+   * Setup Page Visibility API handling for keep-alive frequency adjustment
+   */
+  setupVisibilityHandling() {
+    if (typeof document === 'undefined') return;
+
+    // Set initial visibility state
+    this.isTabVisible = !document.hidden;
+    
+    console.log(`📱 Setting up visibility handling. Initial state: ${this.isTabVisible ? 'visible' : 'hidden'}`);
+
+    // Listen for visibility changes
+    document.addEventListener('visibilitychange', () => {
+      const wasVisible = this.isTabVisible;
+      this.isTabVisible = !document.hidden;
+      
+      console.log(`📱 Tab visibility changed: ${wasVisible ? 'visible' : 'hidden'} → ${this.isTabVisible ? 'visible' : 'hidden'}`);
+      
+      // Adjust keep-alive frequency for all connections
+      this.adjustKeepAliveFrequency();
+    });
+
+    // Listen for beforeunload to cleanup
+    window.addEventListener('beforeunload', () => {
+      console.log('📱 Tab unloading, cleaning up keep-alive timers');
+      this.cleanupAllKeepAlives();
+    });
+  }
+
+  /**
+   * Adjust keep-alive frequency based on tab visibility
+   */
+  adjustKeepAliveFrequency() {
+    const newInterval = this.isTabVisible ? this.keepAliveInterval : this.keepAliveIntervalHidden;
+    console.log(`📱 Adjusting keep-alive frequency to ${newInterval}ms (tab ${this.isTabVisible ? 'visible' : 'hidden'})`);
+
+    // Use setTimeout to avoid blocking the main thread during visibility change
+    setTimeout(() => {
+      // Restart keep-alive for all connected peers with new frequency
+      const peerIds = Array.from(this.keepAliveIntervals.keys());
+      for (const peerId of peerIds) {
+        if (this.isConnected(peerId)) {
+          this.stopKeepAlive(peerId);
+          this.startKeepAlive(peerId);
+        }
+      }
+    }, 0);
   }
 
   /**
@@ -151,12 +215,21 @@ export class WebRTCManager extends EventEmitter {
         }
       };
 
-      // Check immediately and set up interval
+      // Check immediately
       checkConnection();
-      const interval = setInterval(checkConnection, 100);
+      
+      // Use event-driven approach instead of polling
+      const connectionHandler = () => {
+        checkConnection();
+      };
+      
+      // Listen for connection state changes instead of polling
+      pc.addEventListener('connectionstatechange', connectionHandler);
+      pc.addEventListener('iceconnectionstatechange', connectionHandler);
       
       setTimeout(() => {
-        clearInterval(interval);
+        pc.removeEventListener('connectionstatechange', connectionHandler);
+        pc.removeEventListener('iceconnectionstatechange', connectionHandler);
         if (this.connectionStates.get(peerId) === 'connecting') {
           reject(new Error('Connection timeout'));
         }
@@ -202,9 +275,13 @@ export class WebRTCManager extends EventEmitter {
         this.emit('peerConnected', { peerId, connection: pc });
         console.log(`✅ CRITICAL: peerConnected event emitted for ${peerId}`);
         
+        // Start keep-alive for this connection
+        this.startKeepAlive(peerId);
+        
       } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
         console.log(`❌ Connection failed/disconnected for ${peerId}: ${pc.connectionState}`);
         this.connectionStates.set(peerId, pc.connectionState);
+        this.stopKeepAlive(peerId);
         this.cleanupConnection(peerId);
         this.emit('peerDisconnected', { peerId, reason: pc.connectionState });
       } else {
@@ -243,6 +320,16 @@ export class WebRTCManager extends EventEmitter {
     dataChannel.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data);
+        
+        // Handle keep-alive messages
+        if (message.type === 'keep_alive_ping') {
+          this.handleKeepAlivePing(peerId, message);
+          return;
+        } else if (message.type === 'keep_alive_pong') {
+          this.handleKeepAlivePong(peerId, message);
+          return;
+        }
+        
         this.emit('data', { peerId, data: message });
       } catch (error) {
         console.warn(`Invalid JSON data from ${peerId}:`, error);
@@ -532,8 +619,16 @@ export class WebRTCManager extends EventEmitter {
    * Check if peer is connected
    */
   isConnected(peerId) {
-    const pc = this.connections.get(peerId);
-    return pc && pc.connectionState === 'connected';
+    const connection = this.connections.get(peerId);
+    if (!connection) return false;
+    
+    // Check WebSocket connection
+    if (connection instanceof WebSocket) {
+      return connection.readyState === WebSocket.OPEN;
+    }
+    
+    // Check WebRTC connection
+    return connection.connectionState === 'connected';
   }
 
   /**
@@ -541,8 +636,9 @@ export class WebRTCManager extends EventEmitter {
    */
   getConnectedPeers() {
     const connected = [];
-    for (const [peerId, pc] of this.connections.entries()) {
-      if (pc.connectionState === 'connected' && this.isValidDHTPeer(peerId)) {
+    for (const [peerId, connection] of this.connections.entries()) {
+      // Use isConnected() method which handles both WebSocket and WebRTC connections
+      if (this.isConnected(peerId) && this.isValidDHTPeer(peerId)) {
         connected.push(peerId);
       }
     }
@@ -612,6 +708,7 @@ export class WebRTCManager extends EventEmitter {
       pc.close();
     }
 
+    this.stopKeepAlive(peerId);
     this.cleanupConnection(peerId);
     this.emit('peerDisconnected', { peerId, reason });
   }
@@ -648,6 +745,468 @@ export class WebRTCManager extends EventEmitter {
   }
 
   /**
+   * Create WebSocket connection to Node.js peer (Browser → Node.js)
+   * This method allows browsers to connect to Node.js WebSocket servers
+   */
+  async createWebSocketConnection(peerId, websocketAddress) {
+    if (this.isDestroyed) {
+      throw new Error('WebRTCManager is destroyed');
+    }
+
+    if (this.connections.has(peerId)) {
+      throw new Error(`Connection to ${peerId} already exists`);
+    }
+
+    if (this.connections.size >= this.options.maxConnections) {
+      throw new Error('Maximum connections reached');
+    }
+
+    console.log(`🌐 Creating WebSocket connection to ${peerId} at ${websocketAddress}`);
+
+    return new Promise((resolve, reject) => {
+      try {
+        const ws = new WebSocket(websocketAddress);
+        const connectionTimeout = setTimeout(() => {
+          ws.close();
+          reject(new Error('WebSocket connection timeout'));
+        }, this.options.timeout);
+
+        ws.onopen = () => {
+          clearTimeout(connectionTimeout);
+          console.log(`✅ WebSocket connection established to ${peerId}`);
+
+          // Send handshake to identify ourselves
+          ws.send(JSON.stringify({
+            type: 'handshake',
+            peerId: this.localNodeId
+          }));
+
+          // Wait for handshake response
+          const handshakeTimeout = setTimeout(() => {
+            ws.close();
+            reject(new Error('WebSocket handshake timeout'));
+          }, 5000);
+
+          const handleHandshakeResponse = (event) => {
+            try {
+              const message = JSON.parse(event.data);
+              if (message.type === 'handshake_response' && message.success) {
+                clearTimeout(handshakeTimeout);
+                ws.removeEventListener('message', handleHandshakeResponse);
+                
+                // Set up the WebSocket connection for DHT messaging
+                this.setupWebSocketConnection(peerId, ws);
+                resolve(ws);
+              } else {
+                ws.close();
+                reject(new Error('WebSocket handshake failed'));
+              }
+            } catch (error) {
+              ws.close();
+              reject(new Error('Invalid handshake response'));
+            }
+          };
+
+          ws.addEventListener('message', handleHandshakeResponse);
+        };
+
+        ws.onerror = (error) => {
+          clearTimeout(connectionTimeout);
+          reject(new Error(`WebSocket connection failed: ${error.message}`));
+        };
+
+        ws.onclose = (event) => {
+          clearTimeout(connectionTimeout);
+          if (event.code !== 1000) {
+            reject(new Error(`WebSocket closed unexpectedly: ${event.code} ${event.reason}`));
+          }
+        };
+
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  /**
+   * Set up WebSocket connection with DHT message handling
+   */
+  setupWebSocketConnection(peerId, ws) {
+    // Store WebSocket connection (reuse RTCPeerConnection storage structure)
+    this.connections.set(peerId, ws);
+    this.connectionStates.set(peerId, 'connected');
+
+    console.log(`📋 WebSocket connection setup complete for ${peerId}`);
+
+    // Handle incoming messages
+    ws.addEventListener('message', (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        
+        // Skip handshake messages
+        if (message.type === 'handshake' || message.type === 'handshake_response') {
+          return;
+        }
+
+        // Emit DHT data event (same interface as WebRTC)
+        this.emit('data', { peerId, data: message });
+      } catch (error) {
+        console.error(`❌ Error parsing WebSocket message from ${peerId}:`, error);
+      }
+    });
+
+    // Handle connection close
+    ws.addEventListener('close', (event) => {
+      console.log(`🔌 WebSocket connection closed to ${peerId}: ${event.code} ${event.reason}`);
+      this.handleWebSocketClose(peerId);
+    });
+
+    // Handle connection error
+    ws.addEventListener('error', (error) => {
+      console.error(`❌ WebSocket error with ${peerId}:`, error);
+    });
+
+    // Emit connection event (same interface as WebRTC)
+    this.emit('peerConnected', { peerId });
+  }
+
+  /**
+   * Send message via WebSocket connection
+   */
+  async sendWebSocketMessage(peerId, message) {
+    const ws = this.connections.get(peerId);
+    
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      throw new Error(`No open WebSocket connection to peer ${peerId}`);
+    }
+
+    return new Promise((resolve, reject) => {
+      try {
+        ws.send(JSON.stringify(message));
+        resolve();
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  /**
+   * Handle WebSocket connection close
+   */
+  handleWebSocketClose(peerId) {
+    this.connections.delete(peerId);
+    this.connectionStates.delete(peerId);
+    this.pendingConnections.delete(peerId);
+
+    this.emit('peerDisconnected', { peerId });
+  }
+
+  /**
+   * Check if peer is connected via WebSocket
+   */
+  isWebSocketConnected(peerId) {
+    const ws = this.connections.get(peerId);
+    return ws && ws.readyState === WebSocket.OPEN;
+  }
+
+  /**
+   * Send message to peer (supports both WebRTC and WebSocket)
+   */
+  async sendMessage(peerId, message) {
+    const connection = this.connections.get(peerId);
+    
+    if (!connection) {
+      throw new Error(`No connection to peer ${peerId}`);
+    }
+
+    // Check if it's a WebSocket connection
+    if (connection instanceof WebSocket) {
+      return this.sendWebSocketMessage(peerId, message);
+    }
+
+    // Handle WebRTC DataChannel
+    const dataChannel = this.dataChannels.get(peerId);
+    if (!dataChannel || dataChannel.readyState !== 'open') {
+      throw new Error(`No open data channel to peer ${peerId}`);
+    }
+
+    return new Promise((resolve, reject) => {
+      try {
+        dataChannel.send(JSON.stringify(message));
+        resolve();
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  /**
+   * Start keep-alive for a peer connection
+   */
+  startKeepAlive(peerId) {
+    if (!this.isConnected(peerId)) {
+      console.warn(`⚠️ Cannot start keep-alive for disconnected peer ${peerId}`);
+      return;
+    }
+
+    // Don't start if already running
+    if (this.keepAliveIntervals.has(peerId)) {
+      console.log(`📱 Keep-alive already running for ${peerId}`);
+      return;
+    }
+
+    const interval = this.isTabVisible ? this.keepAliveInterval : this.keepAliveIntervalHidden;
+    console.log(`📱 Starting keep-alive for ${peerId} with ${interval}ms interval (tab ${this.isTabVisible ? 'visible' : 'hidden'})`);
+
+    // Initialize tracking structures
+    this.keepAlivePings.set(peerId, new Set());
+    this.keepAliveResponses.set(peerId, Date.now());
+    this.keepAliveTimeouts.set(peerId, new Set());
+
+    // Set up keep-alive interval
+    const intervalId = setInterval(() => {
+      this.sendKeepAlivePing(peerId);
+    }, interval);
+
+    this.keepAliveIntervals.set(peerId, intervalId);
+  }
+
+  /**
+   * Stop keep-alive for a peer connection
+   */
+  stopKeepAlive(peerId) {
+    const intervalId = this.keepAliveIntervals.get(peerId);
+    if (intervalId) {
+      clearInterval(intervalId);
+      this.keepAliveIntervals.delete(peerId);
+      console.log(`📱 Stopped keep-alive for ${peerId}`);
+    }
+
+    // Clean up tracking structures
+    this.keepAlivePings.delete(peerId);
+    this.keepAliveResponses.delete(peerId);
+    
+    // Clear any pending timeouts
+    const timeouts = this.keepAliveTimeouts.get(peerId);
+    if (timeouts) {
+      for (const timeoutId of timeouts) {
+        clearTimeout(timeoutId);
+      }
+      this.keepAliveTimeouts.delete(peerId);
+    }
+  }
+
+  /**
+   * Send keep-alive ping to peer
+   */
+  async sendKeepAlivePing(peerId) {
+    if (!this.isConnected(peerId)) {
+      console.warn(`⚠️ Cannot send keep-alive ping to disconnected peer ${peerId}`);
+      this.stopKeepAlive(peerId);
+      return;
+    }
+
+    try {
+      const pingMessage = {
+        type: 'keep_alive_ping',
+        pingId: `ping_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+        timestamp: Date.now(),
+        tabVisible: this.isTabVisible
+      };
+
+      // Reduce logging frequency - only log every 5th ping to avoid console spam
+      const pingCount = (this.keepAlivePings.get(peerId)?.size || 0);
+      if (pingCount % 5 === 0) {
+        console.log(`📱 Sending keep-alive ping to ${peerId}: ${pingMessage.pingId} (tab ${this.isTabVisible ? 'visible' : 'hidden'})`);
+      }
+
+      // Add to pending pings
+      const pendingPings = this.keepAlivePings.get(peerId) || new Set();
+      pendingPings.add(pingMessage.pingId);
+      this.keepAlivePings.set(peerId, pendingPings);
+
+      // Send ping message
+      const dataChannel = this.dataChannels.get(peerId);
+      if (dataChannel && dataChannel.readyState === 'open') {
+        dataChannel.send(JSON.stringify(pingMessage));
+
+        // Set timeout for pong response
+        const timeoutId = setTimeout(() => {
+          const pendingPings = this.keepAlivePings.get(peerId);
+          if (pendingPings && pendingPings.has(pingMessage.pingId)) {
+            console.warn(`⚠️ Keep-alive ping ${pingMessage.pingId} to ${peerId} timed out after ${this.keepAliveTimeout}ms`);
+            pendingPings.delete(pingMessage.pingId);
+            
+            // Remove timeout from tracking
+            const timeouts = this.keepAliveTimeouts.get(peerId);
+            if (timeouts) {
+              timeouts.delete(timeoutId);
+            }
+            
+            // Check if we have too many failed pings
+            const lastResponse = this.keepAliveResponses.get(peerId) || 0;
+            const timeSinceLastResponse = Date.now() - lastResponse;
+            
+            if (timeSinceLastResponse > this.keepAliveTimeout * 2) {
+              console.error(`❌ Peer ${peerId} not responding to keep-alive pings for ${timeSinceLastResponse}ms, marking as failed`);
+              this.destroyConnection(peerId, 'keep_alive_timeout');
+            }
+          }
+        }, this.keepAliveTimeout);
+        
+        // Track timeout for cleanup
+        const timeouts = this.keepAliveTimeouts.get(peerId) || new Set();
+        timeouts.add(timeoutId);
+        this.keepAliveTimeouts.set(peerId, timeouts);
+
+      } else {
+        console.warn(`⚠️ No open data channel to send keep-alive ping to ${peerId}`);
+        this.stopKeepAlive(peerId);
+      }
+
+    } catch (error) {
+      console.error(`❌ Failed to send keep-alive ping to ${peerId}:`, error);
+    }
+  }
+
+  /**
+   * Handle incoming keep-alive ping from peer
+   */
+  handleKeepAlivePing(peerId, pingMessage) {
+    // Reduce logging frequency to avoid console spam
+    if (Math.random() < 0.1) { // Log only 10% of ping receptions
+      console.log(`📱 Received keep-alive ping from ${peerId}: ${pingMessage.pingId} (peer tab ${pingMessage.tabVisible ? 'visible' : 'hidden'})`);
+    }
+
+    try {
+      // Send pong response
+      const pongMessage = {
+        type: 'keep_alive_pong',
+        pingId: pingMessage.pingId,
+        originalTimestamp: pingMessage.timestamp,
+        responseTimestamp: Date.now(),
+        tabVisible: this.isTabVisible
+      };
+
+      const dataChannel = this.dataChannels.get(peerId);
+      if (dataChannel && dataChannel.readyState === 'open') {
+        dataChannel.send(JSON.stringify(pongMessage));
+        // Only log pong responses occasionally to reduce spam
+        if (Math.random() < 0.1) {
+          console.log(`📱 Sent keep-alive pong to ${peerId}: ${pingMessage.pingId}`);
+        }
+      } else {
+        console.warn(`⚠️ No open data channel to send keep-alive pong to ${peerId}`);
+      }
+
+    } catch (error) {
+      console.error(`❌ Failed to send keep-alive pong to ${peerId}:`, error);
+    }
+  }
+
+  /**
+   * Handle incoming keep-alive pong from peer
+   */
+  handleKeepAlivePong(peerId, pongMessage) {
+    const roundTripTime = Date.now() - pongMessage.originalTimestamp;
+    
+    // Only log pong responses occasionally to reduce spam, or if RTT is high
+    if (Math.random() < 0.1 || roundTripTime > 5000) {
+      console.log(`📱 Received keep-alive pong from ${peerId}: ${pongMessage.pingId} (RTT: ${roundTripTime}ms, peer tab ${pongMessage.tabVisible ? 'visible' : 'hidden'})`);
+    }
+
+    // Remove from pending pings
+    const pendingPings = this.keepAlivePings.get(peerId);
+    if (pendingPings) {
+      pendingPings.delete(pongMessage.pingId);
+    }
+
+    // Update last response timestamp
+    this.keepAliveResponses.set(peerId, Date.now());
+    
+    // Clean up corresponding timeout (ping was successful)
+    // Note: We can't easily match timeout to specific ping, but successful response means connection is healthy
+  }
+
+  /**
+   * Clean up all keep-alive timers
+   */
+  cleanupAllKeepAlives() {
+    console.log(`📱 Cleaning up ${this.keepAliveIntervals.size} keep-alive timers`);
+    
+    for (const [peerId, intervalId] of this.keepAliveIntervals.entries()) {
+      clearInterval(intervalId);
+    }
+
+    this.keepAliveIntervals.clear();
+    this.keepAlivePings.clear();
+    this.keepAliveResponses.clear();
+    
+    // Clear all pending timeouts
+    for (const [peerId, timeouts] of this.keepAliveTimeouts.entries()) {
+      for (const timeoutId of timeouts) {
+        clearTimeout(timeoutId);
+      }
+    }
+    this.keepAliveTimeouts.clear();
+  }
+
+  /**
+   * Get keep-alive status for debugging
+   */
+  getKeepAliveStatus() {
+    const status = {
+      tabVisible: this.isTabVisible,
+      activeKeepAlives: this.keepAliveIntervals.size,
+      keepAliveInterval: this.isTabVisible ? this.keepAliveInterval : this.keepAliveIntervalHidden,
+      peers: {}
+    };
+
+    for (const [peerId] of this.keepAliveIntervals.entries()) {
+      const pendingPings = this.keepAlivePings.get(peerId)?.size || 0;
+      const lastResponse = this.keepAliveResponses.get(peerId) || 0;
+      const timeSinceLastResponse = Date.now() - lastResponse;
+
+      status.peers[peerId] = {
+        connected: this.isConnected(peerId),
+        pendingPings,
+        lastResponseMs: timeSinceLastResponse,
+        healthy: timeSinceLastResponse < this.keepAliveTimeout
+      };
+    }
+
+    return status;
+  }
+
+  /**
+   * Test keep-alive ping manually for debugging
+   */
+  async testKeepAlivePing(peerId) {
+    if (!peerId) {
+      const connectedPeers = this.getConnectedPeers();
+      if (connectedPeers.length === 0) {
+        console.log('📱 No connected peers to test keep-alive');
+        return false;
+      }
+      peerId = connectedPeers[0];
+    }
+
+    console.log(`📱 Testing keep-alive ping to ${peerId}...`);
+    await this.sendKeepAlivePing(peerId);
+    return true;
+  }
+
+  /**
+   * Simulate tab visibility change for debugging
+   */
+  simulateTabVisibilityChange() {
+    console.log(`📱 Simulating tab visibility change: ${this.isTabVisible ? 'visible' : 'hidden'} → ${!this.isTabVisible ? 'visible' : 'hidden'}`);
+    this.isTabVisible = !this.isTabVisible;
+    this.adjustKeepAliveFrequency();
+    return this.isTabVisible;
+  }
+
+  /**
    * Destroy all connections and cleanup
    */
   destroy() {
@@ -655,6 +1214,9 @@ export class WebRTCManager extends EventEmitter {
 
     console.log('Destroying WebRTCManager');
     this.isDestroyed = true;
+
+    // Clean up all keep-alive timers
+    this.cleanupAllKeepAlives();
 
     // Destroy all peer connections
     for (const [peerId, pc] of this.connections.entries()) {

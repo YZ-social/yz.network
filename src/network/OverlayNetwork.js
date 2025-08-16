@@ -51,7 +51,7 @@ export class OverlayNetwork extends EventEmitter {
         this.handleDHTDisconnection(peerId);
       });
 
-      this.dht.webrtc.on('data', ({ peerId, data }) => {
+      this.dht.connectionManager.on('data', ({ peerId, data }) => {
         if (data.type && data.type.startsWith('overlay_')) {
           this.handleOverlayMessage(peerId, data);
         }
@@ -96,9 +96,9 @@ export class OverlayNetwork extends EventEmitter {
     console.log(`Creating direct connection to ${peerId} for ${purpose}`);
 
     // First, establish connection through DHT if not already connected
-    if (!this.dht.webrtc.isConnected(peerId)) {
+    if (!this.dht.connectionManager.isConnected(peerId)) {
       try {
-        await this.dht.webrtc.createConnection(peerId, true);
+        await this.dht.connectionManager.createConnection(peerId, true);
       } catch (error) {
         throw new Error(`Failed to establish DHT connection: ${error.message}`);
       }
@@ -107,7 +107,7 @@ export class OverlayNetwork extends EventEmitter {
     // Create overlay connection metadata
     const connectionInfo = {
       peerId,
-      connection: this.dht.webrtc.peers.get(peerId), // Reuse DHT connection
+      connection: this.dht.connectionManager.peers.get(peerId), // Reuse DHT connection
       purposes: new Set([purpose]),
       createdAt: Date.now(),
       lastActivity: Date.now(),
@@ -145,7 +145,7 @@ export class OverlayNetwork extends EventEmitter {
     }
 
     // Try DHT connection
-    if (this.dht.webrtc.isConnected(peerId)) {
+    if (this.dht.connectionManager.isConnected(peerId)) {
       return this.sendViaDHT(peerId, message, { priority, reliable });
     }
 
@@ -175,7 +175,7 @@ export class OverlayNetwork extends EventEmitter {
     };
 
     connectionInfo.lastActivity = Date.now();
-    return this.dht.webrtc.sendData(peerId, overlayMessage);
+    return this.dht.connectionManager.sendData(peerId, overlayMessage);
   }
 
   /**
@@ -190,7 +190,7 @@ export class OverlayNetwork extends EventEmitter {
       timestamp: Date.now()
     };
 
-    return this.dht.webrtc.sendData(peerId, overlayMessage);
+    return this.dht.connectionManager.sendData(peerId, overlayMessage);
   }
 
   /**
@@ -217,7 +217,7 @@ export class OverlayNetwork extends EventEmitter {
     const nextHop = route[0];
     console.log(`Routing message to ${targetPeerId} via ${nextHop}`);
     
-    return this.dht.webrtc.sendData(nextHop, routedMessage);
+    return this.dht.connectionManager.sendData(nextHop, routedMessage);
   }
 
   /**
@@ -238,7 +238,7 @@ export class OverlayNetwork extends EventEmitter {
 
     // Filter to only connected nodes
     const connectedNodes = closestNodes.filter(node => 
-      this.dht.webrtc.isConnected(node.id.toString())
+      this.dht.connectionManager.isConnected(node.id.toString())
     );
 
     if (connectedNodes.length === 0) {
@@ -322,7 +322,7 @@ export class OverlayNetwork extends EventEmitter {
     // Accept the connection
     const connectionInfo = {
       peerId,
-      connection: this.dht.webrtc.peers.get(peerId),
+      connection: this.dht.connectionManager.peers.get(peerId),
       purposes: new Set([purpose]),
       createdAt: Date.now(),
       lastActivity: Date.now(),
@@ -398,8 +398,8 @@ export class OverlayNetwork extends EventEmitter {
         ttl: ttl - 1
       };
 
-      if (this.dht.webrtc.isConnected(nextHop)) {
-        await this.dht.webrtc.sendData(nextHop, forwardedMessage);
+      if (this.dht.connectionManager.isConnected(nextHop)) {
+        await this.dht.connectionManager.sendData(nextHop, forwardedMessage);
         console.log(`Forwarded message to ${nextHop}`);
       } else {
         console.warn(`Next hop ${nextHop} not connected, dropping message`);
@@ -411,7 +411,7 @@ export class OverlayNetwork extends EventEmitter {
    * Send overlay message
    */
   async sendOverlayMessage(peerId, message) {
-    return this.dht.webrtc.sendData(peerId, message);
+    return this.dht.connectionManager.sendData(peerId, message);
   }
 
   /**

@@ -104,48 +104,21 @@ export class RoutingTable {
    * Real peer node IDs should come from legitimate peer connections with invitation tokens
    */
   isLikelyPhantomPeer(nodeIdStr) {
-    // Keep track of recently rejected phantom peers to detect patterns
-    if (!this.recentPhantomPeers) {
-      this.recentPhantomPeers = new Map(); // nodeId -> firstSeen timestamp
-    }
-
-    // Check if we've seen this exact ID before (phantom peers often repeat)
-    if (this.recentPhantomPeers.has(nodeIdStr)) {
-      const firstSeen = this.recentPhantomPeers.get(nodeIdStr);
-      const age = Date.now() - firstSeen;
-      
-      // If we've been rejecting this same ID for more than 5 minutes, it's definitely phantom
-      if (age > 5 * 60 * 1000) {
-        console.warn(`🚨 Persistent phantom peer detected: ${nodeIdStr} (seen for ${Math.round(age/1000)}s)`);
-        return true;
-      }
-    }
-
-    // For now, implement a simple heuristic
-    // Real peer node IDs typically come from successful WebRTC connections
-    // We can enhance this logic as we identify more phantom peer patterns
+    // DISABLED: The previous phantom peer detection was incorrectly flagging
+    // legitimate connected peers that had been successfully communicating for 5+ minutes
+    // 
+    // Real connected peers that maintain long-term connections should NOT be considered phantom
+    // Only actual phantom peers (like storage key hashes) should be rejected
+    //
+    // TODO: Implement proper phantom peer detection that:
+    // 1. Checks if the peer ID comes from a legitimate connection manager
+    // 2. Validates against known invitation tokens 
+    // 3. Does NOT reject peers based on connection duration
+    // 4. Uses pattern analysis of node IDs to detect storage keys vs real peer IDs
     
-    // Check if this looks like a storage key hash by examining common patterns
-    // This is a basic implementation - we can make it more sophisticated
+    console.log(`🔍 Routing table evaluating peer: ${nodeIdStr} (phantom detection disabled)`);
     
-    // Record this as a potential phantom peer
-    if (!this.recentPhantomPeers.has(nodeIdStr)) {
-      this.recentPhantomPeers.set(nodeIdStr, Date.now());
-    }
-
-    // For now, let's log any peer additions to see patterns
-    console.log(`🔍 Routing table evaluating peer: ${nodeIdStr}`);
-    
-    // Clean up old entries (older than 10 minutes)
-    const cutoff = Date.now() - (10 * 60 * 1000);
-    for (const [id, timestamp] of this.recentPhantomPeers.entries()) {
-      if (timestamp < cutoff) {
-        this.recentPhantomPeers.delete(id);
-      }
-    }
-
-    // For now, don't reject any peers - just log and observe
-    // We'll enable rejection once we understand the patterns better
+    // Always allow peers for now - phantom detection needs proper redesign
     return false;
   }
 

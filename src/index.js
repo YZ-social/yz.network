@@ -90,12 +90,12 @@ class App {
       }
     });
 
-    // Handle WebRTC errors specifically
-    if (this.dht && this.dht.webrtc) {
-      this.dht.webrtc.on('error', (error) => {
-        console.error('WebRTC error:', error);
+    // Handle connection manager errors specifically
+    if (this.dht && this.dht.connectionManager) {
+      this.dht.connectionManager.on('error', (error) => {
+        console.error('Connection manager error:', error);
         if (this.visualizer) {
-          this.visualizer.log(`WebRTC error: ${error.message}`, 'error');
+          this.visualizer.log(`Connection manager error: ${error.message}`, 'error');
         }
       });
     }
@@ -114,7 +114,7 @@ class App {
       // Helper functions
       getStats: () => this.dht ? this.dht.getStats() : null,
       getNodes: () => this.dht ? this.dht.routingTable.getAllNodes() : [],
-      getPeers: () => this.dht ? this.dht.webrtc.getConnectedPeers() : [],
+      getPeers: () => this.dht ? this.dht.connectionManager.getConnectedPeers() : [],
       
       // Development tools
       async testStore(key = 'test-key', value = 'test-value') {
@@ -234,7 +234,7 @@ class App {
         return {
           useBootstrapForSignaling: this.dht.useBootstrapForSignaling,
           routingTableSize: this.dht.routingTable.getAllNodes().length,
-          connectedPeers: this.dht.webrtc.getConnectedPeers().length,
+          connectedPeers: this.dht.connectionManager.getConnectedPeers().length,
           isStarted: this.dht.isStarted
         };
       },
@@ -408,7 +408,7 @@ class App {
       debugRoutingTable() {
         if (!this.dht) return null;
         const routingNodes = this.dht.routingTable.getAllNodes();
-        const connectedPeers = this.dht.webrtc.getConnectedPeers();
+        const connectedPeers = this.dht.connectionManager.getConnectedPeers();
         
         console.log('=== Routing Table Debug ===');
         console.log(`Routing table size: ${routingNodes.length}`);
@@ -463,37 +463,36 @@ class App {
           return null;
         }
         
-        const webrtcPeers = this.dht.webrtc ? this.dht.webrtc.getConnectedPeers() : [];
+        const connectionPeers = this.dht.connectionManager ? this.dht.connectionManager.getConnectedPeers() : [];
         const routingNodes = this.dht.routingTable ? this.dht.routingTable.getAllNodes() : [];
-        const webrtcStats = this.dht.webrtc ? this.dht.webrtc.getStats() : {};
+        const connectionStats = this.dht.connectionManager ? this.dht.connectionManager.getStats() : {};
         
         // Also get ALL peers (including filtered ones) for debugging
-        const allWebRTCPeers = this.dht.webrtc ? Array.from(this.dht.webrtc.peers.keys()).filter(peerId => {
-          const peer = this.dht.webrtc.peers.get(peerId);
-          return peer && peer.connected;
+        const allConnectionPeers = this.dht.connectionManager ? Array.from(this.dht.connectionManager.connections.keys()).filter(peerId => {
+          return this.dht.connectionManager.isConnected(peerId);
         }) : [];
         
         console.log('=== Connection State Debug ===');
         console.log(`Our Node ID: ${this.dht.localNodeId.toString()}`);
         console.log(`DHT Started: ${this.dht.isStarted}`);
         console.log(`DHT Bootstrapped: ${this.dht.isBootstrapped}`);
-        console.log(`WebRTC Connected Peers (filtered): ${webrtcPeers.length}`);
-        console.log(`WebRTC Connected Peers (all): ${allWebRTCPeers.length}`);
+        console.log(`Connected Peers (filtered): ${connectionPeers.length}`);
+        console.log(`Connected Peers (all): ${allConnectionPeers.length}`);
         console.log(`Routing Table Nodes: ${routingNodes.length}`);
-        console.log(`WebRTC Stats:`, webrtcStats);
+        console.log(`Connection Stats:`, connectionStats);
         
-        if (allWebRTCPeers.length > webrtcPeers.length) {
+        if (allConnectionPeers.length > connectionPeers.length) {
           console.log('🔍 Filtered out connections:');
-          const filtered = allWebRTCPeers.filter(peer => !webrtcPeers.includes(peer));
+          const filtered = allConnectionPeers.filter(peer => !connectionPeers.includes(peer));
           filtered.forEach(peer => {
-            const isValid = this.dht.webrtc.isValidDHTPeer(peer);
+            const isValid = this.dht.isValidDHTPeer ? this.dht.isValidDHTPeer(peer) : true;
             console.log(`  - ${peer} (filtered) - Valid DHT peer: ${isValid}`);
           });
         }
         
-        if (webrtcPeers.length > 0) {
+        if (connectionPeers.length > 0) {
           console.log('✅ Valid DHT Peers:');
-          webrtcPeers.forEach(peer => console.log(`  - ${peer}`));
+          connectionPeers.forEach(peer => console.log(`  - ${peer}`));
         }
         
         if (routingNodes.length > 0) {
@@ -503,31 +502,31 @@ class App {
         
         // Check for mismatches
         const routingPeerIds = routingNodes.map(node => node.id.toString());
-        const missingWebRTC = routingPeerIds.filter(id => !webrtcPeers.includes(id));
-        const extraWebRTC = webrtcPeers.filter(id => !routingPeerIds.includes(id));
+        const missingConnections = routingPeerIds.filter(id => !connectionPeers.includes(id));
+        const extraConnections = connectionPeers.filter(id => !routingPeerIds.includes(id));
         
-        if (missingWebRTC.length > 0) {
-          console.warn('⚠️  Peers in routing table but missing WebRTC connections:');
-          missingWebRTC.forEach(id => console.warn(`  - ${id}`));
+        if (missingConnections.length > 0) {
+          console.warn('⚠️  Peers in routing table but missing connections:');
+          missingConnections.forEach(id => console.warn(`  - ${id}`));
         }
         
-        if (extraWebRTC.length > 0) {
-          console.warn('⚠️  WebRTC connections not in routing table:');
-          extraWebRTC.forEach(id => console.warn(`  - ${id}`));
+        if (extraConnections.length > 0) {
+          console.warn('⚠️  Connections not in routing table:');
+          extraConnections.forEach(id => console.warn(`  - ${id}`));
         }
         
         return {
           ourNodeId: this.dht.localNodeId.toString(),
           dhtStarted: this.dht.isStarted,
-          webrtcConnections: webrtcPeers.length,
-          allWebRTCConnections: allWebRTCPeers.length,
+          connections: connectionPeers.length,
+          allConnections: allConnectionPeers.length,
           routingTableSize: routingNodes.length,
-          webrtcStats,
-          allPeers: allWebRTCPeers,
-          validPeers: webrtcPeers,
-          filteredConnections: allWebRTCPeers.filter(peer => !webrtcPeers.includes(peer)),
-          missingWebRTC,
-          extraWebRTC
+          connectionStats,
+          allPeers: allConnectionPeers,
+          validPeers: connectionPeers,
+          filteredConnections: allConnectionPeers.filter(peer => !connectionPeers.includes(peer)),
+          missingConnections,
+          extraConnections
         };
       },
       
@@ -540,24 +539,24 @@ class App {
         console.log(`🕵️ Investigating phantom peer: ${suspiciousPeerId}`);
         console.log(`Our Node ID: ${this.dht.localNodeId.toString()}`);
         
-        // Check if it's in WebRTC peers
-        const webrtcPeer = this.dht.webrtc.peers.get(suspiciousPeerId);
-        const isWebRTCConnected = this.dht.webrtc.isConnected(suspiciousPeerId);
-        const isValidDHTPeer = this.dht.webrtc.isValidDHTPeer(suspiciousPeerId);
+        // Check if it's in connection manager
+        const connectionExists = this.dht.connectionManager.connections.has(suspiciousPeerId);
+        const isConnected = this.dht.connectionManager.isConnected(suspiciousPeerId);
+        const isValidDHTPeer = this.dht.isValidDHTPeer ? this.dht.isValidDHTPeer(suspiciousPeerId) : true;
         
         // Check if it's in routing table
         const routingNode = this.dht.routingTable.getNode(suspiciousPeerId);
         
-        console.log(`🔍 WebRTC peer exists: ${!!webrtcPeer}`);
-        console.log(`🔍 WebRTC connected: ${isWebRTCConnected}`);
+        console.log(`🔍 Connection exists: ${connectionExists}`);
+        console.log(`🔍 Is connected: ${isConnected}`);
         console.log(`🔍 Valid DHT peer: ${isValidDHTPeer}`);
         console.log(`🔍 In routing table: ${!!routingNode}`);
         
-        if (webrtcPeer) {
-          console.log(`🔍 WebRTC peer state:`, {
-            connected: webrtcPeer.connected,
-            destroyed: webrtcPeer.destroyed,
-            readyState: webrtcPeer.readyState
+        if (connectionExists) {
+          const connection = this.dht.connectionManager.connections.get(suspiciousPeerId);
+          console.log(`🔍 Connection state:`, {
+            connected: isConnected,
+            type: connection instanceof WebSocket ? 'WebSocket' : 'WebRTC'
           });
         }
         
@@ -576,14 +575,13 @@ class App {
         return {
           suspiciousPeerId,
           ourNodeId: this.dht.localNodeId.toString(),
-          webrtcPeerExists: !!webrtcPeer,
-          webrtcConnected: isWebRTCConnected,
+          connectionExists: connectionExists,
+          isConnected: isConnected,
           validDHTPeer: isValidDHTPeer,
           inRoutingTable: !!routingNode,
-          webrtcPeerState: webrtcPeer ? {
-            connected: webrtcPeer.connected,
-            destroyed: webrtcPeer.destroyed,
-            readyState: webrtcPeer.readyState
+          connectionState: connectionExists ? {
+            connected: isConnected,
+            type: this.dht.connectionManager.connections.get(suspiciousPeerId) instanceof WebSocket ? 'WebSocket' : 'WebRTC'
           } : null,
           routingNodeDetails: routingNode ? {
             id: routingNode.id.toString(),
@@ -677,9 +675,9 @@ class App {
         return {
           useBootstrapForSignaling: this.dht.useBootstrapForSignaling,
           bootstrapConnected: this.dht.bootstrap.isBootstrapConnected(),
-          connectedPeers: this.dht.webrtc.getConnectedPeers().length,
+          connectedPeers: this.dht.connectionManager.getConnectedPeers().length,
           routingTableSize: this.dht.routingTable.getAllNodes().length,
-          connectedPeersList: this.dht.webrtc.getConnectedPeers(),
+          connectedPeersList: this.dht.connectionManager.getConnectedPeers(),
           routingTablePeers: this.dht.routingTable.getAllNodes().map(n => n.id.toString())
         };
       },
@@ -690,7 +688,7 @@ class App {
           return false;
         }
 
-        const connectedPeers = this.dht.webrtc.getConnectedPeers();
+        const connectedPeers = this.dht.connectionManager.getConnectedPeers();
         const routingTablePeers = this.dht.routingTable.getAllNodes().map(n => n.id.toString());
         
         console.log('🔄 Syncing routing table with connected peers...');
@@ -727,7 +725,7 @@ class App {
           return false;
         }
         
-        const connectedPeers = this.dht.webrtc.getConnectedPeers();
+        const connectedPeers = this.dht.connectionManager.getConnectedPeers();
         console.log(`🔄 Force adding ${connectedPeers.length} connected peers to routing table...`);
         
         let added = 0;
@@ -762,26 +760,516 @@ class App {
         }
         
         console.log('🔍 Debugging event handlers...');
-        console.log('WebRTC manager:', !!this.dht.webrtc);
-        console.log('WebRTC listeners:', this.dht.webrtc.listenerCount('peerConnected'));
+        console.log('Connection manager:', !!this.dht.connectionManager);
+        console.log('Connection listeners:', this.dht.connectionManager.listenerCount('peerConnected'));
         
         // Test manual peer connected event
-        const connectedPeers = this.dht.webrtc.getConnectedPeers();
+        const connectedPeers = this.dht.connectionManager.getConnectedPeers();
         console.log(`Connected peers: ${connectedPeers.length}`, connectedPeers);
         
         // Test manual event emission
         if (connectedPeers.length > 0) {
           console.log(`🧪 Testing manual event emission for ${connectedPeers[0]}`);
-          this.dht.webrtc.emit('peerConnected', { peerId: connectedPeers[0] });
+          this.dht.connectionManager.emit('peerConnected', { peerId: connectedPeers[0] });
           
           console.log(`🔄 Also manually triggering handlePeerConnected for ${connectedPeers[0]}`);
           this.dht.handlePeerConnected(connectedPeers[0]);
         } else {
           // Test with fake peer ID to check if event handler is working
           console.log('🧪 Testing event handler with fake peer ID...');
-          this.dht.webrtc.emit('peerConnected', { peerId: 'test-peer-id-12345' });
+          this.dht.connectionManager.emit('peerConnected', { peerId: 'test-peer-id-12345' });
         }
         
+        return true;
+      },
+      
+      /**
+       * Get keep-alive status for all WebRTC connections
+       */
+      getKeepAliveStatus() {
+        if (!this.dht || !this.dht.connectionManager) {
+          console.log('DHT or connection manager not available');
+          return null;
+        }
+        
+        const cm = this.dht.connectionManager;
+        console.log('💓 Keep-Alive Status Report');
+        console.log(`Connection Manager Type: ${cm.constructor.name}`);
+        
+        // Check if connection manager has getKeepAliveStatus method (WebRTCManager)
+        if (cm.getKeepAliveStatus) {
+          console.log('📱 Using WebRTCManager keep-alive system');
+          return cm.getKeepAliveStatus();
+        }
+        
+        // Fallback for HybridConnectionManager (legacy)
+        const connectedPeers = cm.getConnectedPeers();
+        const keepAliveStatus = {};
+        
+        console.log(`Tab visible: ${cm.isTabVisible}`);
+        
+        // SAFETY CHECK: Ensure keep-alive maps exist
+        if (!cm.keepAliveIntervals) {
+          console.warn('⚠️ keepAliveIntervals not initialized - connection manager missing keep-alive system');
+          console.log('Available properties:', Object.keys(cm));
+          return null;
+        }
+        
+        console.log(`Active keep-alive intervals: ${cm.keepAliveIntervals.size}`);
+        console.log(`Keep-alive frequency: ${cm.isTabVisible ? cm.keepAliveFrequency : cm.inactiveKeepAliveFrequency}ms`);
+        
+        for (const peerId of connectedPeers) {
+          const hasKeepAlive = cm.keepAliveIntervals.has(peerId);
+          const lastPing = cm.lastPingTimes.get(peerId);
+          const pendingPings = cm.pingResponses.get(peerId)?.size || 0;
+          const connectionType = cm.connectionTypes.get(peerId);
+          
+          keepAliveStatus[peerId] = {
+            hasKeepAlive,
+            lastPing: lastPing ? new Date(lastPing).toLocaleTimeString() : 'Never',
+            pendingPings,
+            connectionType,
+            timeSinceLastPing: lastPing ? Date.now() - lastPing : null
+          };
+          
+          console.log(`  ${peerId.substring(0, 8)}... (${connectionType}):`, {
+            keepAlive: hasKeepAlive ? '✅' : '❌',
+            lastPing: keepAliveStatus[peerId].lastPing,
+            pending: pendingPings
+          });
+        }
+        
+        return keepAliveStatus;
+      },
+      
+      /**
+       * Manually trigger keep-alive ping for testing
+       */
+      testKeepAlivePing(peerId = null) {
+        if (!this.dht || !this.dht.connectionManager) {
+          console.log('DHT or connection manager not available');
+          return false;
+        }
+        
+        const cm = this.dht.connectionManager;
+        
+        // Check if connection manager has testKeepAlivePing method (WebRTCManager)
+        if (cm.testKeepAlivePing) {
+          console.log('📱 Using WebRTCManager keep-alive test');
+          return cm.testKeepAlivePing(peerId);
+        }
+        
+        // Fallback for HybridConnectionManager (legacy)
+        // SAFETY CHECK: Ensure keep-alive system exists
+        if (!cm.sendKeepAlivePing) {
+          console.warn('⚠️ Connection manager does not support keep-alive pings');
+          console.log(`Connection manager type: ${cm.constructor.name}`);
+          return false;
+        }
+        
+        const connectedPeers = cm.getConnectedPeers();
+        
+        if (!peerId && connectedPeers.length > 0) {
+          peerId = connectedPeers[0];
+        }
+        
+        if (!peerId) {
+          console.log('No peer to test - no connections available');
+          return false;
+        }
+        
+        console.log(`🏓 Manually triggering keep-alive ping to ${peerId.substring(0, 8)}...`);
+        cm.sendKeepAlivePing(peerId);
+        return true;
+      },
+      
+      /**
+       * Check connection health for all peers
+       */
+      checkConnectionHealth() {
+        if (!this.dht || !this.dht.connectionManager) {
+          console.log('DHT or connection manager not available');
+          return null;
+        }
+        
+        const cm = this.dht.connectionManager;
+        console.log('🩺 Connection Health Check');
+        console.log(`Connection Manager: ${cm.constructor.name}`);
+        
+        const connectedPeers = cm.getConnectedPeers();
+        const healthReport = {
+          totalConnections: cm.connections?.size || 0,
+          connectedPeers: connectedPeers.length,
+          connectionDetails: {}
+        };
+        
+        for (const peerId of connectedPeers) {
+          const connection = cm.connections?.get(peerId);
+          const connectionType = cm.connectionTypes?.get(peerId);
+          const connectionState = cm.connectionStates?.get(peerId);
+          
+          let actualState = 'unknown';
+          if (connectionType === 'webrtc' && connection) {
+            actualState = connection.connectionState;
+          } else if (connectionType === 'websocket' && connection) {
+            actualState = connection.readyState;
+          }
+          
+          healthReport.connectionDetails[peerId] = {
+            type: connectionType,
+            state: connectionState,
+            actualState,
+            isConnected: cm.isConnected(peerId)
+          };
+          
+          console.log(`  ${peerId.substring(0, 8)}... (${connectionType}): ${actualState} ${cm.isConnected(peerId) ? '✅' : '❌'}`);
+        }
+        
+        // Check for failed connections
+        if (cm.connections) {
+          for (const [peerId, connection] of cm.connections) {
+            const isConnected = cm.isConnected(peerId);
+            if (!isConnected) {
+              console.warn(`  ⚠️ ${peerId.substring(0, 8)}... appears disconnected but still in connections map`);
+            }
+          }
+        }
+        
+        return healthReport;
+      },
+      
+      /**
+       * Debug WebRTC connection states and transitions
+       */
+      debugWebRTCStates() {
+        if (!this.dht || !this.dht.connectionManager) {
+          console.log('DHT or connection manager not available');
+          return null;
+        }
+        
+        const cm = this.dht.connectionManager;
+        console.log('🔍 WebRTC Connection State Debug');
+        
+        if (!cm.connections) {
+          console.log('No connections map available');
+          return null;
+        }
+        
+        const webrtcConnections = Array.from(cm.connections.entries()).filter(([_peerId, _connection]) => 
+          cm.connectionTypes?.get(_peerId) === 'webrtc'
+        );
+        
+        console.log(`Found ${webrtcConnections.length} WebRTC connections`);
+        
+        for (const [peerId, connection] of webrtcConnections) {
+          const currentState = connection.connectionState;
+          const trackedState = cm.connectionStates?.get(peerId);
+          const dataChannel = cm.dataChannels?.get(peerId);
+          const hasKeepAlive = cm.keepAliveIntervals?.has(peerId);
+          
+          console.log(`\n${peerId.substring(0, 8)}...:`);
+          console.log(`  Connection state: ${currentState} (tracked: ${trackedState})`);
+          console.log(`  ICE connection state: ${connection.iceConnectionState}`);
+          console.log(`  ICE gathering state: ${connection.iceGatheringState}`);
+          console.log(`  Signaling state: ${connection.signalingState}`);
+          console.log(`  Data channel: ${dataChannel ? dataChannel.readyState : 'none'}`);
+          console.log(`  Keep-alive active: ${hasKeepAlive ? '✅' : '❌'}`);
+          
+          // Check for common WebRTC issues
+          if (currentState === 'failed') {
+            console.warn(`  ❌ Connection failed - ICE: ${connection.iceConnectionState}`);
+          }
+          if (currentState === 'disconnected') {
+            console.warn(`  ⚠️ Connection disconnected - may recover`);
+          }
+          if (dataChannel && dataChannel.readyState !== 'open') {
+            console.warn(`  ⚠️ Data channel not open: ${dataChannel.readyState}`);
+          }
+        }
+        
+        return {
+          webrtcCount: webrtcConnections.length,
+          states: webrtcConnections.map(([peerId, connection]) => ({
+            peerId: peerId.substring(0, 8),
+            connectionState: connection.connectionState,
+            iceConnectionState: connection.iceConnectionState,
+            dataChannelState: cm.dataChannels?.get(peerId)?.readyState
+          }))
+        };
+      },
+      
+      /**
+       * Simulate tab visibility change for testing
+       */
+      simulateTabVisibilityChange(visible = null) {
+        if (!this.dht || !this.dht.connectionManager) {
+          console.log('DHT or connection manager not available');
+          return false;
+        }
+        
+        const cm = this.dht.connectionManager;
+        
+        // Check if connection manager has simulateTabVisibilityChange method (WebRTCManager)
+        if (cm.simulateTabVisibilityChange) {
+          console.log('📱 Using WebRTCManager tab visibility simulation');
+          return cm.simulateTabVisibilityChange();
+        }
+        
+        // Fallback for HybridConnectionManager (legacy)
+        const oldVisible = cm.isTabVisible;
+        
+        if (visible === null) {
+          visible = !oldVisible; // Toggle
+        }
+        
+        console.log(`📱 Simulating tab visibility change: ${oldVisible} → ${visible}`);
+        cm.isTabVisible = visible;
+        
+        if (cm.adjustKeepAliveFrequency) {
+          cm.adjustKeepAliveFrequency();
+        }
+        
+        if (visible && !oldVisible) {
+          console.log('🔄 Simulating tab became visible - checking connection health...');
+          // Check connection health manually instead of calling non-existent method
+          const connectedPeers = cm.getConnectedPeers();
+          console.log(`📊 Connection check: ${connectedPeers.length} peers connected`);
+        }
+        
+        return true;
+      },
+      
+      /**
+       * Force check connection health for all peers
+       */
+      checkConnectionHealth() {
+        if (!this.dht || !this.dht.connectionManager) {
+          console.log('DHT or connection manager not available');
+          return false;
+        }
+        
+        const cm = this.dht.connectionManager;
+        console.log('🩺 Connection Health Check');
+        console.log(`Connection Manager: ${cm.constructor.name}`);
+        
+        const connectedPeers = cm.getConnectedPeers();
+        const healthReport = {
+          totalConnections: cm.connections?.size || 0,
+          connectedPeers: connectedPeers.length,
+          connectionDetails: {}
+        };
+        
+        for (const peerId of connectedPeers) {
+          const connection = cm.connections?.get(peerId);
+          const connectionType = cm.connectionTypes?.get(peerId);
+          const connectionState = cm.connectionStates?.get(peerId);
+          
+          let actualState = 'unknown';
+          if (connectionType === 'webrtc' && connection) {
+            actualState = connection.connectionState;
+          } else if (connectionType === 'websocket' && connection) {
+            actualState = connection.readyState;
+          }
+          
+          healthReport.connectionDetails[peerId] = {
+            type: connectionType,
+            state: connectionState,
+            actualState,
+            isConnected: cm.isConnected(peerId)
+          };
+          
+          console.log(`  ${peerId.substring(0, 8)}... (${connectionType}): ${actualState} ${cm.isConnected(peerId) ? '✅' : '❌'}`);
+        }
+        
+        return healthReport;
+      },
+      
+      /**
+       * Get rate limiting and traffic statistics
+       */
+      getTrafficStats() {
+        if (!this.dht) {
+          console.log('DHT not available');
+          return null;
+        }
+        
+        const now = Date.now();
+        const stats = {
+          findNodeRateLimit: this.dht.findNodeRateLimit.size,
+          lastBucketRefresh: this.dht.lastBucketRefreshTime ? new Date(this.dht.lastBucketRefreshTime).toLocaleTimeString() : 'Never',
+          timeSinceLastRefresh: this.dht.lastBucketRefreshTime ? Math.round((now - this.dht.lastBucketRefreshTime) / 1000) : null,
+          refreshInterval: this.dht.options.refreshInterval / 1000,
+          findNodeMinInterval: this.dht.findNodeMinInterval / 1000,
+          peerFailureBackoff: this.dht.peerFailureBackoff.size,
+          processedMessages: this.dht.processedMessages.size
+        };
+        
+        console.log('📊 DHT Traffic Statistics:');
+        console.log(`Rate limited peers: ${stats.findNodeRateLimit}`);
+        console.log(`Last bucket refresh: ${stats.lastBucketRefresh}`);
+        console.log(`Refresh interval: ${stats.refreshInterval}s`);
+        console.log(`Find node min interval: ${stats.findNodeMinInterval}s`);
+        console.log(`Failed peers in backoff: ${stats.peerFailureBackoff}`);
+        console.log(`Processed messages cache: ${stats.processedMessages}`);
+        
+        return stats;
+      },
+      
+      /**
+       * Manually trigger cleanup of tracking maps
+       */
+      cleanupTrackingMaps() {
+        if (!this.dht) {
+          console.log('DHT not available');
+          return false;
+        }
+        
+        console.log('🧹 Manually triggering tracking maps cleanup...');
+        this.dht.cleanupTrackingMaps();
+        return true;
+      },
+      
+      /**
+       * Get adaptive refresh status and bucket staleness info
+       */
+      getAdaptiveRefreshStatus() {
+        if (!this.dht) {
+          console.log('DHT not available');
+          return null;
+        }
+        
+        const now = Date.now();
+        const connectedPeers = this.dht.connectionManager.getConnectedPeers().length;
+        const routingNodes = this.dht.routingTable.getAllNodes().length;
+        
+        const status = {
+          currentInterval: this.dht.currentRefreshInterval / 1000,
+          aggressiveInterval: this.dht.options.aggressiveRefreshInterval / 1000,
+          standardInterval: this.dht.options.standardRefreshInterval / 1000,
+          connectedPeers,
+          routingNodes,
+          bucketActivity: this.dht.bucketLastActivity.size,
+          staleBuckets: []
+        };
+        
+        // Check which buckets are stale
+        const stalenessThreshold = this.dht.currentRefreshInterval * 2;
+        for (const [bucketIndex, lastActivity] of this.dht.bucketLastActivity.entries()) {
+          const timeSinceActivity = now - lastActivity;
+          if (timeSinceActivity > stalenessThreshold) {
+            status.staleBuckets.push({
+              bucket: bucketIndex,
+              staleFor: Math.round(timeSinceActivity / 1000)
+            });
+          }
+        }
+        
+        console.log('🔄 Adaptive Refresh Status:');
+        console.log(`Current mode: ${status.currentInterval}s interval`);
+        console.log(`Peers: ${connectedPeers} connected, ${routingNodes} routing`);
+        console.log(`Bucket activity: ${status.bucketActivity} buckets tracked`);
+        console.log(`Stale buckets: ${status.staleBuckets.length}`);
+        
+        if (status.staleBuckets.length > 0) {
+          console.log('Stale bucket details:', status.staleBuckets);
+        }
+        
+        return status;
+      },
+      
+      /**
+       * Manually trigger background connection process
+       */
+      async triggerBackgroundConnections() {
+        if (!this.dht) {
+          console.log('DHT not available');
+          return false;
+        }
+        
+        console.log('🔗 Manually triggering background connection process...');
+        await this.dht.connectToUnconnectedRoutingNodes();
+        
+        const allNodes = this.dht.routingTable.getAllNodes().length;
+        const connectedPeers = this.dht.connectionManager.getConnectedPeers().length;
+        console.log(`📊 Result: ${connectedPeers} connected of ${allNodes} nodes in routing table`);
+        
+        return true;
+      },
+      
+      /**
+       * Debug WebRTC message routing
+       */
+      debugWebRTCRouting() {
+        if (!this.dht) {
+          console.log('DHT not available');
+          return null;
+        }
+        
+        const allNodes = this.dht.routingTable.getAllNodes();
+        const connectedPeers = this.dht.connectionManager.getConnectedPeers();
+        
+        console.log('🛣️ WebRTC Message Routing Debug');
+        console.log(`Connected peers: ${connectedPeers.length}`);
+        console.log(`Routing table nodes: ${allNodes.length}`);
+        
+        for (const node of allNodes) {
+          const peerId = node.id.toString();
+          const isConnected = this.dht.connectionManager.isConnected(peerId);
+          const distance = node.id.xorDistance(this.dht.localNodeId);
+          
+          console.log(`  ${peerId.substring(0, 8)}... - Connected: ${isConnected ? '✅' : '❌'} - Distance: ${distance.toString().substring(0, 8)}...`);
+          
+          if (!isConnected) {
+            // Show routing path for unconnected peers
+            const closestConnected = allNodes
+              .filter(n => this.dht.connectionManager.isConnected(n.id.toString()))
+              .sort((a, b) => {
+                const distA = a.id.xorDistance(node.id);
+                const distB = b.id.xorDistance(node.id);
+                return distA.compare(distB);
+              });
+              
+            if (closestConnected.length > 0) {
+              const nextHop = closestConnected[0].id.toString();
+              console.log(`    Route to ${peerId.substring(0, 8)}... would go via ${nextHop.substring(0, 8)}...`);
+            } else {
+              console.log(`    No route available to ${peerId.substring(0, 8)}...`);
+            }
+          }
+        }
+        
+        return {
+          connectedPeers: connectedPeers.length,
+          routingTableNodes: allNodes.length,
+          unconnectedNodes: allNodes.filter(n => !this.dht.connectionManager.isConnected(n.id.toString())).length
+        };
+      },
+      
+      /**
+       * Force adaptive refresh recalculation
+       */
+      forceAdaptiveRefresh() {
+        if (!this.dht) {
+          console.log('DHT not available');
+          return false;
+        }
+        
+        console.log('🔄 Forcing adaptive refresh recalculation...');
+        this.dht.scheduleAdaptiveRefresh();
+        return true;
+      },
+      
+      /**
+       * Manually trigger stale bucket refresh
+       */
+      refreshStaleBuckets() {
+        if (!this.dht) {
+          console.log('DHT not available');
+          return false;
+        }
+        
+        console.log('🔄 Manually refreshing stale buckets...');
+        this.dht.refreshStaleBuckets();
         return true;
       }
     };
@@ -802,6 +1290,18 @@ class App {
     console.log('Routing Table: YZSocialC.syncRoutingTable() - Force sync connected peers to routing table');
     console.log('Force Add Peers: YZSocialC.forceAddConnectedPeersToRouting() - Force add all connected peers to routing table');
     console.log('Debug Events: YZSocialC.debugEventHandlers() - Debug event handler setup and manually trigger peer handling');
+    console.log('🔗 Keep-Alive (NEW): YZSocialC.getKeepAliveStatus() - Check WebRTC keep-alive status for inactive tabs');
+    console.log('🔗 Test Keep-Alive: YZSocialC.testKeepAlivePing(peerId) - Manually send keep-alive ping');
+    console.log('🔗 Tab Simulation: YZSocialC.simulateTabVisibilityChange() - Test inactive tab behavior');
+    console.log('🔗 Health Check: YZSocialC.checkConnectionHealth() - Check connection health for all peers');
+    console.log('🔗 WebRTC Debug: YZSocialC.debugWebRTCStates() - Debug WebRTC connection states and issues');
+    console.log('📊 Traffic Stats (NEW): YZSocialC.getTrafficStats() - Monitor find_node rate limiting and DHT traffic');
+    console.log('🧹 Cleanup Maps: YZSocialC.cleanupTrackingMaps() - Manually clean up tracking maps');
+    console.log('🔄 Adaptive Refresh (NEW): YZSocialC.getAdaptiveRefreshStatus() - Check Kademlia-compliant refresh status');
+    console.log('🔄 Force Adaptive: YZSocialC.forceAdaptiveRefresh() - Recalculate refresh timing');
+    console.log('🔄 Refresh Stale: YZSocialC.refreshStaleBuckets() - Manually refresh only stale buckets');
+    console.log('🔗 Background Connections (NEW): YZSocialC.triggerBackgroundConnections() - Connect to unconnected routing table nodes');
+    console.log('🛣️ WebRTC Routing (NEW): YZSocialC.debugWebRTCRouting() - Debug DHT message routing paths');
   }
 
   /**

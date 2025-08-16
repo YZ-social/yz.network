@@ -12,6 +12,7 @@ YZSocialC is a browser-based Distributed Hash Table (DHT) implementation using t
 - Node.js 16+ with npm
 - Modern browser with WebRTC support
 - Optional: WebAssembly toolchain for UI components
+- Optional: WSL2 (for Windows development)
 
 **Installation:**
 ```bash
@@ -28,6 +29,7 @@ npm install
 - `npm test` - Run tests
 - `npm run lint` - Run ESLint
 - `npm run clean` - Clean build artifacts
+
 
 **Server Management:**
 - `npm run shutdown` - Kill all YZSocialC servers (ports 3000, 8080, 8081)
@@ -46,10 +48,10 @@ npm install
 ### Core Components
 
 **DHT Implementation (`src/dht/`):**
-- `KademliaDHT.js` - Main DHT coordinator with WebRTC integration
+- `KademliaDHT.js` - Main DHT coordinator with WebRTC integration and adaptive refresh
 - `RoutingTable.js` - Kademlia routing table with k-buckets and phantom peer validation
 - DHT automatically switches from bootstrap signaling to DHT-based signaling once connected
-- **Separation of Concerns**: `findNode()` is pure data lookup, `discoverPeers()` handles peer discovery
+- **Integrated Discovery**: `findNode()` performs lookup AND adds discovered peers to routing table for proper Kademlia operation
 
 **Core Classes (`src/core/`):**
 - `DHTNodeId.js` - 160-bit node identifiers with XOR distance calculations
@@ -78,7 +80,7 @@ npm install
 4. **Chain of Trust Security**: Cryptographic invitation tokens prevent unauthorized network access
 5. **DHT-Based ICE Candidate Exchange**: Complete WebRTC signaling (offers/answers/ICE) via DHT storage
 6. **Temporary Bootstrap Usage**: Reconnect to bootstrap only when sending invitations
-7. **Automatic Peer Discovery**: Enhanced k-bucket maintenance for small networks (3-10 nodes)
+7. **Adaptive Refresh System**: Literature-compliant Kademlia refresh with adaptive timing (15s for new nodes, 10min for established nodes)
 8. **Progressive Enhancement Cryptography**: Ed25519 with native browser crypto + library fallback
 
 ### Network Flow
@@ -89,7 +91,7 @@ npm install
 4. **Chain of Trust**: Newly joined peers receive membership tokens and can invite others
 5. **Immediate DHT Signaling**: Switch to DHT-based signaling after **first DHT connection** (not waiting for multiple peers)
 6. **Bootstrap Disconnection**: Disconnect from bootstrap server, reconnect only for sending invitations
-7. **DHT-Based Peer Discovery**: Automatic k-bucket maintenance discovers and connects peers via DHT (30-second intervals)
+7. **Adaptive Bucket Maintenance**: Kademlia-compliant staleness-based refresh with adaptive timing (15s for isolated nodes, 10min for well-connected nodes)
 8. **Full Independence**: All WebRTC signaling (offers/answers/ICE candidates) stored in DHT with minimal server usage
 
 ### DHT Security Model
@@ -114,13 +116,14 @@ npm install
 - `k = 20` - Kademlia k parameter (bucket size)
 - `alpha = 3` - Lookup parallelism
 - `replicateK = 3` - Replication factor for stored data
-- `refreshInterval = 30 seconds` - K-bucket maintenance frequency (dev-friendly)
+- `aggressiveRefreshInterval = 15 seconds` - For new/isolated nodes (< 2 peers)
+- `standardRefreshInterval = 10 minutes` - For well-connected nodes (following IPFS/literature standards)
 - `pingInterval = 1 minute` - Node liveness check frequency
 
 **DHT Signaling Transition:**
 - **Immediate Switch**: Transition to DHT-based signaling after **≥1 DHT connection**
 - **Bootstrap Usage**: Temporary reconnection only for sending invitations
-- **Discovery Aggressiveness**: 30% search probability for networks <10 peers, 10% for larger
+- **Adaptive Discovery**: Emergency mode for isolated nodes, staleness-based refresh for established networks
 - **DHT Offer Polling**: Check for incoming WebRTC offers every 5 seconds
 
 **WebRTC:**
@@ -185,21 +188,35 @@ YZSocialC.dht.createInvitationToken('target_node_id') // Create token manually
 YZSocialC.getSignalingMode() // Check current signaling mode
 YZSocialC.switchToDHTSignaling() // Force switch to DHT-based ICE sharing
 
-// Network Discovery & Maintenance (Updated for DHT Messaging)
-YZSocialC.refreshBuckets() // Force k-bucket refresh and DHT peer discovery
+// Adaptive Refresh System (Literature-Compliant)
+YZSocialC.getAdaptiveRefreshStatus() // Check adaptive refresh status and bucket staleness
+YZSocialC.forceAdaptiveRefresh() // Force recalculation of refresh timing
+YZSocialC.refreshStaleBuckets() // Manually refresh only stale buckets
+
+// WebRTC Keep-Alive System (NEW)
+YZSocialC.getKeepAliveStatus() // Check WebRTC keep-alive status for inactive tabs
+YZSocialC.testKeepAlivePing(peerId) // Manually send keep-alive ping to test connection
+YZSocialC.simulateTabVisibilityChange() // Test inactive tab behavior
+YZSocialC.checkConnectionHealth() // Check connection health for all peers
+YZSocialC.debugWebRTCStates() // Debug WebRTC connection states and issues
+
+// Network Discovery & Maintenance
+YZSocialC.refreshBuckets() // Legacy: Force k-bucket refresh and DHT peer discovery
 YZSocialC.triggerPeerDiscovery() // Aggressive peer discovery using direct DHT messaging
-YZSocialC.dht.discoverPeersViaDHT() // Manual DHT peer discovery via direct messaging
 
 // Debug Tools
 YZSocialC.debugConnectionState() // Analyze peer connections
 YZSocialC.debugRoutingTable() // Check routing table consistency
 YZSocialC.investigatePhantomPeer('suspect_id') // Debug phantom peer issues
+YZSocialC.getTrafficStats() // Monitor find_node rate limiting and DHT traffic
 
 // Export logs
 YZSocialC.exportLogs()
 ```
 
 **DHT Network Setup:**
+
+*Browser Testing:*
 ```bash
 # OPTION 1: Using npm scripts (recommended)
 npm run bootstrap:genesis    # Start bootstrap server in genesis mode
@@ -216,13 +233,14 @@ node src/bootstrap/server.js                 # Standard mode
 # 4. Subsequent clients follow same pattern
 ```
 
+
 **Network Behavior:**
 - **Hybrid Signaling Mode**: Bootstrap server for new client invitations, direct DHT messaging for existing members
 - **Message Queue Processing**: Ordered message handling per peer prevents race conditions
 - **Direct DHT Messaging**: WebRTC signaling via `webrtc_offer`, `webrtc_answer`, `webrtc_ice` message types
 - **Multi-Hop Routing**: Messages route through DHT network to reach target peers
 - **Peer Discovery Messaging**: `peer_discovery_request`/`peer_discovery_response` for finding willing peers
-- **Automatic Discovery**: K-bucket maintenance runs every 30 seconds, using direct DHT messaging for peer discovery
+- **Adaptive Discovery**: K-bucket maintenance with adaptive timing - 15s for new nodes, 10min for established nodes, using staleness-based refresh
 - **Bootstrap Usage**: Only used for invitations and initial DHT joining, not for member-to-member signaling
 
 **Common Issues:**
@@ -233,7 +251,8 @@ node src/bootstrap/server.js                 # Standard mode
 - WebRTC connections require STUN/TURN servers for NAT traversal
 - Browser security requires HTTPS for WebRTC in production
 - Invitation tokens expire after 30 minutes by default
-- K-bucket refresh may take 30+ seconds - use `YZSocialC.refreshBuckets()` for immediate testing
+- K-bucket refresh is adaptive - new nodes refresh every 15s, established nodes every 10min - use `YZSocialC.forceAdaptiveRefresh()` for immediate testing
+
 
 **DHT Direct Messaging System (IMPLEMENTED):**
 - **Problem Solved**: Replaced flawed DHT storage polling with direct peer-to-peer messaging through existing DHT connections
@@ -260,6 +279,31 @@ node src/bootstrap/server.js                 # Standard mode
 - **Symptom**: Random node IDs appearing in logs causing endless connection attempts
 - **Root Cause**: Storage key hashes, random IDs, or DHT maintenance IDs being mistaken for real peer nodes
 - **Key Insight**: Only peers with invitation tokens are legitimate node IDs - random IDs are not real clients
-- **Fix Applied**: Separated `findNode()` data lookup from peer discovery to prevent phantom peers
-- **Validation**: Added routing table validation to reject likely phantom peer IDs
+- **Fix Applied**: Disabled flawed phantom peer detection that was incorrectly rejecting legitimate connected peers
+- **Validation**: `findNode()` now properly adds discovered peers to routing table (core Kademlia behavior)
 - **Debug Tools**: Use `YZSocialC.investigatePhantomPeer('id')` to analyze suspicious peers
+
+**Adaptive Refresh System (NEW):**
+- **Literature Compliance**: Follows original Kademlia paper timing with modern adaptations
+- **Three-Tier System**: 
+  - **Aggressive (15s)**: New/isolated nodes (<2 peers) for rapid bootstrap
+  - **Medium (60s)**: Moderately connected nodes (2-5 peers)
+  - **Standard (10min)**: Well-connected nodes (5+ peers) following IPFS/literature standards
+- **Staleness-Based**: Only refreshes buckets that haven't been active (proper Kademlia behavior)
+- **Traffic Reduction**: Dramatically reduces find_node message spam from ~50/30s to ~3/10min for established nodes
+- **Debug Tools**: `YZSocialC.getAdaptiveRefreshStatus()`, `YZSocialC.forceAdaptiveRefresh()`
+
+**WebRTC Keep-Alive for Inactive Tabs (NEW):**
+- **Page Visibility API**: Detects when browser tabs become inactive/active
+- **Adaptive Frequency**: 30s for active tabs, 10s for inactive tabs (combat browser throttling)
+- **Ping/Pong Protocol**: `keep_alive_ping`/`keep_alive_pong` messages with timeout detection
+- **Connection Health**: Automatic detection of failed connections and cleanup
+- **Debug Tools**: `YZSocialC.getKeepAliveStatus()`, `YZSocialC.testKeepAlivePing()`, `YZSocialC.simulateTabVisibilityChange()`
+
+**WebRTC Signaling Fixes (FIXED):**
+- **Missing handleSignal**: Added complete WebRTC signaling handling to `HybridConnectionManager`
+- **Perfect Negotiation Pattern**: Proper collision handling using node ID comparison for polite/impolite roles
+- **Signal Processing**: Complete implementation of offer/answer/ICE candidate handling
+- **Emergency Rate Limiting**: Added bypass for emergency discovery to prevent rate limit blocking
+- **Connection State Monitoring**: Enhanced debugging for WebRTC connection state transitions
+- **Debug Tools**: `YZSocialC.checkConnectionHealth()`, `YZSocialC.debugWebRTCStates()`
