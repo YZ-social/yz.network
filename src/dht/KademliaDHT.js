@@ -2400,6 +2400,11 @@ export class KademliaDHT extends EventEmitter {
         this.handlePeerMessage(msgPeerId, message);
       });
       
+      // CRITICAL: Set up signal event listener for DHT-based WebRTC signaling
+      peerNode.connectionManager.on('signal', ({ peerId: signalPeerId, signal }) => {
+        this.handleOutgoingSignal(signalPeerId, signal);
+      });
+      
       // CRITICAL: Transfer metadata to connection manager
       if (peerNode.metadata && Object.keys(peerNode.metadata).length > 0) {
         peerNode.connectionManager.setPeerMetadata(peerId, peerNode.metadata);
