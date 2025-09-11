@@ -47,6 +47,14 @@ class App {
         }
       });
 
+      // Set browser-specific bootstrap metadata for Enhanced Bootstrap Server
+      this.dht.bootstrapMetadata = {
+        nodeType: 'browser',
+        capabilities: ['webrtc', 'websocket-client'],
+        canAcceptConnections: false,
+        canInitiateConnections: true
+      };
+
       // Create UI visualizer
       this.visualizer = new DHTVisualizer(this.dht);
 
@@ -114,7 +122,7 @@ class App {
       // Helper functions
       getStats: () => this.dht ? this.dht.getStats() : null,
       getNodes: () => this.dht ? this.dht.routingTable.getAllNodes() : [],
-      getPeers: () => this.dht ? this.dht.connectionManager.getConnectedPeers() : [],
+      getPeers: () => this.dht ? this.dht.routingTable.getAllNodes().filter(node => node.isConnected()).map(node => node.id.toString()) : [],
       
       // Development tools
       async testStore(key = 'test-key', value = 'test-value') {
@@ -802,7 +810,7 @@ class App {
           return cm.getKeepAliveStatus();
         }
         
-        // Fallback for HybridConnectionManager (legacy)
+        // Fallback for older connection managers
         const connectedPeers = cm.getConnectedPeers();
         const keepAliveStatus = {};
         
@@ -859,7 +867,7 @@ class App {
           return cm.testKeepAlivePing(peerId);
         }
         
-        // Fallback for HybridConnectionManager (legacy)
+        // Fallback for older connection managers
         // SAFETY CHECK: Ensure keep-alive system exists
         if (!cm.sendKeepAlivePing) {
           console.warn('⚠️ Connection manager does not support keep-alive pings');
@@ -1015,7 +1023,7 @@ class App {
           return cm.simulateTabVisibilityChange();
         }
         
-        // Fallback for HybridConnectionManager (legacy)
+        // Fallback for older connection managers
         const oldVisible = cm.isTabVisible;
         
         if (visible === null) {
@@ -1039,50 +1047,6 @@ class App {
         return true;
       },
       
-      /**
-       * Force check connection health for all peers
-       */
-      checkConnectionHealth() {
-        if (!this.dht || !this.dht.connectionManager) {
-          console.log('DHT or connection manager not available');
-          return false;
-        }
-        
-        const cm = this.dht.connectionManager;
-        console.log('🩺 Connection Health Check');
-        console.log(`Connection Manager: ${cm.constructor.name}`);
-        
-        const connectedPeers = cm.getConnectedPeers();
-        const healthReport = {
-          totalConnections: cm.connections?.size || 0,
-          connectedPeers: connectedPeers.length,
-          connectionDetails: {}
-        };
-        
-        for (const peerId of connectedPeers) {
-          const connection = cm.connections?.get(peerId);
-          const connectionType = cm.connectionTypes?.get(peerId);
-          const connectionState = cm.connectionStates?.get(peerId);
-          
-          let actualState = 'unknown';
-          if (connectionType === 'webrtc' && connection) {
-            actualState = connection.connectionState;
-          } else if (connectionType === 'websocket' && connection) {
-            actualState = connection.readyState;
-          }
-          
-          healthReport.connectionDetails[peerId] = {
-            type: connectionType,
-            state: connectionState,
-            actualState,
-            isConnected: cm.isConnected(peerId)
-          };
-          
-          console.log(`  ${peerId.substring(0, 8)}... (${connectionType}): ${actualState} ${cm.isConnected(peerId) ? '✅' : '❌'}`);
-        }
-        
-        return healthReport;
-      },
       
       /**
        * Get rate limiting and traffic statistics

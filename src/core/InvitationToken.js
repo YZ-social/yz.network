@@ -275,7 +275,27 @@ export class InvitationToken {
    */
   static generateNonce() {
     const randomBytes = new Uint8Array(16);
-    window.crypto.getRandomValues(randomBytes);
+    
+    // Use crypto.getRandomValues in browsers, crypto.randomFillSync in Node.js
+    if (typeof window !== 'undefined' && window.crypto && window.crypto.getRandomValues) {
+      // Browser environment
+      window.crypto.getRandomValues(randomBytes);
+    } else if (typeof global !== 'undefined' && global.crypto && global.crypto.getRandomValues) {
+      // Node.js with global crypto
+      global.crypto.getRandomValues(randomBytes);
+    } else {
+      // Node.js environment - use crypto module
+      try {
+        const crypto = require('crypto');
+        crypto.randomFillSync(randomBytes);
+      } catch (error) {
+        // Fallback: use Math.random (less secure but works)
+        for (let i = 0; i < randomBytes.length; i++) {
+          randomBytes[i] = Math.floor(Math.random() * 256);
+        }
+      }
+    }
+    
     return Array.from(randomBytes)
       .map(b => b.toString(16).padStart(2, '0'))
       .join('');

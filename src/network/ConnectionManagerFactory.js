@@ -1,0 +1,168 @@
+import { WebRTCConnectionManager } from './WebRTCConnectionManager.js';
+import { WebSocketConnectionManager } from './WebSocketConnectionManager.js';
+
+/**
+ * Factory for creating appropriate connection managers based on environment and peer types
+ */
+export class ConnectionManagerFactory {
+  static localNodeType = null;
+  static defaultOptions = {};
+  static managerCache = new Map(); // Cache connection managers by peer ID
+
+  /**
+   * Detect the current node type from environment
+   * @returns {string} Node type ('nodejs', 'browser', 'webworker', etc.)
+   */
+  static detectNodeType() {
+    // Check for Node.js specific globals
+    if (typeof process !== 'undefined' && process.versions && process.versions.node) {
+      return 'nodejs';
+    }
+    
+    // Check for browser globals
+    if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+      return 'browser';
+    }
+    
+    // Check for Web Workers
+    if (typeof self !== 'undefined' && typeof importScripts === 'function') {
+      return 'webworker';
+    }
+    
+    // Future: Add other environment detection (Deno, Bun, etc.)
+    
+    // Fallback - assume Node.js if uncertain
+    return 'nodejs';
+  }
+
+  /**
+   * Initialize transport factory
+   * @param {object} options - Configuration options
+   */
+  static initializeTransports(options = {}) {
+    ConnectionManagerFactory.localNodeType = ConnectionManagerFactory.detectNodeType();
+    ConnectionManagerFactory.defaultOptions = options;
+    
+    console.log(`🏗️ ConnectionManagerFactory initialized for ${ConnectionManagerFactory.localNodeType} environment`);
+  }
+
+  /**
+   * Get appropriate manager for a peer connection
+   * @param {string} peerId - Target peer ID
+   * @param {object} peerMetadata - Peer metadata (optional)
+   * @returns {ConnectionManager} Appropriate connection manager
+   */
+  static getManagerForPeer(peerId, peerMetadata = null) {
+    // Check cache first to prevent multiple instances
+    if (ConnectionManagerFactory.managerCache.has(peerId)) {
+      console.log(`🔄 Reusing cached connection manager for ${peerId.substring(0, 8)}...`);
+      return ConnectionManagerFactory.managerCache.get(peerId);
+    }
+    
+    // Determine target node type from metadata
+    let targetNodeType = 'browser'; // default
+    if (peerMetadata) {
+      if (peerMetadata.nodeType === 'nodejs' || peerMetadata.listeningAddress) {
+        targetNodeType = 'nodejs';
+      }
+    }
+    
+    // Create manager on-demand based on connection requirements
+    const manager = ConnectionManagerFactory.createForConnection(
+      ConnectionManagerFactory.localNodeType,
+      targetNodeType,
+      ConnectionManagerFactory.defaultOptions
+    );
+    
+    // Cache the manager for future use
+    ConnectionManagerFactory.managerCache.set(peerId, manager);
+    console.log(`💾 Cached new connection manager for ${peerId.substring(0, 8)}...`);
+    
+    return manager;
+  }
+
+  /**
+   * Create connection manager for specific connection type
+   * @param {string} localNodeType - 'nodejs', 'browser', etc.
+   * @param {string} targetNodeType - 'nodejs', 'browser', etc.
+   * @param {Object} options - Configuration options
+   * @returns {ConnectionManager} Appropriate connection manager instance
+   */
+  static createForConnection(localNodeType, targetNodeType, options = {}) {
+    // Transport selection logic:
+    // Browser → Browser: WebRTC (peer-to-peer)
+    // Browser → Node.js: WebSocket (Node.js is server)
+    // Node.js → Browser: WebSocket (Node.js is server) 
+    // Node.js → Node.js: WebSocket
+    // Future: Add LoRa, Bluetooth, etc.
+    
+    if (localNodeType === 'browser' && targetNodeType === 'browser') {
+      console.log('🚀 Creating WebRTCConnectionManager for Browser↔Browser');
+      return new WebRTCConnectionManager(options);
+    } else {
+      // All other combinations use WebSocket
+      console.log(`🌐 Creating WebSocketConnectionManager for ${localNodeType}→${targetNodeType}`);
+      return new WebSocketConnectionManager(options);
+    }
+  }
+
+  /**
+   * Create connection manager for the current environment
+   * @param {Object} options - Configuration options
+   * @returns {ConnectionManager} Appropriate connection manager instance
+   */
+  static createForEnvironment(options = {}) {
+    const nodeType = ConnectionManagerFactory.detectNodeType();
+
+    if (nodeType === 'nodejs') {
+      // Node.js environment - use WebSocket manager for server capabilities
+      console.log('🌐 Creating WebSocketConnectionManager for Node.js environment');
+      return new WebSocketConnectionManager(options);
+    } else {
+      // Browser environment - use WebRTC manager for P2P capabilities
+      console.log('🚀 Creating WebRTCConnectionManager for browser environment');
+      return new WebRTCConnectionManager(options);
+    }
+  }
+
+  /**
+   * Create connection manager for specific peer type
+   * @param {string} peerType - 'nodejs', 'browser', etc.
+   * @param {Object} options - Configuration options
+   * @returns {ConnectionManager} Appropriate connection manager instance
+   */
+  static createForPeerType(peerType, options = {}) {
+    switch (peerType) {
+      case 'nodejs':
+        console.log('🌐 Creating WebSocketConnectionManager for Node.js peer');
+        return new WebSocketConnectionManager(options);
+      
+      case 'browser':
+        console.log('🚀 Creating WebRTCConnectionManager for browser peer');
+        return new WebRTCConnectionManager(options);
+        
+      default:
+        console.warn(`Unknown peer type: ${peerType}, defaulting to environment-based selection`);
+        return ConnectionManagerFactory.createForEnvironment(options);
+    }
+  }
+
+  /**
+   * Remove cached connection manager for a peer
+   * @param {string} peerId - Peer ID
+   */
+  static removePeerManager(peerId) {
+    if (ConnectionManagerFactory.managerCache.has(peerId)) {
+      console.log(`🗑️ Removing cached connection manager for ${peerId.substring(0, 8)}...`);
+      ConnectionManagerFactory.managerCache.delete(peerId);
+    }
+  }
+
+  /**
+   * Clear all cached connection managers
+   */
+  static clearManagerCache() {
+    console.log(`🧹 Clearing ${ConnectionManagerFactory.managerCache.size} cached connection managers`);
+    ConnectionManagerFactory.managerCache.clear();
+  }
+}

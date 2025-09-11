@@ -13,8 +13,7 @@ import { randomBytes, createHash, randomUUID } from 'crypto';
 import WebSocket from 'ws';
 
 // DHT imports
-import { KademliaDHT } from '../dht/KademliaDHT.js';
-import { BootstrapClient } from '../bootstrap/BootstrapClient.js';
+import { DHTClient } from '../core/DHTClient.js';
 import { WebSocketManager } from '../network/WebSocketManager.js';
 import { DHTNodeId } from '../core/DHTNodeId.js';
 import { InvitationToken } from '../core/InvitationToken.js';
@@ -69,18 +68,21 @@ global.EventTarget = class EventTarget {
 /**
  * Node.js DHT Client using WebSocket connections
  */
-export class NodeDHTClient {
+export class NodeDHTClient extends DHTClient {
   constructor(options = {}) {
-    this.options = {
-      bootstrapServers: options.bootstrapServers || ['ws://localhost:8080'],
+    super({
       port: options.port || 0, // 0 = random available port
-      k: options.k || 20,
-      alpha: options.alpha || 3,
-      replicateK: options.replicateK || 3,
       ...options
-    };
+    });
+    
+    // Node.js specific properties
+    this.websocketManager = null;
+  }
 
-    // Generate unique node ID using GUID + SHA1
+  /**
+   * Override node ID generation to use GUID + SHA1 for Node.js
+   */
+  generateNodeId() {
     const guid = randomUUID();
     console.log(`🆔 Generated GUID: ${guid}`);
     
@@ -89,15 +91,37 @@ export class NodeDHTClient {
     const hash = createHash('sha1').update(guidBytes).digest();
     seedArray.set(hash);
     
-    this.nodeId = new DHTNodeId(seedArray);
-    this.dht = null;
-    this.websocketManager = null;
-    this.bootstrap = null;
-    this.isStarted = false;
+    return new DHTNodeId(seedArray);
+  }
 
-    console.log(`🌐 Node.js DHT Client initializing`);
-    console.log(`   Node ID: ${this.nodeId.toString().substring(0, 16)}...`);
-    console.log(`   Node Type: websocket`);
+  getNodeType() {
+    return 'nodejs';
+  }
+
+  getCapabilities() {
+    return ['websocket', 'relay'];
+  }
+
+  canAcceptConnections() {
+    return true;
+  }
+
+  canInitiateConnections() {
+    return true;
+  }
+
+  /**
+   * Override bootstrap metadata to include WebSocket listening address
+   */
+  getBootstrapMetadata() {
+    return {
+      nodeType: 'nodejs',
+      listeningAddress: this.websocketManager?.listeningAddress,
+      capabilities: ['websocket', 'relay'],
+      canRelay: true,
+      canAcceptConnections: true,
+      canInitiateConnections: true
+    };
   }
 
   /**

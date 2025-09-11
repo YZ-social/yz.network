@@ -150,6 +150,10 @@ class BootstrapServer {
         this.handleSendInvitation(ws, message);
         break;
 
+      case 'invitation_accepted':
+        this.handleInvitationAccepted(ws, message);
+        break;
+
       default:
         console.warn(`Unknown message type: ${message.type}`);
         this.sendError(ws, `Unknown message type: ${message.type}`);
@@ -687,6 +691,30 @@ class BootstrapServer {
           instructions: 'Inviter should connect to your WebSocket server after invitation acceptance'
         };
         console.log(`🔗 Including reverse WebSocket coordination for Browser → Node.js: ${targetPeer.metadata.listeningAddress}`);
+      } else if (targetPeer.metadata.nodeType === 'browser') {
+        // Browser to browser - set up WebRTC coordination tracking
+        invitationMessage.webrtcCoordination = {
+          inviterNodeType: 'browser',
+          targetNodeType: 'browser',
+          instructions: 'Bootstrap server will coordinate WebRTC connection after invitation acceptance'
+        };
+        
+        // Track pending invitation for WebRTC coordination
+        if (!this.pendingInvitations) {
+          this.pendingInvitations = new Map();
+        }
+        
+        const invitationId = `${requestingNodeId}_${targetPeerId}_${Date.now()}`;
+        this.pendingInvitations.set(invitationId, {
+          inviterNodeId: requestingNodeId,
+          inviteeNodeId: targetPeerId,
+          inviterWs: ws,
+          inviteeWs: targetPeer.ws,
+          timestamp: Date.now(),
+          status: 'invitation_sent'
+        });
+        
+        console.log(`🤝 Set up WebRTC coordination tracking for browser-to-browser invitation: ${invitationId}`);
       }
     }
 
@@ -703,6 +731,85 @@ class BootstrapServer {
 
     this.sendResponse(ws, message.requestId, response);
 
+  }
+
+  /**
+   * Handle invitation acceptance and coordinate WebRTC connection
+   */
+  handleInvitationAccepted(ws, message) {
+    const { fromPeer, toPeer } = message;
+    const acceptingNodeId = this.connections.get(ws);
+    
+    if (!acceptingNodeId) {
+      this.sendError(ws, 'Not registered');
+      return;
+    }
+
+    if (acceptingNodeId !== fromPeer) {
+      this.sendError(ws, `Acceptance from wrong peer - expected ${fromPeer}, got ${acceptingNodeId}`);
+      return;
+    }
+
+    console.log(`📨 Invitation acceptance received from ${fromPeer} for invitation to ${toPeer}`);
+
+    // Update peer activity
+    this.updatePeerActivity(acceptingNodeId);
+
+    // Find the pending invitation
+    if (!this.pendingInvitations) {
+      console.warn(`⚠️ No pending invitations tracked for ${fromPeer} → ${toPeer}`);
+      return;
+    }
+
+    let matchingInvitation = null;
+    let invitationId = null;
+
+    for (const [id, invitation] of this.pendingInvitations.entries()) {
+      if (invitation.inviterNodeId === toPeer && invitation.inviteeNodeId === fromPeer) {
+        matchingInvitation = invitation;
+        invitationId = id;
+        break;
+      }
+    }
+
+    if (!matchingInvitation) {
+      console.warn(`⚠️ No pending invitation found for ${toPeer} → ${fromPeer}`);
+      return;
+    }
+
+    console.log(`🤝 Found matching invitation: ${invitationId} - initiating WebRTC coordination`);
+
+    // Update invitation status
+    matchingInvitation.status = 'invitation_accepted';
+    matchingInvitation.acceptedAt = Date.now();
+
+    // Get both peer connections
+    const inviterPeer = this.peers.get(matchingInvitation.inviterNodeId);
+    const inviteePeer = this.peers.get(matchingInvitation.inviteeNodeId);
+
+    if (!inviterPeer || !inviteePeer || inviterPeer.ws.readyState !== 1 || inviteePeer.ws.readyState !== 1) {
+      console.error(`❌ Cannot coordinate WebRTC - one or both peers are offline`);
+      this.pendingInvitations.delete(invitationId);
+      return;
+    }
+
+    // Start WebRTC coordination - tell inviter to send offer
+    this.sendMessage(inviterPeer.ws, {
+      type: 'webrtc_start_offer',
+      targetPeer: matchingInvitation.inviteeNodeId,
+      invitationId: invitationId,
+      message: 'Send WebRTC offer to establish connection with invited peer'
+    });
+
+    // Tell invitee to expect offer
+    this.sendMessage(inviteePeer.ws, {
+      type: 'webrtc_expect_offer',
+      fromPeer: matchingInvitation.inviterNodeId,
+      invitationId: invitationId,
+      message: 'Expect WebRTC offer from inviting peer'
+    });
+
+    console.log(`🚀 WebRTC coordination initiated between ${matchingInvitation.inviterNodeId.substring(0,8)}... and ${matchingInvitation.inviteeNodeId.substring(0,8)}...`);
   }
 
   /**

@@ -15,8 +15,10 @@ export class DHTNode {
     } else {
       throw new Error(`DHTNode requires a valid node ID. Got: ${id}. Use DHTNodeId.fromHex() for existing node IDs.`);
     }
-    this.endpoint = endpoint; // WebRTC connection info or identifier
-    this.connection = connection; // Active WebRTC connection object
+    this.endpoint = endpoint; // WebRTC connection info or identifier  
+    this.connection = connection; // Active connection object (WebRTC DataChannel, WebSocket, etc.)
+    this.connectionManager = null; // Connection manager responsible for this peer
+    this.eventHandlersSetup = false; // Track if event handlers are set up
     this.lastSeen = Date.now();
     this.lastPing = 0;
     this.rtt = 0; // Round trip time in ms
@@ -102,8 +104,143 @@ export class DHTNode {
    * Check if node is connected
    */
   isConnected() {
-    const state = this.getConnectionState();
-    return state === 'open' || state === 'connected';
+    if (this.connectionManager) {
+      return this.connectionManager.isConnected(this.id.toString());
+    }
+    
+    // If no connection manager, we're not connected
+    return false;
+  }
+
+  /**
+   * Set up connection and connection manager for this node
+   */
+  setupConnection(connectionManager, connection) {
+    this.connectionManager = connectionManager;
+    this.connection = connection;
+    
+    // Set up event handlers for this specific connection
+    this.setupEventHandlers();
+    
+    console.log(`🔧 Connection setup complete for ${this.id.toString().substring(0, 8)}...`);
+  }
+  
+  /**
+   * Set up event handlers for this node's connection
+   */
+  setupEventHandlers() {
+    if (this.eventHandlersSetup || !this.connection || !this.connectionManager) {
+      return;
+    }
+    
+    const peerId = this.id.toString();
+    const shortId = peerId.substring(0, 8);
+    
+    // Store handler references for cleanup
+    this.messageHandler = (event) => {
+      try {
+        const data = typeof event.data === 'string' ? JSON.parse(event.data) : event;
+        console.log(`📨 Message received by node ${shortId}...:`, data.type);
+        
+        // Update activity
+        this.updateLastSeen();
+        
+        // Forward to DHT (we'll need a callback mechanism for this)
+        if (this.onMessage) {
+          this.onMessage(peerId, data);
+        }
+      } catch (error) {
+        console.error(`❌ Error handling message for node ${shortId}...:`, error);
+      }
+    };
+    
+    this.closeHandler = (event) => {
+      console.log(`🔌 Connection closed for node ${shortId}...`);
+      this.isAlive = false;
+      
+      // Clean up event handlers
+      this.cleanupEventHandlers();
+      
+      // Notify DHT of disconnection
+      if (this.onDisconnected) {
+        this.onDisconnected(peerId);
+      }
+    };
+    
+    this.errorHandler = (error) => {
+      console.error(`❌ Connection error for node ${shortId}...:`, error);
+      this.recordFailure();
+    };
+    
+    // Set up handlers based on connection type
+    if (this.connection.addEventListener) {
+      // WebRTC DataChannel or WebSocket
+      this.connection.addEventListener('message', this.messageHandler);
+      this.connection.addEventListener('close', this.closeHandler);
+      this.connection.addEventListener('error', this.errorHandler);
+    } else if (this.connection.on) {
+      // Node.js WebSocket or EventEmitter-based connection
+      this.connection.on('message', this.messageHandler);
+      this.connection.on('close', this.closeHandler);
+      this.connection.on('error', this.errorHandler);
+    }
+    
+    this.eventHandlersSetup = true;
+    console.log(`✅ Event handlers set up for node ${shortId}...`);
+  }
+  
+  /**
+   * Clean up event handlers for this node's connection
+   */
+  cleanupEventHandlers() {
+    if (!this.eventHandlersSetup || !this.connection) {
+      return;
+    }
+    
+    const shortId = this.id.toString().substring(0, 8);
+    
+    try {
+      if (this.connection.removeEventListener) {
+        // WebRTC DataChannel or WebSocket
+        this.connection.removeEventListener('message', this.messageHandler);
+        this.connection.removeEventListener('close', this.closeHandler);
+        this.connection.removeEventListener('error', this.errorHandler);
+      } else if (this.connection.removeAllListeners) {
+        // Node.js EventEmitter-based connection
+        this.connection.removeAllListeners('message');
+        this.connection.removeAllListeners('close');
+        this.connection.removeAllListeners('error');
+      }
+    } catch (error) {
+      console.debug(`Could not remove event listeners for node ${shortId}...:`, error.message);
+    }
+    
+    this.eventHandlersSetup = false;
+    console.log(`🧹 Event handlers cleaned up for node ${shortId}...`);
+  }
+  
+  /**
+   * Set callback for message handling
+   */
+  setMessageCallback(callback) {
+    this.onMessage = callback;
+  }
+  
+  /**
+   * Set callback for disconnection handling
+   */
+  setDisconnectionCallback(callback) {
+    this.onDisconnected = callback;
+  }
+
+  /**
+   * Send message to this node
+   */
+  async sendMessage(message) {
+    if (!this.connectionManager) {
+      throw new Error(`No connection manager assigned to node ${this.id.toString()}`);
+    }
+    return this.connectionManager.sendMessage(this.id.toString(), message);
   }
 
   /**

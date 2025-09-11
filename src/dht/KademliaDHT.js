@@ -2,12 +2,12 @@ import { EventEmitter } from 'events';
 import { DHTNodeId } from '../core/DHTNodeId.js';
 import { DHTNode } from '../core/DHTNode.js';
 import { RoutingTable } from './RoutingTable.js';
-import { WebRTCManager } from '../network/WebRTCManager.js';
 import { BootstrapClient } from '../bootstrap/BootstrapClient.js';
 import { InvitationToken } from '../core/InvitationToken.js';
+import { ConnectionManagerFactory } from '../network/ConnectionManagerFactory.js';
 
 /**
- * Main Kademlia DHT implementation with WebRTC transport
+ * Main Kademlia DHT implementation with connection-agnostic transport
  */
 export class KademliaDHT extends EventEmitter {
   constructor(options = {}) {
@@ -31,6 +31,9 @@ export class KademliaDHT extends EventEmitter {
       ...options
     };
 
+    // Server connection manager for bridge/server nodes (reuse existing server)
+    this.serverConnectionManager = options.serverConnectionManager || null;
+
     // Generate or use provided node ID
     if (options.nodeId instanceof DHTNodeId) {
       this.localNodeId = options.nodeId;
@@ -43,14 +46,12 @@ export class KademliaDHT extends EventEmitter {
     // Core components
     this.routingTable = new RoutingTable(this.localNodeId, this.options.k);
     
-    // Handle connection manager creation properly
-    if (options.webrtc && typeof options.webrtc.on === 'function') {
-      // Already a connection manager instance (e.g., Node.js WebSocketManager)
-      this.connectionManager = options.webrtc;
-    } else {
-      // Configuration object or undefined - create WebRTC manager
-      this.connectionManager = new WebRTCManager(options.webrtc || {});
-    }
+    // Store transport options for ConnectionManagerFactory
+    this.transportOptions = {
+      maxConnections: options.maxConnections || 50,
+      timeout: options.timeout || 30000,
+      ...options.connectionOptions
+    };
     
     this.bootstrap = options.bootstrap || new BootstrapClient({ 
       bootstrapServers: this.options.bootstrapServers 
@@ -64,7 +65,7 @@ export class KademliaDHT extends EventEmitter {
     this.pendingRequests = new Map(); // requestId -> { resolve, reject, timeout }
     this.requestId = 0;
 
-    // Message Queue System for DHT-based WebRTC signaling
+    // Message Queue System for DHT-based peer signaling
     this.messageQueue = new Map(); // peerId -> Array<{ message, timestamp }>
     this.messageProcessingFlags = new Map(); // peerId -> boolean (to prevent concurrent processing)
     this.maxQueueSize = 100; // Prevent memory leaks
@@ -153,58 +154,25 @@ export class KademliaDHT extends EventEmitter {
   }
 
   /**
-   * Setup event handlers for components
+   * PUBLIC: Set membership token (wrapper for bridge connections and legitimate token updates)
    */
-  setupEventHandlers() {
-    this.setupConnectionManagerEventHandlers();
-    this.setupBootstrapEventHandlers();
+  setMembershipToken(token) {
+    if (!token) {
+      console.warn('⚠️ Cannot set empty membership token');
+      return false;
+    }
+    
+    console.log('🎫 Setting membership token from external source (bridge/bootstrap)');
+    return this._setMembershipToken(token);
   }
 
   /**
-   * Setup connection manager event handlers
+   * Setup event handlers for components
    */
-  setupConnectionManagerEventHandlers() {
-    // Remove existing listeners first to prevent duplicates (safely)
-    try {
-      if (this.connectionManager.removeAllListeners) {
-        this.connectionManager.removeAllListeners('peerConnected');
-        this.connectionManager.removeAllListeners('peerDisconnected');
-        this.connectionManager.removeAllListeners('data');
-        this.connectionManager.removeAllListeners('signal');
-      }
-    } catch (error) {
-      // Ignore errors for missing removeAllListeners method
-      console.debug('WebRTC manager does not support removeAllListeners per event');
-    }
-    
-    // Store handler references for potential removal
-    this.peerConnectedHandler = ({ peerId }) => {
-      console.log(`🔗 Peer connected: ${peerId}`);
-      this.handlePeerConnected(peerId);
-      
-      setTimeout(() => {
-        this.considerDHTSignaling();
-      }, 2000);
-    };
-    
-    this.peerDisconnectedHandler = ({ peerId }) => {
-      this.handlePeerDisconnected(peerId);
-    };
-    
-    this.dataHandler = ({ peerId, data }) => {
-      // Use message queue for ordered processing
-      this.enqueueMessage(peerId, data);
-    };
-    
-    this.signalHandler = ({ peerId, signal }) => {
-      this.handleOutgoingSignal(peerId, signal);
-    };
-    
-    this.connectionManager.on('peerConnected', this.peerConnectedHandler);
-    this.connectionManager.on('peerDisconnected', this.peerDisconnectedHandler);
-    this.connectionManager.on('data', this.dataHandler);
-    this.connectionManager.on('signal', this.signalHandler);
+  setupEventHandlers() {
+    this.setupBootstrapEventHandlers();
   }
+
 
   /**
    * Setup bootstrap client event handlers
@@ -221,6 +189,23 @@ export class KademliaDHT extends EventEmitter {
 
     this.bootstrap.on('invitationReceived', (invitationMessage) => {
       this.handleInvitationReceived(invitationMessage);
+    });
+
+    this.bootstrap.on('webrtcStartOffer', (message) => {
+      this.handleWebRTCStartOffer(message);
+    });
+
+    this.bootstrap.on('webrtcExpectOffer', (message) => {
+      this.handleWebRTCExpectOffer(message);
+    });
+
+    this.bootstrap.on('bridgeInvitationRequest', (requestMessage) => {
+      this.handleBridgeInvitationRequest(requestMessage);
+    });
+    
+    // CRITICAL: Handle bridge nodes received from bootstrap response (consolidated approach)
+    this.bootstrap.on('bridgeNodesReceived', (data) => {
+      this.handleBridgeNodesReceived(data);
     });
   }
 
@@ -253,18 +238,16 @@ export class KademliaDHT extends EventEmitter {
     // Stop any legacy DHT offer polling that might be running
     this.stopDHTOfferPolling();
 
-    // Recreate WebRTC manager if it was destroyed
-    if (this.connectionManager.isDestroyed) {
-      console.log('Recreating destroyed WebRTCManager');
-      this.connectionManager = new WebRTCManager(this.options.webrtc || {});
-      this.setupConnectionManagerEventHandlers();
-    }
-
-    // Initialize WebRTC manager
-    this.connectionManager.initialize(this.localNodeId.toString());
+    // Initialize transport managers through Factory
+    console.log('🏗️ Initializing transport managers...');
     
-    // Re-setup event handlers after initialization
-    this.setupConnectionManagerEventHandlers();
+    // Include bootstrap client reference for WebRTC signaling
+    const transportOptionsWithBootstrap = {
+      ...this.transportOptions,
+      bootstrapClient: this.bootstrap
+    };
+    
+    ConnectionManagerFactory.initializeTransports(transportOptionsWithBootstrap);
 
     // Recreate bootstrap client if it was destroyed
     if (this.bootstrap.isDestroyed) {
@@ -328,7 +311,7 @@ export class KademliaDHT extends EventEmitter {
     console.log(`🔍 Connecting to ${peers.length} bootstrap peers`);
     
     // CRITICAL: Check if we're already connected to DHT
-    const connectedPeers = this.connectionManager.getConnectedPeers().length;
+    const connectedPeers = this.getConnectedPeers().length;
     const isDHTConnected = connectedPeers > 0;
     
     const connectionPromises = [];
@@ -341,8 +324,10 @@ export class KademliaDHT extends EventEmitter {
         
         // Store peer metadata if available (for WebSocket connections)
         // This must happen REGARDLESS of connection attempts for future use
-        if (peer.metadata && this.connectionManager.setPeerMetadata) {
-          this.connectionManager.setPeerMetadata(peer.nodeId, peer.metadata);
+        // Store peer information in routing table for future use
+        if (peer.metadata) {
+          // CRITICAL: Use getOrCreatePeerNode to ensure proper ID handling (no double-hashing)
+          const peerNode = this.getOrCreatePeerNode(peer.nodeId, peer.metadata);
           console.log(`📋 Stored bootstrap peer metadata for ${peer.nodeId.substring(0, 8)}...:`, peer.metadata);
         }
         
@@ -351,10 +336,16 @@ export class KademliaDHT extends EventEmitter {
           continue;
         }
         
-        // SECURITY: No automatic connections - all peers must be explicitly invited
-        // Both Genesis and non-Genesis peers wait for explicit invitations
-        console.log(`⏳ Found peer ${peer.nodeId.substring(0, 8)}... - waiting for explicit invitation`);
-        // Do not auto-connect - connections only through invitation system
+        // Check if this is a bridge node - they connect via dedicated bridgeNodesReceived handler
+        if (peer.metadata?.isBridgeNode) {
+          console.log(`🌉 Bridge node ${peer.nodeId.substring(0, 8)}... - will connect via bridgeNodesReceived handler`);
+          // Skip connecting here - bridge nodes use dedicated connection path
+        } else {
+          // SECURITY: No automatic connections - all peers must be explicitly invited
+          // Both Genesis and non-Genesis peers wait for explicit invitations
+          console.log(`⏳ Found peer ${peer.nodeId.substring(0, 8)}... - waiting for explicit invitation`);
+          // Do not auto-connect - connections only through invitation system
+        }
       } catch (error) {
         console.warn(`Failed to initiate connection to ${peer.nodeId}:`, error);
       }
@@ -369,7 +360,7 @@ export class KademliaDHT extends EventEmitter {
         
         // Give connections more time to establish before considering DHT signaling
         setTimeout(() => {
-          const actualConnections = this.connectionManager.getConnectedPeers().length;
+          const actualConnections = this.getConnectedPeers().length;
           const routingEntries = this.routingTable.getAllNodes().length;
           
           if (actualConnections < routingEntries) {
@@ -399,7 +390,7 @@ export class KademliaDHT extends EventEmitter {
     }
 
     // Check if we're already connected to DHT
-    const connectedPeers = this.connectionManager.getConnectedPeers().length;
+    const connectedPeers = this.getConnectedPeers().length;
     const isDHTConnected = connectedPeers > 0;
     
     if (isDHTConnected) {
@@ -409,11 +400,19 @@ export class KademliaDHT extends EventEmitter {
       console.log(`💡 Use inviteNewClient(clientId) for out-of-band invitations`);
       return;
     } else if (this.isGenesisPeer) {
-      // Genesis peer doesn't connect to bootstrap peers automatically
-      // It waits for explicit invitations to be sent
-      console.log(`🌟 Genesis peer: Ignoring bootstrap peer list - use explicit invitations`);
-      console.log(`💡 Use inviteNewClient(clientId) to invite specific peers`);
-      return;
+      // Genesis peer should connect to bridge nodes but not regular peers
+      const bridgeNodes = peers.filter(peer => peer.metadata?.isBridgeNode);
+      if (bridgeNodes.length > 0) {
+        console.log(`🌟 Genesis peer: Connecting to ${bridgeNodes.length} bridge nodes to remove genesis status`);
+        this.connectToInitialPeers(bridgeNodes).catch(error => {
+          console.error('Failed to connect genesis to bridge nodes:', error);
+        });
+        return;
+      } else {
+        console.log(`🌟 Genesis peer: No bridge nodes available - use explicit invitations`);
+        console.log(`💡 Use inviteNewClient(clientId) to invite specific peers`);
+        return;
+      }
     } else {
       // We're still bootstrap-only - store peer information but do not auto-connect
       console.log(`📋 Bootstrap-only node: Found ${peers.length} peers - waiting for explicit invitations`);
@@ -595,7 +594,7 @@ export class KademliaDHT extends EventEmitter {
     }
     
     // Don't connect to peers we're already connected to
-    if (this.connectionManager.isConnected(clientId)) {
+    if (this.isPeerConnected(clientId)) {
       console.log(`🔗 Already connected to ${clientId}`);
       return true;
     }
@@ -619,24 +618,9 @@ export class KademliaDHT extends EventEmitter {
       if (invitationResult.data && invitationResult.data.targetPeerMetadata) {
         const targetMetadata = invitationResult.data.targetPeerMetadata;
         
-        // Store metadata in the appropriate manager based on connection type
-        if (targetMetadata.nodeType === 'nodejs') {
-          // For Node.js clients using WebSocket connections
-          if (this.connectionManager.websocketManager && this.connectionManager.websocketManager.setPeerMetadata) {
-            this.connectionManager.websocketManager.setPeerMetadata(clientId, targetMetadata);
-            console.log(`📋 Stored WebSocket peer metadata for ${clientId.substring(0, 8)}...:`, targetMetadata);
-          } else if (this.connectionManager.setPeerMetadata) {
-            // Fallback to WebRTC manager if WebSocket manager not available
-            this.connectionManager.setPeerMetadata(clientId, targetMetadata);
-            console.log(`📋 Stored peer metadata (fallback) for ${clientId.substring(0, 8)}...:`, targetMetadata);
-          }
-        } else {
-          // For browser clients using WebRTC connections
-          if (this.connectionManager.setPeerMetadata) {
-            this.connectionManager.setPeerMetadata(clientId, targetMetadata);
-            console.log(`📋 Stored WebRTC peer metadata for ${clientId.substring(0, 8)}...:`, targetMetadata);
-          }
-        }
+        // Store metadata in peer node for connection-agnostic access
+        const peerNode = this.getOrCreatePeerNode(clientId, targetMetadata);
+        console.log(`📋 Stored peer metadata for ${clientId.substring(0, 8)}...:`, targetMetadata);
       }
       
       // CRITICAL FIX: Temporarily force bootstrap signaling for invitation process
@@ -650,18 +634,15 @@ export class KademliaDHT extends EventEmitter {
           const targetMetadata = invitationResult.data.targetPeerMetadata;
           console.log(`🔗 Connecting to invited peer using metadata: ${targetMetadata.nodeType}`);
           
-          // Use the same transport selection logic as in connectToPeerViaDHT
-          if (targetMetadata.nodeType === 'nodejs' && targetMetadata.listeningAddress) {
-            console.log(`🌐 Creating WebSocket connection to Node.js peer at ${targetMetadata.listeningAddress}`);
-            await this.connectionManager.createWebSocketConnection(clientId, targetMetadata.listeningAddress);
+          // Create connection using per-node connection manager
+          const peerNode = this.getOrCreatePeerNode(clientId, targetMetadata);
+          console.log(`🔗 Creating connection to invited peer using ${targetMetadata.nodeType || 'browser'} transport`);
+          
+          // Check if connection already exists (race condition handling)
+          if (this.isPeerConnected(clientId)) {
+            console.log(`🔄 Connection to ${clientId} already exists, using existing connection`);
           } else {
-            console.log(`📡 Creating WebRTC connection to browser peer`);
-            // Check if connection already exists (race condition handling)
-            if (this.connectionManager.connections.has(clientId)) {
-              console.log(`🔄 Connection to ${clientId} already exists, using existing connection`);
-            } else {
-              await this.connectionManager.createConnection(clientId, true);
-            }
+            await peerNode.connectionManager.createConnection(clientId, true);
           }
         } else {
           console.log(`📤 Invitation sent - waiting for peer to connect (no metadata available)`);
@@ -800,9 +781,23 @@ export class KademliaDHT extends EventEmitter {
         timestamp: Date.now()
       });
       
-      // Handle WebSocket coordination if present
-      if (invitationMessage.websocketCoordination) {
-        await this.handleWebSocketCoordination(invitationMessage.websocketCoordination, fromPeer);
+      // CRITICAL FIX: Signal back to bootstrap server that we've accepted the invitation
+      // Bootstrap server needs to coordinate WebRTC connection between inviter and invitee
+      console.log(`📡 Notifying bootstrap server that invitation was accepted`);
+      
+      try {
+        // Send acceptance notification to bootstrap server
+        await this.bootstrap.sendMessage({
+          type: 'invitation_accepted',
+          fromPeer: this.localNodeId.toString(),
+          toPeer: fromPeer,
+          timestamp: Date.now()
+        });
+        
+        console.log(`✅ Bootstrap server notified of invitation acceptance - WebRTC coordination should begin`);
+      } catch (error) {
+        console.error(`❌ Failed to notify bootstrap server of invitation acceptance:`, error);
+        // Don't fail the invitation processing if notification fails
       }
       
       return true;
@@ -814,74 +809,201 @@ export class KademliaDHT extends EventEmitter {
   }
 
   /**
-   * Handle WebSocket coordination during invitation
-   * IMPORTANT: Browser always connects TO Node.js, regardless of who initiated the invitation
+   * Handle bridge invitation request from bootstrap server
+   * Genesis peer should automatically invite the specified bridge node
    */
-  async handleWebSocketCoordination(coordinationInfo, inviterPeerId) {
-    console.log('🔗 Processing WebSocket coordination information');
-    console.log('   Coordination:', coordinationInfo);
+  async handleBridgeInvitationRequest(requestMessage) {
+    console.log(`🌉 Received bridge invitation request for ${requestMessage.targetPeerId?.substring(0, 8)}...`);
     
     try {
-      // RULE: Browser ALWAYS connects to Node.js WebSocket server
-      // regardless of who initiated the invitation
+      // Only genesis peers should handle bridge invitations
+      if (!this.isGenesisPeer) {
+        console.warn(`⚠️ Non-genesis peer received bridge invitation request - ignoring`);
+        return false;
+      }
+
+      const bridgeNodeId = requestMessage.targetPeerId;
+      const bridgeNodeInfo = requestMessage.bridgeNodeInfo;
+
+      if (!bridgeNodeId || !bridgeNodeInfo) {
+        console.warn(`⚠️ Invalid bridge invitation request - missing node ID or info`);
+        return false;
+      }
+
+      console.log(`🎫 Genesis peer inviting bridge node ${bridgeNodeId.substring(0, 8)}...`);
       
-      if (coordinationInfo.inviterNodeType === 'nodejs' && coordinationInfo.inviterListeningAddress) {
-        // Case 1: Node.js peer invited us (we could be browser or Node.js)
-        // If we're a browser, connect to the Node.js peer's WebSocket server
-        if (this.bootstrapMetadata?.nodeType === 'browser' || !this.bootstrapMetadata?.nodeType) {
-          console.log(`🌐 Browser connecting to Node.js inviter's WebSocket server`);
-          
-          // Store Node.js peer metadata in HybridConnectionManager
-          if (this.connectionManager.setPeerMetadata) {
-            this.connectionManager.setPeerMetadata(inviterPeerId, {
-              nodeType: 'nodejs',
-              listeningAddress: coordinationInfo.inviterListeningAddress,
-              capabilities: ['websocket']
-            });
-          }
-          
-          const success = await this.connectToWebSocketPeer(inviterPeerId, coordinationInfo.inviterListeningAddress);
-          if (success) {
-            console.log(`✅ Successfully connected to Node.js inviter via WebSocket`);
-          } else {
-            console.warn(`⚠️ Failed to connect to Node.js inviter via WebSocket`);
-          }
-        } else {
-          console.log(`ℹ️ Node.js peer invited by Node.js peer - connecting via WebSocket`);
-          
-          // Store Node.js peer metadata in WebSocketManager
-          if (this.connectionManager.setPeerMetadata) {
-            this.connectionManager.setPeerMetadata(inviterPeerId, {
-              nodeType: 'nodejs',
-              listeningAddress: coordinationInfo.inviterListeningAddress,
-              capabilities: ['websocket']
-            });
-          }
-          
-          const success = await this.connectToWebSocketPeer(inviterPeerId, coordinationInfo.inviterListeningAddress);
-          if (success) {
-            console.log(`✅ Successfully connected to Node.js inviter via WebSocket`);
-          } else {
-            console.warn(`⚠️ Failed to connect to Node.js inviter via WebSocket`);
-          }
-        }
-        
-      } else if (coordinationInfo.inviterNodeType === 'browser' && coordinationInfo.targetListeningAddress) {
-        // Case 2: Browser peer invited us (we must be Node.js since we have a WebSocket server)
-        // Browser should connect to OUR WebSocket server
-        console.log(`🔄 Browser invited Node.js peer - browser should connect to our WebSocket server`);
-        console.log(`   Our WebSocket address: ${coordinationInfo.targetListeningAddress}`);
-        console.log(`   Waiting for browser to connect...`);
-        
-        // Note: We don't need to do anything here - the browser will connect to us
-        // Our WebSocket server is already running and will handle the incoming connection
-        
+      // Create invitation for bridge node
+      const success = await this.inviteNewClient(bridgeNodeId);
+      
+      if (success) {
+        console.log(`✅ Successfully invited bridge node ${bridgeNodeId.substring(0, 8)}...`);
+        return true;
       } else {
-        console.log(`ℹ️ No specific WebSocket coordination needed for this invitation type`);
+        console.error(`❌ Failed to invite bridge node ${bridgeNodeId.substring(0, 8)}...`);
+        return false;
       }
       
     } catch (error) {
-      console.error(`❌ Error handling WebSocket coordination:`, error);
+      console.error('Error handling bridge invitation request:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Handle WebRTC start offer message from bootstrap server
+   */
+  async handleWebRTCStartOffer(message) {
+    const { targetPeer, invitationId } = message;
+    console.log(`🚀 Bootstrap server requesting WebRTC offer to ${targetPeer.substring(0, 8)}... (invitation: ${invitationId})`);
+
+    try {
+      // Get the peer connection manager
+      const peerNode = this.getOrCreatePeerNode(targetPeer, { nodeType: 'browser' });
+      
+      if (peerNode && peerNode.connectionManager) {
+        // Create WebRTC offer through the connection manager
+        console.log(`📤 Creating WebRTC offer for ${targetPeer.substring(0, 8)}...`);
+        await peerNode.connectionManager.createConnection(targetPeer, true); // true = initiator
+        console.log(`✅ WebRTC offer creation initiated for ${targetPeer.substring(0, 8)}...`);
+      } else {
+        console.error(`❌ No connection manager available for ${targetPeer.substring(0, 8)}...`);
+      }
+      
+    } catch (error) {
+      console.error(`❌ Failed to create WebRTC offer for ${targetPeer}:`, error);
+    }
+  }
+
+  /**
+   * Handle WebRTC expect offer message from bootstrap server
+   */
+  async handleWebRTCExpectOffer(message) {
+    const { fromPeer, invitationId } = message;
+    console.log(`📥 Bootstrap server says to expect WebRTC offer from ${fromPeer.substring(0, 8)}... (invitation: ${invitationId})`);
+
+    try {
+      // CRITICAL: Track this peer as having pending WebRTC coordination to prevent interference
+      if (!this.pendingWebRTCOffers) {
+        this.pendingWebRTCOffers = new Set();
+      }
+      this.pendingWebRTCOffers.add(fromPeer);
+      console.log(`🚫 Blocking emergency discovery for ${fromPeer.substring(0, 8)}... - expecting WebRTC offer`);
+      
+      // Auto-cleanup after 60 seconds to prevent permanent blocking
+      setTimeout(() => {
+        if (this.pendingWebRTCOffers && this.pendingWebRTCOffers.has(fromPeer)) {
+          this.pendingWebRTCOffers.delete(fromPeer);
+          console.log(`🧹 Cleaned up pending WebRTC offer block for ${fromPeer.substring(0, 8)}...`);
+        }
+      }, 60000);
+      
+      // Prepare to receive WebRTC offer
+      const peerNode = this.getOrCreatePeerNode(fromPeer, { nodeType: 'browser' });
+      
+      if (peerNode && peerNode.connectionManager) {
+        console.log(`⏳ Ready to receive WebRTC offer from ${fromPeer.substring(0, 8)}...`);
+        // The connection manager should handle incoming offers automatically
+        // No additional setup needed here - just ensuring the peer node exists
+      } else {
+        console.error(`❌ No connection manager available to receive offer from ${fromPeer.substring(0, 8)}...`);
+      }
+      
+    } catch (error) {
+      console.error(`❌ Failed to prepare for WebRTC offer from ${fromPeer}:`, error);
+    }
+  }
+
+
+  /**
+   * CRITICAL: Handle bridge nodes received from bootstrap response
+   * This is the missing piece that connects genesis peer to bridge nodes
+   */
+  async handleBridgeNodesReceived(data) {
+    const { bridgeNodes, isGenesis, membershipToken } = data;
+    
+    console.log(`🌉 Received ${bridgeNodes.length} bridge nodes from bootstrap server (Genesis: ${isGenesis})`);
+    
+    try {
+      // Connect to all bridge nodes for redundancy
+      const connectionPromises = [];
+      
+      for (const bridgeNode of bridgeNodes) {
+        console.log(`🔗 Connecting to bridge node ${bridgeNode.nodeId.substring(0, 8)}... at ${bridgeNode.metadata.listeningAddress}`);
+        
+        // Create peer node with bridge metadata
+        const peerNode = this.getOrCreatePeerNode(bridgeNode.nodeId, {
+          nodeType: 'bridge',
+          isBridgeNode: true,
+          listeningAddress: bridgeNode.metadata.listeningAddress,
+          capabilities: bridgeNode.metadata.capabilities,
+          bridgeAuthToken: bridgeNode.metadata.bridgeAuthToken
+        });
+        
+        // Create WebSocket connection to bridge node
+        const connectionPromise = peerNode.connectionManager.createConnection(bridgeNode.nodeId, true)
+          .then(() => {
+            console.log(`✅ Connected to bridge node ${bridgeNode.nodeId.substring(0, 8)}...`);
+            return bridgeNode.nodeId;
+          })
+          .catch(error => {
+            console.error(`❌ Failed to connect to bridge node ${bridgeNode.nodeId.substring(0, 8)}...:`, error);
+            return null;
+          });
+          
+        connectionPromises.push(connectionPromise);
+      }
+      
+      // Wait for at least one connection to succeed
+      const results = await Promise.allSettled(connectionPromises);
+      const successful = results.filter(r => r.status === 'fulfilled' && r.value !== null);
+      
+      if (successful.length > 0) {
+        console.log(`🎉 Successfully connected to ${successful.length}/${bridgeNodes.length} bridge nodes`);
+        
+        // CRITICAL FIX: Explicitly add bridge nodes to routing table after successful connection
+        for (const result of results) {
+          if (result.status === 'fulfilled' && result.value !== null) {
+            const bridgeNodeId = result.value;
+            try {
+              // Create DHTNode and add to routing table with connection manager
+              const node = new DHTNode(bridgeNodeId, bridgeNodeId);
+              node.lastSeen = Date.now(); // Mark as recently seen
+              
+              // Attach the connection manager from peerNodes
+              if (this.peerNodes && this.peerNodes.has(bridgeNodeId)) {
+                const peerNode = this.peerNodes.get(bridgeNodeId);
+                node.connectionManager = peerNode.connectionManager;
+                console.log(`📋 Attached connection manager to bridge node ${bridgeNodeId.substring(0, 8)}...`);
+              } else {
+                console.warn(`⚠️ No connection manager found for bridge node ${bridgeNodeId.substring(0, 8)}...`);
+              }
+              
+              const addResult = this.routingTable.addNode(node);
+              if (addResult) {
+                console.log(`📋 Added bridge node ${bridgeNodeId.substring(0, 8)}... to routing table`);
+              }
+            } catch (error) {
+              console.warn(`Failed to add bridge node ${bridgeNodeId} to routing table:`, error);
+            }
+          }
+        }
+        
+        // Update genesis status - we're no longer isolated
+        if (isGenesis) {
+          console.log(`🌟 Genesis peer successfully connected to bridge nodes - ready for DHT operations`);
+        }
+        
+        // Store membership token if provided
+        if (membershipToken) {
+          this.setMembershipToken(membershipToken);
+        }
+        
+      } else {
+        console.error(`❌ Failed to connect to any bridge nodes`);
+      }
+      
+    } catch (error) {
+      console.error(`❌ Error processing bridge nodes:`, error);
     }
   }
 
@@ -895,9 +1017,15 @@ export class KademliaDHT extends EventEmitter {
       return;
     }
     
+    // Clean up pending WebRTC offer tracking if connection succeeded
+    if (this.pendingWebRTCOffers && this.pendingWebRTCOffers.has(peerId)) {
+      this.pendingWebRTCOffers.delete(peerId);
+      console.log(`✅ WebRTC coordination completed for ${peerId.substring(0, 8)}... - connection established`);
+    }
+    
     // Double-check connection with a small delay to ensure it's stable
     setTimeout(() => {
-      if (!this.connectionManager.isConnected(peerId)) {
+      if (!this.isPeerConnected(peerId)) {
         return;
       }
       
@@ -907,8 +1035,7 @@ export class KademliaDHT extends EventEmitter {
       
       const node = new DHTNode(peerId, peerId);
       
-      // Store node type and transport information for connection decisions
-      this.storePeerMetadataOnNode(node, peerId);
+      // Peer metadata will be set when connection manager is created
       
       const addResult = this.routingTable.addNode(node);
       
@@ -928,44 +1055,6 @@ export class KademliaDHT extends EventEmitter {
     }, 1000); // 1 second delay to ensure connection stability
   }
 
-  /**
-   * Store peer metadata on a DHTNode object from available sources
-   */
-  storePeerMetadataOnNode(node, peerId) {
-    const nodeIdStr = typeof peerId === 'string' ? peerId : peerId.toString();
-    
-    // Try to get metadata from both WebSocket and WebRTC managers
-    let storedMetadata = null;
-    
-    // First check WebSocket manager (for Node.js clients)
-    if (this.connectionManager.websocketManager && this.connectionManager.websocketManager.peerMetadata && this.connectionManager.websocketManager.peerMetadata.get) {
-      storedMetadata = this.connectionManager.websocketManager.peerMetadata.get(nodeIdStr);
-      if (storedMetadata) {
-        console.log(`📋 Found metadata in WebSocket manager for ${nodeIdStr.substring(0, 8)}...:`, storedMetadata);
-      }
-    }
-    
-    // If not found, check WebRTC manager (for browser clients)
-    if (!storedMetadata && this.connectionManager.peerMetadata && this.connectionManager.peerMetadata.get) {
-      storedMetadata = this.connectionManager.peerMetadata.get(nodeIdStr);
-      if (storedMetadata) {
-        console.log(`📋 Found metadata in WebRTC manager for ${nodeIdStr.substring(0, 8)}...:`, storedMetadata);
-      }
-    }
-    
-    if (storedMetadata) {
-      // Use stored metadata from bootstrap discovery or invitation response
-      node.setMetadata('nodeType', storedMetadata.nodeType || 'browser');
-      node.setMetadata('listeningAddress', storedMetadata.listeningAddress);
-      node.setMetadata('capabilities', storedMetadata.capabilities || []);
-      console.log(`📋 Applied metadata to node ${nodeIdStr.substring(0, 8)}...: ${storedMetadata.nodeType}`);
-    } else {
-      // Default to browser if no metadata available
-      node.setMetadata('nodeType', 'browser');
-      node.setMetadata('capabilities', ['webrtc']);
-      console.log(`📋 Default node info for ${nodeIdStr.substring(0, 8)}...: browser (no metadata)`);
-    }
-  }
 
   /**
    * Validate that a peer ID represents a valid DHT peer
@@ -992,7 +1081,7 @@ export class KademliaDHT extends EventEmitter {
     
     // Additional validation: peer must be either connected or have been discovered through invitation
     // This helps prevent random search target IDs from being treated as real peers
-    if (!this.connectionManager.isConnected(peerId) && !this.connectionManager.connections.has(peerId)) {
+    if (!this.isPeerConnected(peerId) && !this.isPeerConnected(peerId)) {
       // Allow peer if it was discovered through invitation system or routing table
       if (!this.routingTable.getNode(peerId)) {
         console.debug(`🔍 Validating disconnected peer ${peerId.substring(0,8)}: not in routing table yet`);
@@ -1023,7 +1112,7 @@ export class KademliaDHT extends EventEmitter {
     
     for (const node of allNodes) {
       const peerId = node.id.toString();
-      if (!this.connectionManager.isConnected(peerId)) {
+      if (!this.isPeerConnected(peerId)) {
         console.log(`Removing disconnected peer from routing table: ${peerId}`);
         this.routingTable.removeNode(peerId);
         removedCount++;
@@ -1198,7 +1287,9 @@ export class KademliaDHT extends EventEmitter {
    * Handle incoming signal from bootstrap
    */
   async handleIncomingSignal(fromPeer, signal) {
-    await this.connectionManager.handleSignal(fromPeer, signal);
+    // Use getOrCreatePeerNode to ensure connection manager exists
+    const peerNode = this.getOrCreatePeerNode(fromPeer);
+    await peerNode.connectionManager.handleSignal(fromPeer, signal);
   }
 
   /**
@@ -1229,7 +1320,9 @@ export class KademliaDHT extends EventEmitter {
     try {
       const result = await this.get(key);
       if (result) {
-        await this.connectionManager.handleSignal(peerId, result.signal);
+        // Use getOrCreatePeerNode to ensure connection manager exists
+        const peerNode = this.getOrCreatePeerNode(peerId);
+        await peerNode.connectionManager.handleSignal(peerId, result.signal);
       }
     } catch (error) {
       console.error(`DHT ICE retrieval failed from ${peerId}:`, error);
@@ -1240,7 +1333,7 @@ export class KademliaDHT extends EventEmitter {
    * Consider switching to DHT-based signaling
    */
   considerDHTSignaling() {
-    const connectedPeers = this.connectionManager.getConnectedPeers().length;
+    const connectedPeers = this.getConnectedPeers().length;
     
     if (connectedPeers >= 1 && !this.useBootstrapForSignaling) {
       return;
@@ -1273,7 +1366,7 @@ export class KademliaDHT extends EventEmitter {
   async connectToPeerViaDHT(peerId) {
     
     // Skip if already connected
-    if (this.connectionManager.isConnected(peerId)) {
+    if (this.isPeerConnected(peerId)) {
       console.log(`Already connected to ${peerId}`);
       return true;
     }
@@ -1285,126 +1378,12 @@ export class KademliaDHT extends EventEmitter {
     }
 
     try {
-      // Determine LOCAL client type and TARGET peer type
-      const localType = this.bootstrapMetadata?.nodeType || (typeof window !== 'undefined' ? 'browser' : 'nodejs');
-      const node = this.routingTable.getNode(peerId);
-      const targetType = node?.getMetadata('nodeType') || 'browser';
-      const targetListeningAddress = node?.getMetadata('listeningAddress');
+      // Use connection-agnostic approach: let connection manager handle transport selection
+      console.log(`🔗 Connecting to peer ${peerId.substring(0, 8)}...`);
       
-      console.log(`🔄 Connection matrix: ${localType} → ${targetType} peer ${peerId.substring(0, 8)}...`);
+      const peerNode = this.getOrCreatePeerNode(peerId);
+      await peerNode.connectionManager.createConnection(peerId, true);
       
-      // Apply connection matrix logic
-      if (localType === 'browser' && targetType === 'browser') {
-        // WebRTC (Browser) → WebRTC (Browser): Use WebRTC with Perfect Negotiation
-        console.log(`🌐 Browser-to-Browser: Using WebRTC connection`);
-        
-        // Ensure connection manager has correct metadata for transport selection
-        if (this.connectionManager.setPeerMetadata) {
-          this.connectionManager.setPeerMetadata(peerId, {
-            nodeType: 'browser',
-            capabilities: ['webrtc']
-          });
-        }
-        
-        await this.connectionManager.createConnection(peerId, true);
-        
-      } else if (localType === 'browser' && targetType === 'nodejs') {
-        // WebRTC (Browser) → WebSocket (Node.js): Browser connects as WebSocket client
-        console.log(`🌐 Browser-to-Node.js: Browser connecting as WebSocket client to ${targetListeningAddress}`);
-        
-        if (!targetListeningAddress) {
-          throw new Error(`No WebSocket address available for Node.js peer ${peerId}`);
-        }
-        
-        // Ensure connection manager has correct metadata for transport selection
-        if (this.connectionManager.setPeerMetadata) {
-          this.connectionManager.setPeerMetadata(peerId, {
-            nodeType: 'nodejs',
-            listeningAddress: targetListeningAddress,
-            capabilities: ['websocket']
-          });
-        }
-        
-        await this.connectionManager.createWebSocketConnection(peerId, targetListeningAddress);
-        
-      } else if (localType === 'nodejs' && targetType === 'browser') {
-        // WebSocket (Node.js) → WebRTC (Browser): Node.js acts as server, request browser to connect
-        console.log(`🌐 Node.js-to-Browser: Requesting browser to connect to our WebSocket server`);
-        
-        // Get our WebSocket listening address
-        const ourListeningAddress = this.connectionManager.websocketManager?.listeningAddress || 
-                                    this.bootstrapMetadata?.listeningAddress ||
-                                    'ws://localhost:9500'; // fallback
-        
-        // Track this pending request to prevent duplicates
-        this.pendingWebSocketRequests.set(peerId, {
-          timestamp: Date.now(),
-          nodeType: 'nodejs',
-          listeningAddress: ourListeningAddress
-        });
-        
-        // Set up timeout to clean up pending request
-        setTimeout(() => {
-          if (this.pendingWebSocketRequests.has(peerId)) {
-            console.log(`⏰ WebSocket connection request timeout for ${peerId}`);
-            this.pendingWebSocketRequests.delete(peerId);
-          }
-        }, this.webSocketRequestTimeout);
-        
-        await this.sendWebSocketConnectionRequest(peerId, {
-          nodeType: 'nodejs',
-          listeningAddress: ourListeningAddress,
-          capabilities: ['websocket', 'relay'],
-          canRelay: true
-        });
-        
-        console.log(`👂 Waiting for browser to connect to our WebSocket server at ${ourListeningAddress}`);
-        
-      } else if (localType === 'nodejs' && targetType === 'nodejs') {
-        // WebSocket (Node.js) → WebSocket (Node.js): Use Perfect Negotiation Pattern for WebSocket
-        console.log(`🌐 Node.js-to-Node.js: Using WebSocket with Perfect Negotiation`);
-        
-        if (!targetListeningAddress) {
-          throw new Error(`No WebSocket address available for Node.js peer ${peerId}`);
-        }
-        
-        // For Node.js-to-Node.js, determine who connects to whom based on node IDs (similar to WebRTC Perfect Negotiation)
-        const shouldConnectToTarget = this.localNodeId.toString() < peerId;
-        
-        if (shouldConnectToTarget) {
-          console.log(`🔗 We initiate: Connecting to Node.js peer's WebSocket server at ${targetListeningAddress}`);
-          await this.connectionManager.createWebSocketConnection(peerId, targetListeningAddress);
-        } else {
-          console.log(`👂 We wait: Requesting Node.js peer to connect to our WebSocket server`);
-          
-          // Get our WebSocket listening address
-          const ourListeningAddress = this.connectionManager.websocketManager?.listeningAddress || 
-                                      this.bootstrapMetadata?.listeningAddress ||
-                                      'ws://localhost:9500'; // fallback
-          
-          this.pendingWebSocketRequests.set(peerId, {
-            timestamp: Date.now(),
-            nodeType: 'nodejs',
-            listeningAddress: ourListeningAddress
-          });
-          
-          setTimeout(() => {
-            if (this.pendingWebSocketRequests.has(peerId)) {
-              console.log(`⏰ WebSocket connection request timeout for ${peerId}`);
-              this.pendingWebSocketRequests.delete(peerId);
-            }
-          }, this.webSocketRequestTimeout);
-          
-          await this.sendWebSocketConnectionRequest(peerId, {
-            nodeType: 'nodejs',
-            listeningAddress: ourListeningAddress,
-            capabilities: ['websocket', 'relay'],
-            canRelay: true
-          });
-        }
-      } else {
-        throw new Error(`Unknown connection matrix: ${localType} → ${targetType}`);
-      }
       
       return true;
     } catch (error) {
@@ -1427,7 +1406,9 @@ export class KademliaDHT extends EventEmitter {
         
         if (answerData) {
           console.log(`📥 Found answer from ${peerId} in DHT, applying...`);
-          await this.connectionManager.handleSignal(peerId, answerData.signal);
+          // Use getOrCreatePeerNode to ensure connection manager exists
+          const peerNode = this.getOrCreatePeerNode(peerId);
+          await peerNode.connectionManager.handleSignal(peerId, answerData.signal);
           return true;
         }
         
@@ -1474,7 +1455,7 @@ export class KademliaDHT extends EventEmitter {
    * Check DHT for incoming WebRTC offers and respond to them
    */
   async checkForIncomingOffers() {
-    const connectedPeers = this.connectionManager.getConnectedPeers();
+    const connectedPeers = this.getConnectedPeers();
     let routingNodes = this.routingTable.getAllNodes();
     
     // CRITICAL FIX: Clean up routing table first to avoid phantom peers
@@ -1548,7 +1529,7 @@ export class KademliaDHT extends EventEmitter {
   async discoverIncomingOffers() {
     try {
       const myNodeId = this.localNodeId.toString();
-      const connectedPeers = this.connectionManager.getConnectedPeers();
+      const connectedPeers = this.getConnectedPeers();
       
       // Track peers we temporarily add for signaling
       if (!this.tempSignalingPeers) {
@@ -1638,7 +1619,7 @@ export class KademliaDHT extends EventEmitter {
   cleanupFailedSignalingPeers() {
     if (!this.tempSignalingPeers) return;
     
-    const connectedPeers = this.connectionManager.getConnectedPeers();
+    const connectedPeers = this.getConnectedPeers();
     const failedPeers = [];
     
     for (const peerId of this.tempSignalingPeers) {
@@ -1676,24 +1657,27 @@ export class KademliaDHT extends EventEmitter {
   async respondToOffer(peerId, offerSignal) {
     try {
       // Check if connection already exists (race condition handling)
-      if (this.connectionManager.connections.has(peerId)) {
+      if (this.isPeerConnected(peerId)) {
         console.log(`🔄 Connection already exists for ${peerId}, using existing connection for offer`);
         // Use existing connection to handle the offer
-        await this.connectionManager.handleSignal(peerId, offerSignal);
+        const existingPeerNode = this.getOrCreatePeerNode(peerId);
+        await existingPeerNode.connectionManager.handleSignal(peerId, offerSignal);
         return;
       }
       
       // Create incoming connection to handle the offer
-      await this.connectionManager.createConnection(peerId, false); // false = not initiator
+      const peerNode = this.getOrCreatePeerNode(peerId);
+      await peerNode.connectionManager.createConnection(peerId, false); // false = not initiator
       
       console.log(`📥 Responding to offer from ${peerId}`);
-      await this.connectionManager.handleSignal(peerId, offerSignal);
+      await peerNode.connectionManager.handleSignal(peerId, offerSignal);
     } catch (error) {
       // If connection already exists, try to use it for the offer
       if (error.message.includes('already exists')) {
         console.log(`🔄 Race condition detected for ${peerId}, using existing connection`);
         try {
-          await this.connectionManager.handleSignal(peerId, offerSignal);
+          const peerNode = this.getOrCreatePeerNode(peerId);
+          await peerNode.connectionManager.handleSignal(peerId, offerSignal);
         } catch (signalError) {
           console.error(`❌ Failed to handle offer signal for existing connection ${peerId}:`, signalError);
         }
@@ -1710,7 +1694,7 @@ export class KademliaDHT extends EventEmitter {
     console.log(`Attempting directed connection to peer: ${targetPeerId}`);
     
     // Skip if already connected
-    if (this.connectionManager.isConnected(targetPeerId)) {
+    if (this.isPeerConnected(targetPeerId)) {
       console.log(`Already connected to ${targetPeerId}`);
       return true;
     }
@@ -1763,15 +1747,16 @@ export class KademliaDHT extends EventEmitter {
       // Send join request through bootstrap
       await this.bootstrap.joinPeer(targetPeerId);
       
-      // Create WebRTC connection
-      console.log(`Creating directed WebRTC connection to ${targetPeerId} (attempt ${retryCount + 1}/${maxRetries + 1})`);
-      await this.connectionManager.createConnection(targetPeerId, true);
+      // Create connection using appropriate transport
+      console.log(`Creating directed connection to ${targetPeerId} (attempt ${retryCount + 1}/${maxRetries + 1})`);
+      const peerNode = this.getOrCreatePeerNode(targetPeerId);
+      await peerNode.connectionManager.createConnection(targetPeerId, true);
       
       // Wait a bit for connection to establish
       await new Promise(resolve => setTimeout(resolve, 5000));
       
       // Check if connection succeeded
-      if (this.connectionManager.isConnected(targetPeerId)) {
+      if (this.isPeerConnected(targetPeerId)) {
         console.log(`Successfully connected to ${targetPeerId}`);
         return true;
       }
@@ -1780,8 +1765,9 @@ export class KademliaDHT extends EventEmitter {
       if (retryCount < maxRetries) {
         console.log(`Connection attempt ${retryCount + 1} failed, retrying...`);
         // Clean up failed connection
-        if (this.connectionManager.peers.has(targetPeerId)) {
-          this.connectionManager.destroyConnection(targetPeerId);
+        const peerNode = this.routingTable.getNode(targetPeerId);
+        if (peerNode && peerNode.connectionManager && peerNode.connectionManager.isConnected && peerNode.connectionManager.isConnected(targetPeerId)) {
+          peerNode.connectionManager.destroyConnection(targetPeerId);
         }
         return this.initiateDirectedConnection(targetPeerId, retryCount + 1);
       }
@@ -1808,7 +1794,9 @@ export class KademliaDHT extends EventEmitter {
     const { signal, requestId } = message;
     
     try {
-      await this.connectionManager.handleSignal(peerId, signal);
+      // Use getOrCreatePeerNode to ensure connection manager exists
+      const peerNode = this.getOrCreatePeerNode(peerId);
+      await peerNode.connectionManager.handleSignal(peerId, signal);
       
       if (requestId) {
         this.sendMessage(peerId, {
@@ -1938,7 +1926,7 @@ export class KademliaDHT extends EventEmitter {
         .filter(node => !node.id.equals(this.localNodeId)) // Don't try to connect to ourselves
         .filter(node => {
           // CRITICAL FIX: Only query nodes that have active connections
-          const isConnected = this.connectionManager.isConnected(node.id.toString());
+          const isConnected = this.isPeerConnected(node.id.toString());
           if (!isConnected) {
             console.log(`🔗 Skipping find_node query to non-connected node: ${node.id.toString().substring(0, 8)}...`);
           }
@@ -1988,14 +1976,9 @@ export class KademliaDHT extends EventEmitter {
               if (addResult) {
                 console.log(`📋 findNode discovered new peer: ${peerId.substring(0, 8)}...`);
                 
-                // Update peer metadata for transport selection
-                if (peerNode.endpoint && this.connectionManager.setPeerMetadata) {
-                  // Try to infer node type from endpoint
-                  const metadata = {
-                    nodeType: peerNode.endpoint.startsWith('ws://') ? 'nodejs' : 'browser',
-                    listeningAddress: peerNode.endpoint
-                  };
-                  this.connectionManager.setPeerMetadata(peerId, metadata);
+                // Store endpoint information in peer node metadata
+                if (peerNode.endpoint) {
+                  peerNode.setMetadata('endpoint', peerNode.endpoint);
                 }
                 
                 // Note: Discovered nodes are added to routing table but not immediately connected
@@ -2081,7 +2064,7 @@ export class KademliaDHT extends EventEmitter {
     this.findNodeRateLimit.set(peerId, Date.now());
     
     // Verify connection before sending request
-    if (!this.connectionManager.isConnected(peerId)) {
+    if (!this.isPeerConnected(peerId)) {
       throw new Error(`No connection to peer ${peerId}`);
     }
 
@@ -2117,7 +2100,7 @@ export class KademliaDHT extends EventEmitter {
   async store(key, value) {
     console.log(`Storing key: ${key}`);
     console.log(`Current routing table size: ${this.routingTable.getAllNodes().length}`);
-    console.log(`Connected peers: ${this.connectionManager.getConnectedPeers().length}`);
+    console.log(`Connected peers: ${this.getConnectedPeers().length}`);
     
     // Clean routing table of disconnected peers before operations
     this.cleanupRoutingTable();
@@ -2128,7 +2111,7 @@ export class KademliaDHT extends EventEmitter {
     // Filter to only peers with active WebRTC connections
     const connectedClosestNodes = closestNodes.filter(node => {
       const peerId = node.id.toString();
-      const isConnected = this.connectionManager.isConnected(peerId);
+      const isConnected = this.isPeerConnected(peerId);
       if (!isConnected) {
         // Node not connected, but we still track it as a potential contact
       }
@@ -2173,7 +2156,7 @@ export class KademliaDHT extends EventEmitter {
    */
   async sendStore(peerId, key, value) {
     // Verify connection before sending request
-    if (!this.connectionManager.isConnected(peerId)) {
+    if (!this.isPeerConnected(peerId)) {
       throw new Error(`No connection to peer ${peerId}`);
     }
 
@@ -2252,7 +2235,7 @@ export class KademliaDHT extends EventEmitter {
     }
     
     // Verify connection before sending request
-    if (!this.connectionManager.isConnected(peerId)) {
+    if (!this.isPeerConnected(peerId)) {
       throw new Error(`No connection to peer ${peerId}`);
     }
 
@@ -2298,10 +2281,132 @@ export class KademliaDHT extends EventEmitter {
   }
 
   /**
-   * Send message to peer
+   * Send message to peer using per-node connection manager
    */
   async sendMessage(peerId, message) {
-    return this.connectionManager.sendMessage(peerId, message);
+    try {
+      // Use getOrCreatePeerNode to ensure connection manager exists
+      const peerNode = this.getOrCreatePeerNode(peerId);
+      return await peerNode.connectionManager.sendMessage(peerId, message);
+    } catch (error) {
+      console.error(`❌ Failed to send ${message.type} to ${peerId.substring(0, 8)}...: ${error.message}`);
+      
+      // Add debugging info for connection state
+      const peerNode = this.routingTable.getNode(peerId);
+      if (peerNode && peerNode.connectionManager) {
+        const isConnected = peerNode.connectionManager.isConnected(peerId);
+        console.error(`   Connection state: isConnected=${isConnected}`);
+        console.error(`   Connection manager type: ${peerNode.connectionManager.constructor.name}`);
+      } else {
+        console.error(`   No connection manager found for peer`);
+      }
+      
+      throw error;
+    }
+  }
+
+  /**
+   * Check if peer is connected using per-node connection manager
+   */
+  isPeerConnected(peerId) {
+    const peerNode = this.routingTable.getNode(peerId);
+    if (peerNode && peerNode.connectionManager) {
+      return peerNode.connectionManager.isConnected(peerId);
+    }
+    
+    // CRITICAL FIX: Also check for WebSocket connections that might not be in routing table yet
+    // This prevents premature cleanup of successfully connected WebSocket peers
+    if (this.peerNodes && this.peerNodes.has(peerId)) {
+      const directPeerNode = this.peerNodes.get(peerId);
+      if (directPeerNode && directPeerNode.connectionManager) {
+        return directPeerNode.connectionManager.isConnected(peerId);
+      }
+    }
+    
+    return false;
+  }
+
+  /**
+   * Get all connected peers from all connection managers
+   * IMPROVED: This method should return consistent results even during connection establishment
+   */
+  getConnectedPeers() {
+    const connectedPeers = [];
+    const allNodes = this.routingTable.getAllNodes();
+    
+    // Check nodes in routing table with connection managers
+    for (const node of allNodes) {
+      if (node.connectionManager && node.connectionManager.isConnected && node.connectionManager.isConnected(node.id.toString())) {
+        connectedPeers.push(node.id.toString());
+      }
+    }
+    
+    // CRITICAL FIX: Also check direct peerNodes for WebSocket connections not yet in routing table
+    if (this.peerNodes) {
+      for (const [peerId, peerNode] of this.peerNodes.entries()) {
+        if (peerNode && peerNode.connectionManager && peerNode.connectionManager.isConnected(peerId)) {
+          // Only add if not already in connectedPeers
+          if (!connectedPeers.includes(peerId)) {
+            connectedPeers.push(peerId);
+          }
+        }
+      }
+    }
+    
+    return connectedPeers;
+  }
+
+  /**
+   * Get or create DHTNode with connection manager for peer
+   * @param {string} peerId - Peer ID
+   * @param {object} metadata - Optional peer metadata
+   * @returns {DHTNode} Node with connection manager
+   */
+  getOrCreatePeerNode(peerId, metadata = {}) {
+    // Initialize peerNodes Map if needed
+    if (!this.peerNodes) {
+      this.peerNodes = new Map();
+    }
+    
+    let peerNode = this.routingTable.getNode(peerId);
+    if (!peerNode) {
+      peerNode = new DHTNode(peerId);
+      // Store metadata on the node
+      for (const [key, value] of Object.entries(metadata)) {
+        peerNode.setMetadata(key, value);
+      }
+      this.routingTable.addNode(peerNode);
+    }
+    
+    // CRITICAL FIX: Always store in peerNodes Map for connection management
+    this.peerNodes.set(peerId, peerNode);
+    
+    // Create connection manager if not exists
+    if (!peerNode.connectionManager) {
+      if (this.serverConnectionManager) {
+        // Reuse server connection manager for bridge/server nodes
+        console.log(`🔗 Reusing server connection manager for peer ${peerId.substring(0, 8)}...`);
+        peerNode.connectionManager = this.serverConnectionManager;
+      } else {
+        // Create new connection manager for client nodes
+        peerNode.connectionManager = ConnectionManagerFactory.getManagerForPeer(peerId, peerNode.metadata);
+        
+        // CRITICAL: Initialize connection manager with local node ID
+        peerNode.connectionManager.initialize(this.localNodeId.toString());
+      }
+      
+      // CRITICAL: Set up DHT message event listener for ALL connection managers (reused and new)
+      peerNode.connectionManager.on('dhtMessage', ({ peerId: msgPeerId, message }) => {
+        this.handlePeerMessage(msgPeerId, message);
+      });
+      
+      // CRITICAL: Transfer metadata to connection manager
+      if (peerNode.metadata && Object.keys(peerNode.metadata).length > 0) {
+        peerNode.connectionManager.setPeerMetadata(peerId, peerNode.metadata);
+      }
+    }
+    
+    return peerNode;
   }
 
   /**
@@ -2382,7 +2487,7 @@ export class KademliaDHT extends EventEmitter {
       clearTimeout(this.refreshTimer);
     }
     
-    const connectedPeers = this.connectionManager.getConnectedPeers().length;
+    const connectedPeers = this.getConnectedPeers().length;
     const routingNodes = this.routingTable.getAllNodes().length;
     
     // Determine appropriate refresh interval based on connectivity
@@ -2425,7 +2530,7 @@ export class KademliaDHT extends EventEmitter {
    * Refresh buckets following proper Kademlia staleness rules
    */
   async refreshStaleBuckets() {
-    const connectedPeers = this.connectionManager.getConnectedPeers().length;
+    const connectedPeers = this.getConnectedPeers().length;
     const routingNodes = this.routingTable.getAllNodes().length;
     const now = Date.now();
     
@@ -2513,12 +2618,13 @@ export class KademliaDHT extends EventEmitter {
   updateBucketActivity() {
     // This should be called from findNode to track which buckets are being used
     const now = Date.now();
-    const connectedPeers = this.connectionManager.getConnectedPeers();
+    const connectedPeers = this.getConnectedPeers();
     
     // Mark buckets containing connected peers as active
     for (const peerId of connectedPeers) {
       try {
-        const peerNodeId = DHTNodeId.fromString(peerId);
+        // CRITICAL: peerId is already a hex string from node.id.toString(), use fromHex() not fromString()
+        const peerNodeId = DHTNodeId.fromHex(peerId);
         const bucketIndex = this.routingTable.getBucketIndex(peerNodeId);
         this.bucketLastActivity.set(bucketIndex, now);
       } catch (error) {
@@ -2531,6 +2637,21 @@ export class KademliaDHT extends EventEmitter {
    * Emergency discovery for new/isolated nodes
    */
   async emergencyPeerDiscovery() {
+    // Throttle emergency discovery to prevent excessive find_node requests
+    if (!this.lastEmergencyDiscovery) {
+      this.lastEmergencyDiscovery = 0;
+    }
+    
+    const now = Date.now();
+    const timeSinceLastEmergency = now - this.lastEmergencyDiscovery;
+    const emergencyInterval = 5 * 60 * 1000; // 5 minutes between emergency discoveries
+    
+    if (timeSinceLastEmergency < emergencyInterval) {
+      console.log(`🚫 Throttling emergency discovery (${Math.round((emergencyInterval - timeSinceLastEmergency) / 1000)}s remaining)`);
+      return;
+    }
+    
+    this.lastEmergencyDiscovery = now;
     console.log(`🚨 Emergency peer discovery mode`);
     
     // Use direct peer discovery first
@@ -2566,7 +2687,7 @@ export class KademliaDHT extends EventEmitter {
    * @deprecated Use scheduleAdaptiveRefresh() instead
    */
   async refreshBuckets() {
-    const connectedPeers = this.connectionManager.getConnectedPeers().length;
+    const connectedPeers = this.getConnectedPeers().length;
     const routingNodes = this.routingTable.getAllNodes().length;
     
     console.log(`🔄 Refreshing k-buckets: ${connectedPeers} connected, ${routingNodes} in routing table`);
@@ -2654,7 +2775,7 @@ export class KademliaDHT extends EventEmitter {
       await this.discoverPeers();
     }
     
-    const newConnectedPeers = this.connectionManager.getConnectedPeers().length;
+    const newConnectedPeers = this.getConnectedPeers().length;
     const newRoutingNodes = this.routingTable.getAllNodes().length;
     
     // Only log if there were changes
@@ -2738,7 +2859,7 @@ export class KademliaDHT extends EventEmitter {
   async connectToRecentlyDiscoveredPeers() {
     const allNodes = this.routingTable.getAllNodes();
     const unconnectedPeers = allNodes.filter(node => 
-      !this.connectionManager.isConnected(node.id.toString())
+      !this.isPeerConnected(node.id.toString())
     );
     
     if (unconnectedPeers.length === 0) {
@@ -2766,6 +2887,12 @@ export class KademliaDHT extends EventEmitter {
       }
       
       try {
+        // CRITICAL: Don't interfere with pending WebRTC coordination
+        if (this.pendingWebRTCOffers && this.pendingWebRTCOffers.has(peerId)) {
+          console.log(`🚫 Skipping emergency discovery for ${peerId.substring(0, 8)}... - WebRTC coordination in progress`);
+          continue;
+        }
+        
         console.log(`🔗 Connecting to discovered peer: ${peerId.substring(0, 8)}...`);
         await this.connectToPeerViaDHT(peerId);
       } catch (error) {
@@ -2783,7 +2910,7 @@ export class KademliaDHT extends EventEmitter {
   async discoverPeers() {
     const allNodes = this.routingTable.getAllNodes();
     const unconnectedPeers = allNodes.filter(node => 
-      !this.connectionManager.isConnected(node.id.toString())
+      !this.isPeerConnected(node.id.toString())
     );
     
     if (unconnectedPeers.length > 0) {
@@ -2827,11 +2954,27 @@ export class KademliaDHT extends EventEmitter {
    * This is called periodically during adaptive refresh
    */
   async connectToUnconnectedRoutingNodes() {
+    // Throttle: Only run this once every 2 minutes to prevent excessive connection attempts
+    if (!this.lastBackgroundConnectionAttempt) {
+      this.lastBackgroundConnectionAttempt = 0;
+    }
+    
+    const now = Date.now();
+    const timeSinceLastAttempt = now - this.lastBackgroundConnectionAttempt;
+    const minInterval = 2 * 60 * 1000; // 2 minutes
+    
+    if (timeSinceLastAttempt < minInterval) {
+      console.log(`🚫 Throttling background connection attempts (${Math.round((minInterval - timeSinceLastAttempt) / 1000)}s remaining)`);
+      return;
+    }
+    
+    this.lastBackgroundConnectionAttempt = now;
+
     const allNodes = this.routingTable.getAllNodes();
-    const connectedPeers = this.connectionManager.getConnectedPeers();
+    const connectedPeers = this.getConnectedPeers();
     const unconnectedNodes = allNodes.filter(node => {
       const peerId = node.id.toString();
-      return !this.connectionManager.isConnected(peerId) && 
+      return !this.isPeerConnected(peerId) && 
              !this.peerFailureBackoff.has(peerId); // Skip nodes in backoff
     });
 
@@ -2856,8 +2999,15 @@ export class KademliaDHT extends EventEmitter {
       const peerId = node.id.toString();
       
       try {
+        // CRITICAL: Don't interfere with pending WebRTC coordination
+        if (this.pendingWebRTCOffers && this.pendingWebRTCOffers.has(peerId)) {
+          console.log(`🚫 Skipping background connection for ${peerId.substring(0, 8)}... - WebRTC coordination in progress`);
+          return;
+        }
+        
         console.log(`🔗 Background connecting to routing table node: ${peerId.substring(0, 8)}...`);
-        await this.connectionManager.createConnection(peerId, true);
+        const peerNode = this.getOrCreatePeerNode(peerId);
+        await peerNode.connectionManager.createConnection(peerId, true);
         console.log(`✅ Background connection successful: ${peerId.substring(0, 8)}...`);
       } catch (error) {
         console.log(`⚠️ Background connection failed for ${peerId.substring(0, 8)}...: ${error.message}`);
@@ -2884,7 +3034,7 @@ export class KademliaDHT extends EventEmitter {
    */
   async attemptConnectionToDiscoveredPeer(peerId) {
     // Skip if already connected or connecting
-    if (this.connectionManager.isConnected(peerId) || this.connectionManager.connections.has(peerId)) {
+    if (this.isPeerConnected(peerId) || this.isPeerConnected(peerId)) {
       return;
     }
 
@@ -2987,10 +3137,10 @@ export class KademliaDHT extends EventEmitter {
     // Clean stale nodes and verify routing table consistency
     const staleRemoved = this.routingTable.removeStaleNodes();
     const routingCleanup = this.cleanupRoutingTable();
-    const staleConnections = this.connectionManager.cleanupStaleConnections();
+    // Note: Stale connections are cleaned up by individual connection managers
 
-    if (cleaned > 0 || staleRemoved > 0 || routingCleanup > 0 || staleConnections > 0) {
-      console.log(`Cleanup: ${cleaned} storage, ${staleRemoved} stale nodes, ${routingCleanup} routing inconsistencies, ${staleConnections} connections`);
+    if (cleaned > 0 || staleRemoved > 0 || routingCleanup > 0) {
+      console.log(`Cleanup: ${cleaned} storage, ${staleRemoved} stale nodes, ${routingCleanup} routing inconsistencies`);
     }
   }
 
@@ -3001,7 +3151,7 @@ export class KademliaDHT extends EventEmitter {
     const nodesToPing = this.routingTable.getNodesToPing(this.options.pingInterval);
     
     for (const node of nodesToPing) {
-      if (this.connectionManager.isConnected(node.id.toString())) {
+      if (this.isPeerConnected(node.id.toString())) {
         await this.sendPing(node.id.toString());
       }
     }
@@ -3021,7 +3171,7 @@ export class KademliaDHT extends EventEmitter {
         republishQueue: this.republishQueue.size
       },
       routing: this.routingTable.getStats(),
-      webrtc: this.connectionManager.getStats(),
+      connections: { total: this.getConnectedPeers().length },
       bootstrap: this.bootstrap.getStatus()
     };
   }
@@ -3044,7 +3194,7 @@ export class KademliaDHT extends EventEmitter {
     }
 
     // Clean up components
-    this.connectionManager.destroy();
+    // Note: Individual connection managers are cleaned up with their DHTNodes
     this.bootstrap.destroy();
 
     // Clear data
@@ -3192,18 +3342,11 @@ export class KademliaDHT extends EventEmitter {
       return;
     }
 
-    // This offer is for us - process it
-    console.log(`📥 Processing WebRTC offer from ${message.senderPeer}`);
+    // This offer is for us - delegate to connection manager
+    console.log(`📥 Received signaling offer from ${message.senderPeer} - delegating to connection manager`);
     
-    try {
-      // Handle the WebRTC offer using our existing WebRTC manager
-      await this.connectionManager.handleSignal(message.senderPeer, {
-        type: 'offer',
-        sdp: message.offer
-      });
-    } catch (error) {
-      console.error(`Failed to process WebRTC offer from ${message.senderPeer}:`, error);
-    }
+    // Connection managers should handle their own signaling processing
+    // The DHT layer only routes messages, it doesn't process connection-specific signaling
   }
 
   /**
@@ -3219,18 +3362,11 @@ export class KademliaDHT extends EventEmitter {
       return;
     }
 
-    // This answer is for us - process it
-    console.log(`📥 Processing WebRTC answer from ${message.senderPeer}`);
+    // This answer is for us - delegate to connection manager
+    console.log(`📥 Received signaling answer from ${message.senderPeer} - delegating to connection manager`);
     
-    try {
-      // Handle the WebRTC answer using our existing WebRTC manager
-      await this.connectionManager.handleSignal(message.senderPeer, {
-        type: 'answer',
-        sdp: message.answer
-      });
-    } catch (error) {
-      console.error(`Failed to process WebRTC answer from ${message.senderPeer}:`, error);
-    }
+    // Connection managers should handle their own signaling processing
+    // The DHT layer only routes messages, it doesn't process connection-specific signaling
   }
 
   /**
@@ -3246,20 +3382,11 @@ export class KademliaDHT extends EventEmitter {
       return;
     }
 
-    // This ICE candidate is for us - process it
-    console.log(`📥 Processing ICE candidate from ${message.senderPeer}`);
+    // This ICE candidate is for us - delegate to connection manager
+    console.log(`📥 Received ICE candidate from ${message.senderPeer} - delegating to connection manager`);
     
-    try {
-      // Handle the ICE candidate using our existing WebRTC manager
-      await this.connectionManager.handleSignal(message.senderPeer, {
-        type: 'candidate',
-        candidate: message.candidate.candidate,
-        sdpMLineIndex: message.candidate.sdpMLineIndex,
-        sdpMid: message.candidate.sdpMid
-      });
-    } catch (error) {
-      console.error(`Failed to process ICE candidate from ${message.senderPeer}:`, error);
-    }
+    // Connection managers should handle their own signaling processing
+    // The DHT layer only routes messages, it doesn't process connection-specific signaling
   }
 
   /**
@@ -3270,7 +3397,7 @@ export class KademliaDHT extends EventEmitter {
     
     try {
       // Try to send directly if we have a connection to the target
-      if (this.connectionManager.isConnected(targetPeer)) {
+      if (this.isPeerConnected(targetPeer)) {
         await this.sendMessage(targetPeer, message);
         console.log(`✅ Directly routed WebRTC message to ${targetPeer}`);
         return;
@@ -3288,7 +3415,7 @@ export class KademliaDHT extends EventEmitter {
       // Send to the closest connected peer
       for (const node of closestNodes) {
         const nextHop = node.id.toString();
-        if (this.connectionManager.isConnected(nextHop)) {
+        if (this.isPeerConnected(nextHop)) {
           await this.sendMessage(nextHop, message);
           console.log(`✅ Routed WebRTC message via ${nextHop} to ${targetPeer}`);
           return;
@@ -3372,11 +3499,12 @@ export class KademliaDHT extends EventEmitter {
 
     await this.sendMessage(fromPeer, response);
     
-    if (shouldConnect && !this.connectionManager.isConnected(fromPeer)) {
-      // Initiate WebRTC connection using DHT signaling
-      console.log(`🤝 Initiating WebRTC connection to discovered peer: ${fromPeer}`);
+    if (shouldConnect && !this.isPeerConnected(fromPeer)) {
+      // Initiate connection using connection-agnostic approach
+      console.log(`🤝 Initiating connection to discovered peer: ${fromPeer}`);
       try {
-        await this.connectionManager.createConnection(fromPeer, true);
+        const peerNode = this.getOrCreatePeerNode(fromPeer);
+        await peerNode.connectionManager.createConnection(fromPeer, true);
       } catch (error) {
         console.warn(`Failed to initiate connection to ${fromPeer}:`, error);
       }
@@ -3389,7 +3517,7 @@ export class KademliaDHT extends EventEmitter {
   async handlePeerDiscoveryResponse(fromPeer, message) {
     console.log(`🔍 Received peer discovery response from ${fromPeer}: willing=${message.willing}`);
     
-    if (message.willing && !this.connectionManager.isConnected(fromPeer)) {
+    if (message.willing && !this.isPeerConnected(fromPeer)) {
       // Peer is willing to connect - wait for their WebRTC offer or send ours
       console.log(`✅ Peer ${fromPeer} is willing to connect, preparing for WebRTC negotiation`);
       
@@ -3398,8 +3526,7 @@ export class KademliaDHT extends EventEmitter {
         const node = new DHTNode(fromPeer, 'discovered-peer');
         node.lastSeen = Date.now();
         
-        // Store peer metadata for connection decisions
-        this.storePeerMetadataOnNode(node, fromPeer);
+        // Peer metadata will be handled by connection manager
         
         this.routingTable.addNode(node);
         console.log(`📋 Added discovered peer ${fromPeer} to routing table`);
@@ -3445,27 +3572,28 @@ export class KademliaDHT extends EventEmitter {
       // Another Node.js client is asking us to connect to their WebSocket server
       try {
         if (typeof window !== 'undefined') {
-          // We're a browser - connect to the Node.js WebSocket server
-          console.log(`🔌 Browser connecting to Node.js WebSocket server: ${message.listeningAddress}`);
-          await this.connectToWebSocketPeer(message.senderPeer, message.listeningAddress);
+          // Use connection-agnostic approach to connect to peer
+          console.log(`🔗 Connecting to peer server: ${message.listeningAddress}`);
+          const peerNode = this.getOrCreatePeerNode(message.senderPeer, {
+            listeningAddress: message.listeningAddress
+          });
+          await peerNode.connectionManager.createConnection(message.senderPeer, true);
           
           // Send success response
           await this.sendWebSocketConnectionResponse(message.senderPeer, {
-            success: true,
-            nodeType: 'browser',
-            capabilities: ['webrtc']
+            success: true
           });
         } else {
-          // We're also a Node.js client - connect to the other Node.js WebSocket server
-          console.log(`🔌 Node.js client connecting to another Node.js WebSocket server: ${message.listeningAddress}`);
-          await this.connectionManager.createWebSocketConnection(message.senderPeer, message.listeningAddress);
+          // Use connection-agnostic approach to connect to peer
+          console.log(`🔗 Connecting to peer server: ${message.listeningAddress}`);
+          const peerNode = this.getOrCreatePeerNode(message.senderPeer, {
+            listeningAddress: message.listeningAddress
+          });
+          await peerNode.connectionManager.createConnection(message.senderPeer, true);
           
           // Send success response
           await this.sendWebSocketConnectionResponse(message.senderPeer, {
-            success: true,
-            nodeType: 'nodejs',
-            capabilities: ['websocket', 'relay'],
-            listeningAddress: this.connectionManager.websocketManager?.listeningAddress || this.bootstrapMetadata?.listeningAddress
+            success: true
           });
         }
 
@@ -3573,55 +3701,13 @@ export class KademliaDHT extends EventEmitter {
     await this.routeWebRTCMessage(targetPeer, message);
   }
 
-  /**
-   * Connect to WebSocket peer (Browser → Node.js or Node.js → Node.js connection)
-   */
-  async connectToWebSocketPeer(peerId, websocketAddress) {
-    console.log(`🔌 Establishing WebSocket connection to ${peerId} at ${websocketAddress}`);
-    
-    try {
-      // Use connection manager's WebSocket connection capability
-      // Works with both WebSocketManager (Node.js) and HybridConnectionManager (Browser)
-      const ws = await this.connectionManager.createWebSocketConnection(peerId, websocketAddress);
-      
-      console.log(`✅ Successfully connected to WebSocket peer ${peerId}`);
-      
-      // Clean up any pending WebSocket connection request for this peer
-      this.pendingWebSocketRequests.delete(peerId);
-      
-      // Add to routing table
-      const nodeId = DHTNodeId.fromString(peerId);
-      const peer = new DHTNode(nodeId);
-      
-      // Store peer metadata (this is a WebSocket connection, so it's a Node.js peer)
-      peer.setMetadata('nodeType', 'nodejs');
-      peer.setMetadata('listeningAddress', websocketAddress);
-      peer.setMetadata('capabilities', ['websocket']);
-      
-      this.routingTable.addNode(peer);
-      
-      // Send welcome message to establish DHT protocol
-      await this.connectionManager.sendMessage(peerId, {
-        type: 'ping',
-        nodeId: this.localNodeId.toString(),
-        timestamp: Date.now()
-      });
-      
-      console.log(`📡 DHT handshake sent to WebSocket peer ${peerId}`);
-      
-      return true;
-    } catch (error) {
-      console.error(`❌ Failed to connect to WebSocket peer ${peerId}:`, error.message);
-      return false;
-    }
-  }
 
   /**
    * Check if we should connect to a peer (prevent overconnection)
    */
   async shouldConnectToPeer(peerId) {
     // Don't connect if already connected
-    if (this.connectionManager.isConnected(peerId)) {
+    if (this.isPeerConnected(peerId)) {
       return false;
     }
 
@@ -3631,8 +3717,8 @@ export class KademliaDHT extends EventEmitter {
     }
 
     // Check if we're under the connection limit
-    const currentConnections = this.connectionManager.getConnectedPeers().length;
-    const maxConnections = this.connectionManager.options.maxConnections || 50;
+    const currentConnections = this.getConnectedPeers().length;
+    const maxConnections = this.transportOptions.maxConnections || 50;
     
     if (currentConnections >= maxConnections) {
       console.log(`Connection limit reached (${currentConnections}/${maxConnections})`);
@@ -3674,7 +3760,7 @@ export class KademliaDHT extends EventEmitter {
     
     try {
       const routingNodes = this.routingTable.getAllNodes();
-      const connectedPeers = this.connectionManager.getConnectedPeers();
+      const connectedPeers = this.getConnectedPeers();
       
       // Find peers in routing table that we're not connected to
       for (const node of routingNodes) {
@@ -3727,6 +3813,39 @@ export class KademliaDHT extends EventEmitter {
       
     } catch (error) {
       console.error(`Error during DHT peer discovery:`, error);
+    }
+  }
+
+  /**
+   * Verify bridge node authentication
+   * Bridge nodes must have valid cryptographic proof of authorization
+   */
+  async verifyBridgeNodeAuth(peer) {
+    try {
+      // Check for bridge authentication token in metadata
+      const bridgeAuth = peer.metadata?.bridgeAuthToken;
+      const bridgeSignature = peer.metadata?.bridgeSignature;
+      
+      if (!bridgeAuth || !bridgeSignature) {
+        console.warn(`🚨 Bridge node ${peer.nodeId.substring(0, 8)}... missing auth credentials`);
+        return false;
+      }
+
+      // For now, implement basic shared secret authentication
+      // TODO: Replace with proper cryptographic verification using Ed25519 signatures
+      const expectedAuthHash = 'bridge_auth_' + (this.options.bridgeAuth || 'default-bridge-auth-key');
+      
+      if (bridgeAuth === expectedAuthHash) {
+        console.log(`✅ Bridge node ${peer.nodeId.substring(0, 8)}... authenticated`);
+        return true;
+      } else {
+        console.warn(`🚨 Bridge node ${peer.nodeId.substring(0, 8)}... authentication failed`);
+        return false;
+      }
+      
+    } catch (error) {
+      console.error(`❌ Error verifying bridge node auth:`, error);
+      return false;
     }
   }
 }

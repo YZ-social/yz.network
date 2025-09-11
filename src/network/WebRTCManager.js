@@ -17,9 +17,10 @@ export class WebRTCManager extends EventEmitter {
         { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
         { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
         { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
-        // Backup TURN servers
-        { urls: 'turn:relay1.expressturn.com:3478', username: 'ef3MYDAQ2ZEQEQ9Q', credential: 'Pjm5P3LnQlQRGEZK' },
-        { urls: 'turn:relay1.expressturn.com:443', username: 'ef3MYDAQ2ZEQEQ9Q', credential: 'Pjm5P3LnQlQRGEZK' }
+        // More reliable TURN servers
+        { urls: 'turn:relay.metered.ca:80', username: 'f60e8e5b8493fa5e8b6fcbb1', credential: 'hIvFMxNqIRobbdxC' },
+        { urls: 'turn:relay.metered.ca:443', username: 'f60e8e5b8493fa5e8b6fcbb1', credential: 'hIvFMxNqIRobbdxC' },
+        { urls: 'turn:relay.metered.ca:443?transport=tcp', username: 'f60e8e5b8493fa5e8b6fcbb1', credential: 'hIvFMxNqIRobbdxC' }
       ],
       timeout: options.timeout || 30000,
       maxConnections: options.maxConnections || 50,
@@ -243,10 +244,17 @@ export class WebRTCManager extends EventEmitter {
   setupPeerConnectionEvents(peerId, pc, initiator) {
     console.log(`🔧 Setting up events for peer: ${peerId} (initiator: ${initiator})`);
 
-    // ICE candidate gathering
+    // ICE candidate gathering with enhanced debugging
     pc.onicecandidate = (event) => {
       if (event.candidate) {
-        console.log(`🧊 ICE candidate for ${peerId}:`, event.candidate.type);
+        console.log(`🧊 ICE candidate for ${peerId}: ${event.candidate.type} (${event.candidate.protocol}:${event.candidate.address}:${event.candidate.port})`);
+        console.log(`🔍 ICE candidate details:`, {
+          type: event.candidate.type,
+          protocol: event.candidate.protocol,
+          address: event.candidate.address,
+          port: event.candidate.port,
+          priority: event.candidate.priority
+        });
         this.emit('signal', {
           peerId,
           signal: {
@@ -258,6 +266,7 @@ export class WebRTCManager extends EventEmitter {
         });
       } else {
         console.log(`🏁 ICE gathering complete for ${peerId}`);
+        console.log(`🔍 Final ICE gathering state: ${pc.iceGatheringState}`);
       }
     };
 
@@ -272,7 +281,7 @@ export class WebRTCManager extends EventEmitter {
         
         console.log(`✅ WebRTC Connected to ${peerId}`);
         console.log(`🚀 CRITICAL: About to emit peerConnected event for ${peerId}`);
-        this.emit('peerConnected', { peerId, connection: pc });
+        this.emit('peerConnected', { peerId, connection: pc, manager: this, initiator: true });
         console.log(`✅ CRITICAL: peerConnected event emitted for ${peerId}`);
         
         // Start keep-alive for this connection
@@ -289,9 +298,48 @@ export class WebRTCManager extends EventEmitter {
       }
     };
 
-    // ICE connection state changes
+    // ICE connection state changes with enhanced debugging
     pc.oniceconnectionstatechange = () => {
       console.log(`🧊 ICE connection state for ${peerId}: ${pc.iceConnectionState}`);
+      
+      if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+        console.log(`✅ ICE connection established for ${peerId}: ${pc.iceConnectionState}`);
+        // Log successful ICE candidate pair information
+        pc.getStats().then(stats => {
+          stats.forEach(report => {
+            if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+              console.log(`🎯 Successful ICE candidate pair for ${peerId}:`, {
+                localType: report.localCandidateType,
+                remoteType: report.remoteCandidateType,
+                transportType: report.transportType
+              });
+            }
+          });
+        }).catch(err => console.warn(`Could not get ICE stats: ${err}`));
+      } else if (pc.iceConnectionState === 'failed') {
+        console.error(`❌ ICE connection failed for ${peerId}`);
+        console.error(`🔍 ICE failure debug:`, {
+          connectionState: pc.connectionState,
+          signalingState: pc.signalingState,
+          iceGatheringState: pc.iceGatheringState
+        });
+        // Log failed ICE candidates for debugging
+        pc.getStats().then(stats => {
+          stats.forEach(report => {
+            if (report.type === 'candidate-pair' && report.state === 'failed') {
+              console.error(`💥 Failed ICE candidate pair for ${peerId}:`, {
+                localType: report.localCandidateType,
+                remoteType: report.remoteCandidateType,
+                failureReason: report.failureReason || 'Unknown'
+              });
+            }
+          });
+        }).catch(err => console.warn(`Could not get ICE failure stats: ${err}`));
+        // Force connection cleanup on ICE failure
+        this.destroyConnection(peerId, 'ice_failed');
+      } else if (pc.iceConnectionState === 'disconnected') {
+        console.warn(`⚠️ ICE connection disconnected for ${peerId}`);
+      }
     };
 
     // Data channel handling for incoming connections
@@ -370,29 +418,57 @@ export class WebRTCManager extends EventEmitter {
       if (signal.type === 'offer') {
         console.log(`📥 Creating incoming connection for ${peerId}`);
         try {
-          // For incoming connections processing offers, we need the RTCPeerConnection immediately,
-          // not after the connection is fully established. Create connection but don't await the Promise.
-          console.log(`🚀 CRITICAL FIX: Creating connection without awaiting for immediate offer processing`);
-          this.createConnection(peerId, false); // Don't await - we need the RTCPeerConnection object immediately
-          pc = this.connections.get(peerId);
-          console.log(`✅ Incoming connection created for ${peerId}, connection exists: ${!!pc}`);
-          if (pc) {
-            console.log(`🔍 Connection states: signaling=${pc.signalingState}, connection=${pc.connectionState}, ice=${pc.iceConnectionState}`);
-          }
-          console.log(`🚀 IMPORTANT: About to continue processing the original offer signal that triggered connection creation`);
-          console.log(`🔍 DEBUG STEP 1: Continuing execution after connection creation`);
-          console.log(`🔍 DEBUG STEP 1a: pc object after creation: ${!!pc}, signal type: ${signal.type}`);
-          console.log(`🚀 CRITICAL: About to continue processing offer signal after connection creation`);
-          // IMPORTANT: Don't return here - continue to process the offer signal that triggered this creation
-        } catch (error) {
-          // If connection already exists, get it and continue processing
-          if (error.message.includes('already exists')) {
-            console.log(`🔄 Connection already exists for ${peerId}, continuing to process offer`);
+          // CRITICAL FIX: Create connection synchronously to avoid race conditions
+          // Call the connection creation logic directly instead of using async createConnection()
+          
+          // Check if already creating connection
+          if (this.connections.has(peerId)) {
             pc = this.connections.get(peerId);
+            console.log(`🔄 Connection already exists for ${peerId}, continuing to process offer`);
           } else {
-            console.error(`❌ Failed to create incoming connection for ${peerId}:`, error);
-            return;
+            // Create RTCPeerConnection immediately for synchronous processing
+            const rtcPC = new RTCPeerConnection({
+              iceServers: this.options.iceServers,
+              iceTransportPolicy: 'all',
+              bundlePolicy: 'max-bundle',
+              rtcpMuxPolicy: 'require',
+              iceCandidatePoolSize: 10
+            });
+            
+            this.connections.set(peerId, rtcPC);
+            this.connectionStates.set(peerId, 'connecting');
+            
+            // Setup peer connection events immediately
+            this.setupPeerConnectionEvents(peerId, rtcPC, false); // false = not initiator
+            
+            // Setup pending connection tracking
+            this.pendingConnections.set(peerId, {
+              startTime: Date.now(),
+              initiator: false,
+              pc: rtcPC
+            });
+            
+            // Set connection timeout
+            const timeout = setTimeout(() => {
+              if (this.connectionStates.get(peerId) === 'connecting') {
+                console.warn(`⏰ Connection timeout for peer ${peerId} after ${this.options.timeout}ms`);
+                console.warn(`🔍 Final connection state:`, {
+                  connectionState: rtcPC.connectionState,
+                  iceConnectionState: rtcPC.iceConnectionState,
+                  signalingState: rtcPC.signalingState
+                });
+                this.destroyConnection(peerId, 'timeout');
+              }
+            }, this.options.timeout);
+            
+            rtcPC.timeout = timeout;
+            pc = rtcPC;
+            
+            console.log(`✅ Incoming connection created synchronously for ${peerId}`);
           }
+        } catch (error) {
+          console.error(`❌ Failed to create incoming connection for ${peerId}:`, error);
+          return;
         }
       } else {
         console.warn(`⚠️ Received ${signal.type} signal for unknown peer ${peerId}`);
@@ -400,7 +476,6 @@ export class WebRTCManager extends EventEmitter {
       }
     } else {
       console.log(`🔍 Using existing connection for ${peerId}: signaling=${pc.signalingState}, connection=${pc.connectionState}`);
-      console.log(`🔍 DEBUG STEP 2: Using existing connection, no creation needed`);
     }
     
     // Perfect Negotiation: Handle rollback if we're being polite
@@ -776,10 +851,16 @@ export class WebRTCManager extends EventEmitter {
           console.log(`✅ WebSocket connection established to ${peerId}`);
 
           // Send handshake to identify ourselves
+          // Check if this is a bridge node connection based on metadata
+          const peerMetadata = this.peerMetadata?.get(peerId);
+          const messageType = (peerMetadata && peerMetadata.isBridgeNode) ? 'dht_peer_hello' : 'handshake';
+          
           ws.send(JSON.stringify({
-            type: 'handshake',
+            type: messageType,
             peerId: this.localNodeId
           }));
+          
+          console.log(`📤 Sent ${messageType} to ${peerMetadata?.isBridgeNode ? 'bridge node' : 'peer'} ${peerId.substring(0, 8)}`);
 
           // Wait for handshake response
           const handshakeTimeout = setTimeout(() => {
@@ -790,18 +871,30 @@ export class WebRTCManager extends EventEmitter {
           const handleHandshakeResponse = (event) => {
             try {
               const message = JSON.parse(event.data);
-              if (message.type === 'handshake_response' && message.success) {
+              
+              // Handle both regular handshake and bridge node responses
+              const isValidResponse = 
+                (message.type === 'handshake_response' && message.success) ||
+                (message.type === 'dht_peer_connected' && message.bridgeNodeId);
+              
+              if (isValidResponse) {
                 clearTimeout(handshakeTimeout);
                 ws.removeEventListener('message', handleHandshakeResponse);
+                
+                if (message.type === 'dht_peer_connected') {
+                  console.log(`✅ Successfully connected to bridge node ${message.bridgeNodeId.substring(0, 8)}`);
+                }
                 
                 // Set up the WebSocket connection for DHT messaging
                 this.setupWebSocketConnection(peerId, ws);
                 resolve(ws);
               } else {
+                console.warn('WebSocket handshake failed:', message);
                 ws.close();
                 reject(new Error('WebSocket handshake failed'));
               }
             } catch (error) {
+              console.error('Invalid handshake response:', error);
               ws.close();
               reject(new Error('Invalid handshake response'));
             }
@@ -867,7 +960,7 @@ export class WebRTCManager extends EventEmitter {
     });
 
     // Emit connection event (same interface as WebRTC)
-    this.emit('peerConnected', { peerId });
+    this.emit('peerConnected', { peerId, connection: ws, manager: this, initiator: false });
   }
 
   /**
@@ -1204,6 +1297,133 @@ export class WebRTCManager extends EventEmitter {
     this.isTabVisible = !this.isTabVisible;
     this.adjustKeepAliveFrequency();
     return this.isTabVisible;
+  }
+
+  /**
+   * Debug WebRTC connection states and issues
+   */
+  debugWebRTCStates() {
+    console.log('=== WebRTC Connection Debug Report ===');
+    
+    const report = {
+      totalConnections: this.connections.size,
+      connectedPeers: this.getConnectedPeers().length,
+      pendingConnections: this.pendingConnections.size,
+      connections: []
+    };
+    
+    for (const [peerId, connection] of this.connections.entries()) {
+      if (connection instanceof RTCPeerConnection) {
+        const connectionInfo = {
+          peerId: peerId.substring(0, 8),
+          connectionState: connection.connectionState,
+          iceConnectionState: connection.iceConnectionState,
+          iceGatheringState: connection.iceGatheringState,
+          signalingState: connection.signalingState,
+          hasDataChannel: this.dataChannels.has(peerId),
+          dataChannelState: this.dataChannels.get(peerId)?.readyState || 'none'
+        };
+        
+        report.connections.push(connectionInfo);
+        
+        console.log(`Peer ${peerId.substring(0, 8)}:`, connectionInfo);
+        
+        // Get detailed ICE candidate information
+        connection.getStats().then(stats => {
+          const candidates = [];
+          const candidatePairs = [];
+          
+          stats.forEach(report => {
+            if (report.type === 'local-candidate' || report.type === 'remote-candidate') {
+              candidates.push({
+                type: report.type,
+                candidateType: report.candidateType,
+                protocol: report.protocol,
+                address: report.address,
+                port: report.port,
+                priority: report.priority
+              });
+            } else if (report.type === 'candidate-pair') {
+              candidatePairs.push({
+                state: report.state,
+                nominated: report.nominated,
+                writable: report.writable,
+                readable: report.readable
+              });
+            }
+          });
+          
+          if (candidates.length > 0 || candidatePairs.length > 0) {
+            console.log(`  ICE Details for ${peerId.substring(0, 8)}:`, {
+              candidates: candidates.length,
+              candidatePairs: candidatePairs.length,
+              pairs: candidatePairs
+            });
+          }
+        }).catch(err => {
+          console.warn(`  Could not get ICE stats for ${peerId.substring(0, 8)}:`, err.message);
+        });
+      }
+    }
+    
+    console.log('Summary:', {
+      total: report.totalConnections,
+      connected: report.connectedPeers,
+      pending: report.pendingConnections,
+      success_rate: report.totalConnections > 0 ? `${(report.connectedPeers / report.totalConnections * 100).toFixed(1)}%` : '0%'
+    });
+    
+    return report;
+  }
+  
+  /**
+   * Check connection health for all peers
+   */
+  checkConnectionHealth() {
+    console.log('=== Connection Health Check ===');
+    
+    const healthReport = {
+      healthy: [],
+      unhealthy: [],
+      pending: []
+    };
+    
+    for (const [peerId, connection] of this.connections.entries()) {
+      const status = {
+        peerId: peerId.substring(0, 8),
+        connected: this.isConnected(peerId),
+        state: this.getConnectionState(peerId)
+      };
+      
+      if (connection instanceof RTCPeerConnection) {
+        status.connectionState = connection.connectionState;
+        status.iceConnectionState = connection.iceConnectionState;
+        
+        if (connection.connectionState === 'connected') {
+          healthReport.healthy.push(status);
+        } else if (connection.connectionState === 'connecting') {
+          healthReport.pending.push(status);
+        } else {
+          healthReport.unhealthy.push(status);
+        }
+      }
+    }
+    
+    console.log('Health Report:', {
+      healthy: healthReport.healthy.length,
+      pending: healthReport.pending.length,
+      unhealthy: healthReport.unhealthy.length
+    });
+    
+    if (healthReport.unhealthy.length > 0) {
+      console.log('Unhealthy connections:', healthReport.unhealthy);
+    }
+    
+    if (healthReport.pending.length > 0) {
+      console.log('Pending connections:', healthReport.pending);
+    }
+    
+    return healthReport;
   }
 
   /**

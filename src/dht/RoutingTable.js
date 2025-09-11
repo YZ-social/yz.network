@@ -11,6 +11,10 @@ export class RoutingTable {
     this.k = k;
     this.buckets = [new KBucket(k, 0, 0)]; // Start with single bucket
     this.totalNodes = 0;
+    
+    // Event handling for connection managers
+    this.onNodeAdded = null; // Callback to notify DHT when nodes are added via connections
+    this.eventHandlersSetup = false;
   }
 
   /**
@@ -41,8 +45,9 @@ export class RoutingTable {
     const bucket = this.buckets[bucketIndex];
 
     // Try to add to existing bucket
+    const wasAlreadyPresent = bucket.hasNode(node.id);
     if (bucket.addNode(node)) {
-      if (!bucket.hasNode(node.id)) {
+      if (!wasAlreadyPresent) {
         this.totalNodes++;
       }
       return true;
@@ -72,7 +77,7 @@ export class RoutingTable {
    * Remove a node from the routing table
    */
   removeNode(nodeId) {
-    const id = nodeId instanceof DHTNodeId ? nodeId : DHTNodeId.fromString(nodeId);
+    const id = nodeId instanceof DHTNodeId ? nodeId : DHTNodeId.fromHex(nodeId);
     const bucketIndex = this.getBucketIndex(id);
     const bucket = this.buckets[bucketIndex];
 
@@ -87,9 +92,66 @@ export class RoutingTable {
    * Get a node by ID
    */
   getNode(nodeId) {
-    const id = nodeId instanceof DHTNodeId ? nodeId : DHTNodeId.fromString(nodeId);
+    // CRITICAL FIX: Use fromHex() for existing node IDs, not fromString() which hashes them!
+    const id = nodeId instanceof DHTNodeId ? nodeId : DHTNodeId.fromHex(nodeId);
     const bucketIndex = this.getBucketIndex(id);
-    return this.buckets[bucketIndex].getNode(id);
+    
+    // Try normal bucket lookup first
+    let foundNode = this.buckets[bucketIndex].getNode(id);
+    
+    // DEBUG: Always log for bridge node lookups to see what's happening
+    const nodeIdStr = id.toString();
+    if (nodeIdStr.includes('8b7f7fb8') || foundNode === undefined || foundNode === null) {
+      console.log(`🔧 ROUTING TABLE DEBUG - getNode for ${nodeIdStr.substring(0, 8)}:`);
+      console.log(`  bucketIndex: ${bucketIndex} of ${this.buckets.length}`);
+      console.log(`  bucket.getNode result: ${foundNode}`);
+      console.log(`  foundNode === null: ${foundNode === null}`);
+      console.log(`  foundNode === undefined: ${foundNode === undefined}`);
+      console.log(`  !foundNode: ${!foundNode}`);
+    }
+    
+    // CRITICAL FIX: If not found in expected bucket, search all buckets
+    // This handles bucket calculation issues, ID conversion problems, and bucket splits
+    if (!foundNode) {
+      const nodeIdStr = id.toString();
+      
+      console.warn(`🔍 Starting fallback search for node ${nodeIdStr.substring(0, 8)} - not found in bucket ${bucketIndex}`);
+      
+      // First, try string comparison across ALL buckets (including the original bucket)
+      for (let i = 0; i < this.buckets.length; i++) {
+        const bucket = this.buckets[i];
+        const nodes = bucket.getNodes();
+        
+        console.log(`🔍 Fallback: Searching bucket ${i} with ${nodes.length} nodes`);
+        
+        for (const node of nodes) {
+          const nodeStr = node.id.toString();
+          console.log(`🔍 Fallback: Comparing "${nodeStr.substring(0, 8)}..." vs "${nodeIdStr.substring(0, 8)}..."`);
+          console.log(`🔍 String lengths: ${nodeStr.length} vs ${nodeIdStr.length}`);
+          console.log(`🔍 String equality: ${nodeStr === nodeIdStr}`);
+          console.log(`🔍 equals() method: ${node.id.equals(id)}`);
+          
+          // Try both string comparison and equals() method
+          if (nodeStr === nodeIdStr) {
+            console.warn(`🔍 FOUND node ${nodeIdStr.substring(0, 8)} using STRING comparison!`);
+            foundNode = node;
+            break;
+          } else if (node.id.equals(id)) {
+            console.warn(`🔍 FOUND node ${nodeIdStr.substring(0, 8)} using EQUALS() method!`);
+            foundNode = node;
+            break;
+          }
+        }
+        
+        if (foundNode) break;
+      }
+      
+      if (!foundNode) {
+        console.error(`🚨 Fallback search FAILED for node ${nodeIdStr.substring(0, 8)} - not found in any bucket`);
+      }
+    }
+    
+    return foundNode;
   }
 
   /**
@@ -126,7 +188,7 @@ export class RoutingTable {
    * Find the k closest nodes to a target
    */
   findClosestNodes(targetId, k = this.k) {
-    const target = targetId instanceof DHTNodeId ? targetId : DHTNodeId.fromString(targetId);
+    const target = targetId instanceof DHTNodeId ? targetId : DHTNodeId.fromHex(targetId);
     const allNodes = [];
 
     // Collect all nodes from all buckets
@@ -142,6 +204,29 @@ export class RoutingTable {
     });
 
     return allNodes.slice(0, k);
+  }
+
+  /**
+   * Find the k closest CONNECTED nodes to a target
+   */
+  findClosestConnectedNodes(targetId, k = this.k, connectionManager = null) {
+    const target = targetId instanceof DHTNodeId ? targetId : DHTNodeId.fromHex(targetId);
+    const allNodes = [];
+
+    // Collect all nodes from all buckets
+    for (const bucket of this.buckets) {
+      allNodes.push(...bucket.getNodes());
+    }
+
+    // Filter to only connected nodes using per-node connection managers
+    const connectedNodes = allNodes.filter(node => node.isConnected());
+    connectedNodes.sort((a, b) => {
+      const distA = a.id.xorDistance(target);
+      const distB = b.id.xorDistance(target);
+      return distA.compare(distB);
+    });
+
+    return connectedNodes.slice(0, k);
   }
 
   /**
@@ -310,6 +395,126 @@ export class RoutingTable {
   /**
    * Convert to JSON representation
    */
+  /**
+   * Set up event handlers on connection managers to receive peerConnected events
+   */
+  setupConnectionEventHandlers(connectionManagers, nodeAddedCallback) {
+    if (this.eventHandlersSetup) {
+      return;
+    }
+    
+    console.log('🔧 RoutingTable setting up connection event handlers');
+    
+    // Store callback to notify DHT when nodes are added
+    this.onNodeAdded = nodeAddedCallback;
+    
+    // Create shared event handler - same for all connection managers
+    this.peerConnectedHandler = ({ peerId, connection, manager, initiator }) => {
+      console.log(`🔗 RoutingTable received peerConnected: ${peerId.substring(0, 8)}... (via ${manager.constructor.name})`);
+      this.handlePeerConnected(peerId, connection, manager);
+    };
+    
+    // Set up the same handler on all connection managers
+    for (const manager of connectionManagers) {
+      if (manager && manager.localNodeId) {
+        console.log(`📋 RoutingTable setting up event handlers on ${manager.constructor.name}`);
+        manager.on('peerConnected', this.peerConnectedHandler);
+      }
+    }
+    
+    this.eventHandlersSetup = true;
+    console.log('✅ RoutingTable connection event handlers configured');
+  }
+  
+  /**
+   * Handle peerConnected event by creating and configuring DHTNode
+   */
+  handlePeerConnected(peerId, connection, manager) {
+    // Check if node already exists
+    if (this.getNode(peerId)) {
+      console.log(`🔄 Node ${peerId.substring(0, 8)}... already exists in routing table`);
+      return;
+    }
+    
+    console.log(`📋 RoutingTable creating DHTNode for ${peerId.substring(0, 8)}...`);
+    
+    // Create new DHTNode
+    const node = new DHTNode(peerId, peerId);
+    
+    // Set up the node's connection and manager
+    node.setupConnection(manager, connection);
+    
+    // Transfer metadata from connection manager to node
+    if (manager && manager.getPeerMetadata) {
+      console.log(`📋 DEBUG: Getting metadata from ${manager.constructor.name} for ${peerId.substring(0, 8)}`);
+      const peerMetadata = manager.getPeerMetadata(peerId);
+      console.log(`📋 DEBUG: Manager metadata result:`, peerMetadata);
+      
+      // CRITICAL: Also check the main DHT connection manager for metadata
+      // The bridge metadata might be stored there instead of the specific transport manager
+      let combinedMetadata = peerMetadata || {};
+      
+      // Try to get DHT connection manager metadata from the DHT instance
+      // Access through the nodeAdded callback context
+      if (this.onNodeAdded) {
+        // The onNodeAdded callback should have access to DHT context
+        // Let's try a different approach - use ConnectionManagerFactory to get metadata
+        try {
+          const ConnectionManagerFactory = globalThis.ConnectionManagerFactory || 
+                                           (typeof require !== 'undefined' ? require('../network/ConnectionManagerFactory.js').ConnectionManagerFactory : null);
+          if (ConnectionManagerFactory && ConnectionManagerFactory.getPeerMetadata) {
+            const factoryMetadata = ConnectionManagerFactory.getPeerMetadata(peerId);
+            console.log(`📋 DEBUG: ConnectionManagerFactory metadata:`, factoryMetadata);
+            if (factoryMetadata) {
+              combinedMetadata = { ...factoryMetadata, ...combinedMetadata };
+            }
+          }
+        } catch (error) {
+          console.log(`📋 DEBUG: Could not access ConnectionManagerFactory:`, error.message);
+        }
+      }
+      
+      if (Object.keys(combinedMetadata).length > 0) {
+        console.log(`📋 Transferring combined metadata to DHTNode ${peerId.substring(0, 8)}:`, combinedMetadata);
+        // Copy each metadata property to the node
+        for (const [key, value] of Object.entries(combinedMetadata)) {
+          node.setMetadata(key, value);
+          console.log(`📋 Set metadata ${key}=${value} for ${peerId.substring(0, 8)}`);
+        }
+        // Verify the metadata was set
+        const bridgeCheck = node.getMetadata('isBridgeNode');
+        console.log(`📋 Verification: isBridgeNode=${bridgeCheck} for ${peerId.substring(0, 8)}`);
+      } else {
+        console.log(`⚠️ No metadata found for ${peerId.substring(0, 8)} in either manager`);
+      }
+    }
+    
+    // Set up callbacks for the node to communicate back to DHT
+    if (this.onNodeAdded) {
+      node.setMessageCallback((peerId, data) => {
+        this.onNodeAdded('message', { peerId, data });
+      });
+      
+      node.setDisconnectionCallback((peerId) => {
+        console.log(`🔌 RoutingTable handling disconnection of ${peerId.substring(0, 8)}...`);
+        this.removeNode(peerId);
+        this.onNodeAdded('disconnect', { peerId });
+      });
+    }
+    
+    // Add node to routing table
+    const addResult = this.addNode(node);
+    
+    if (addResult) {
+      console.log(`✅ RoutingTable added ${peerId.substring(0, 8)}... (total: ${this.totalNodes})`);
+      
+      // Notify DHT that a new node was added
+      if (this.onNodeAdded) {
+        this.onNodeAdded('nodeAdded', { peerId, node });
+      }
+    }
+  }
+
   toJSON() {
     return {
       localNodeId: this.localNodeId.toString(),

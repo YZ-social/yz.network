@@ -399,17 +399,23 @@ export class DHTVisualizer {
     try {
       const stats = this.dht.getStats();
       
-      // Get current counts
-      const directConnectedPeers = this.dht.connectionManager ? this.dht.connectionManager.getConnectedPeers() : [];
+      // Get current counts using DHT's connection-agnostic method
       const routingTableNodes = this.dht.routingTable ? this.dht.routingTable.getAllNodes() : [];
+      let connectedPeersCount = 0;
+      try {
+        connectedPeersCount = this.dht.getConnectedPeers().length;
+      } catch (error) {
+        console.warn('Error getting connected peers count in updateStats:', error);
+        connectedPeersCount = 0;
+      }
       
-      // Update counters - use direct WebRTC count for accuracy
-      this.elements.peerCount.textContent = directConnectedPeers.length;
+      // Update counters - use DHT's connection-agnostic method for consistency
+      this.elements.peerCount.textContent = connectedPeersCount;
       this.elements.storageCount.textContent = stats.storage.keys;
       
-      // Update detailed stats - use direct counts
-      this.elements.statTotalPeers.textContent = stats.webrtc.total;
-      this.elements.statConnectedPeers.textContent = directConnectedPeers.length;
+      // Update detailed stats - use connection-agnostic methods for consistency
+      this.elements.statTotalPeers.textContent = routingTableNodes.length;
+      this.elements.statConnectedPeers.textContent = connectedPeersCount;
       this.elements.statRoutingTable.textContent = routingTableNodes.length;
       this.elements.statStorageItems.textContent = stats.storage.keys;
       
@@ -426,15 +432,12 @@ export class DHTVisualizer {
     if (!this.dht || !this.elements.peerList) return;
 
     try {
-      const connectedPeers = this.dht.connectionManager ? this.dht.connectionManager.getConnectedPeers() : [];
       const dhtStarted = this.dht.isStarted;
       const routingTableNodes = this.dht.routingTable ? this.dht.routingTable.getAllNodes() : [];
       
-      // Get ALL connected peers for debugging (including filtered ones)
-      const allConnectedPeers = this.dht.connectionManager ? Array.from(this.dht.connectionManager.connections.keys()).filter(peerId => {
-        const conn = this.dht.connectionManager.connections.get(peerId);
-        return conn && conn.open;
-      }) : [];
+      // Get connected nodes using per-node connection status (NEW ARCHITECTURE)
+      const connectedNodes = routingTableNodes.filter(node => node.isConnected());
+      const connectedPeers = connectedNodes.map(node => node.id.toString());
       
       
       if (!dhtStarted) {
@@ -445,9 +448,8 @@ export class DHTVisualizer {
       if (connectedPeers.length === 0) {
         // Show more detailed info when no connections but routing table has entries
         if (routingTableNodes.length > 0) {
-          this.elements.peerList.innerHTML = `<div class="wasm-placeholder">No WebRTC connections (${routingTableNodes.length} in routing table)</div>`;
-        } else if (allConnectedPeers.length > 0) {
-          this.elements.peerList.innerHTML = `<div class="wasm-placeholder">No valid DHT peers (${allConnectedPeers.length} filtered connections)</div>`;
+          const disconnectedNodes = routingTableNodes.length - connectedPeers.length;
+          this.elements.peerList.innerHTML = `<div class="wasm-placeholder">No connections (${routingTableNodes.length} in routing table, ${disconnectedNodes} disconnected)</div>`;
         } else {
           this.elements.peerList.innerHTML = '<div class="wasm-placeholder">No peers connected</div>';
         }
@@ -455,7 +457,9 @@ export class DHTVisualizer {
       }
 
       const peerElements = connectedPeers.map(peerId => {
-        const isConnected = this.dht.connectionManager.isConnected(peerId);
+        // Find the corresponding node to get connection details
+        const node = routingTableNodes.find(n => n.id.toString() === peerId);
+        const isConnected = node ? node.isConnected() : false;
         const statusClass = isConnected ? 'connected' : 'disconnected';
         const statusText = isConnected ? 'connected' : 'disconnected';
         
@@ -547,9 +551,19 @@ export class DHTVisualizer {
    * Get current UI state
    */
   getUIState() {
+    let peerCount = 0;
+    if (this.dht) {
+      try {
+        peerCount = this.dht.getConnectedPeers().length;
+      } catch (error) {
+        console.warn('Error getting connected peers count:', error);
+        peerCount = 0;
+      }
+    }
+    
     return {
       dhtStarted: this.dht ? this.dht.isStarted : false,
-      peerCount: this.dht ? this.dht.connectionManager.getConnectedPeers().length : 0,
+      peerCount,
       storageCount: this.dht ? this.dht.storage.size : 0,
       isLogging: this.isLogging
     };
@@ -610,7 +624,7 @@ export class DHTVisualizer {
       
       this.log(`🆔 Local Node ID: ${nodeId.substring(0, 8)}...`, 'info');
       this.log(`🌐 Signaling Mode: ${dht.useBootstrapForSignaling ? 'Bootstrap' : 'DHT'}`, 'info');
-      this.log(`🔗 Connected Peers: ${dht.connectionManager.getConnectedPeers().length}`, 'info');
+      this.log(`🔗 Connected Peers: ${dht.getConnectedPeers().length}`, 'info');
       this.log(`📋 Routing Table Size: ${dht.routingTable.getAllNodes().length}`, 'info');
       
       // Check for stored WebRTC signaling data in DHT
@@ -665,7 +679,7 @@ export class DHTVisualizer {
         return;
       }
       
-      const initialConnections = window.YZSocialC.dht.connectionManager.getConnectedPeers().length;
+      const initialConnections = window.YZSocialC.dht.getConnectedPeers().length;
       const initialRouting = window.YZSocialC.dht.routingTable.getAllNodes().length;
       
       this.log(`📊 Initial: ${initialConnections} connected, ${initialRouting} in routing table`, 'info');
@@ -685,7 +699,7 @@ export class DHTVisualizer {
         await window.YZSocialC.triggerPeerDiscovery();
       }
       
-      const finalConnections = window.YZSocialC.dht.connectionManager.getConnectedPeers().length;
+      const finalConnections = window.YZSocialC.dht.getConnectedPeers().length;
       const finalRouting = window.YZSocialC.dht.routingTable.getAllNodes().length;
       
       this.log(`📊 Final: ${finalConnections} connected (+${finalConnections - initialConnections}), ${finalRouting} in routing table (+${finalRouting - initialRouting})`, 

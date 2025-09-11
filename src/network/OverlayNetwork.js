@@ -232,8 +232,9 @@ export class OverlayNetwork extends EventEmitter {
 
     console.log(`Finding route to ${targetPeerId}`);
 
-    // Try direct DHT lookup first
-    const targetId = DHTNodeId.fromString(targetPeerId);
+    // Try direct DHT lookup first  
+    // CRITICAL: targetPeerId is a peer ID (hex string), use fromHex() not fromString()
+    const targetId = DHTNodeId.fromHex(targetPeerId);
     const closestNodes = this.dht.routingTable.findClosestNodes(targetId, 5);
 
     // Filter to only connected nodes

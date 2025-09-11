@@ -10,7 +10,7 @@ const execAsync = promisify(exec);
  * Usage: node scripts/kill-ports.js [port1] [port2] ...
  */
 
-const defaultPorts = [3000, 8080, 8081];
+const defaultPorts = [3000, 8080, 8081, 8083, 8084];
 const isWindows = process.platform === 'win32';
 
 async function killPort(port) {

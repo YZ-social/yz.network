@@ -18,6 +18,7 @@ export class BootstrapClient extends EventEmitter {
 
     this.ws = null;
     this.isConnected = false;
+    this.isRegistered = false; // Track registration state separately from connection
     this.reconnectAttempts = 0;
     this.currentServerIndex = 0;
     this.localNodeId = null;
@@ -62,13 +63,23 @@ export class BootstrapClient extends EventEmitter {
           this.isConnected = true;
           this.reconnectAttempts = 0;
           
-          // Register with server (include metadata like public key)
-          this.sendMessage({
-            type: 'register',
-            nodeId: this.localNodeId,
-            timestamp: Date.now(),
-            metadata: this.metadata || {}
-          });
+          // Small delay to ensure WebSocket is fully ready
+          setTimeout(() => {
+            try {
+              // Register with server (include metadata like public key)
+              this.sendMessage({
+                type: 'register',
+                nodeId: this.localNodeId,
+                timestamp: Date.now(),
+                metadata: this.metadata || {}
+              });
+            } catch (error) {
+              console.error('Failed to send registration message:', error);
+              this.ws.close();
+              reject(error);
+              return;
+            }
+          }, 10); // 10ms delay to ensure WebSocket is fully ready
 
           this.emit('connected', { serverUrl });
           resolve();
@@ -81,6 +92,7 @@ export class BootstrapClient extends EventEmitter {
         this.ws.onclose = (event) => {
           clearTimeout(timeout);
           this.isConnected = false;
+          this.isRegistered = false; // Reset registration state on disconnect
           console.log(`Bootstrap connection closed: ${event.code} ${event.reason}`);
           
           if (!this.isDestroyed) {
@@ -132,6 +144,7 @@ export class BootstrapClient extends EventEmitter {
 
       switch (message.type) {
         case 'registered':
+          this.isRegistered = true; // Mark as registered when confirmation received
           this.emit('registered', message);
           break;
 
@@ -157,6 +170,20 @@ export class BootstrapClient extends EventEmitter {
           // Also check if this is a peer list response
           if (message.data && message.data.peers) {
             this.emit('peerList', message.data.peers);
+            
+            // CRITICAL: Check if peers contain bridge nodes that need connection
+            const bridgeNodes = message.data.peers.filter(peer => 
+              peer.metadata && peer.metadata.isBridgeNode && peer.metadata.listeningAddress
+            );
+            
+            if (bridgeNodes.length > 0) {
+              console.log(`🌉 Bootstrap response contains ${bridgeNodes.length} bridge nodes - emitting bridge connection event`);
+              this.emit('bridgeNodesReceived', {
+                bridgeNodes,
+                isGenesis: message.data.isGenesis,
+                membershipToken: message.data.membershipToken
+              });
+            }
           }
           break;
 
@@ -175,6 +202,26 @@ export class BootstrapClient extends EventEmitter {
 
         case 'invitation_received':
           this.emit('invitationReceived', message);
+          break;
+
+        case 'webrtc_start_offer':
+          this.emit('webrtcStartOffer', message);
+          break;
+
+        case 'webrtc_expect_offer':
+          this.emit('webrtcExpectOffer', message);
+          break;
+
+        case 'bridge_invitation_request':
+          this.emit('bridgeInvitationRequest', message);
+          break;
+
+        case 'bridge_connection_status':
+          this.emit('bridgeConnectionStatus', message);
+          break;
+
+        case 'connect_to_bridge':
+          this.emit('connectToBridge', message);
           break;
 
         default:
@@ -207,10 +254,15 @@ export class BootstrapClient extends EventEmitter {
    */
   sendMessage(message) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      throw new Error('Not connected to bootstrap server');
+      throw new Error(`Not connected to bootstrap server (readyState: ${this.ws ? this.ws.readyState : 'null'})`);
     }
 
-    this.ws.send(JSON.stringify(message));
+    try {
+      this.ws.send(JSON.stringify(message));
+    } catch (error) {
+      console.error('Failed to send message to bootstrap server:', error);
+      throw new Error(`Failed to send message: ${error.message}`);
+    }
   }
 
   /**
@@ -421,6 +473,13 @@ export class BootstrapClient extends EventEmitter {
   }
 
   /**
+   * Check if registered with bootstrap server (connection + registration complete)
+   */
+  isBootstrapRegistered() {
+    return this.isRegistered && this.isBootstrapConnected();
+  }
+
+  /**
    * Get connection status
    */
   getStatus() {
@@ -443,6 +502,7 @@ export class BootstrapClient extends EventEmitter {
       this.ws = null;
     }
     this.isConnected = false;
+    this.isRegistered = false; // Reset registration state on manual disconnect
   }
 
   /**
