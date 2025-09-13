@@ -248,9 +248,20 @@ export class WebSocketConnectionManager extends ConnectionManager {
     // Get WebSocket address from peer metadata
     const metadata = this.getPeerMetadata(peerId);
     const wsAddress = metadata?.listeningAddress;
+    const localNodeType = typeof window !== 'undefined' ? 'browser' : 'nodejs';
+    const targetNodeType = metadata?.nodeType || 'browser';
     
+    console.log(`🔗 WebSocket connection: ${localNodeType} → ${targetNodeType}`);
+    
+    // Handle different connection scenarios
     if (!wsAddress) {
-      throw new Error(`No WebSocket address for peer ${peerId}`);
+      if (localNodeType === 'nodejs' && targetNodeType === 'browser') {
+        // Node.js → Browser: Use DHT reverse signaling
+        console.log(`🔄 Node.js→Browser connection - requesting browser to connect back via DHT signaling`);
+        return this.requestBrowserConnection(peerId, initiator);
+      } else {
+        throw new Error(`No WebSocket address for peer ${peerId} (${localNodeType}→${targetNodeType})`);
+      }
     }
 
     console.log(`🌐 Creating WebSocket connection to ${peerId.substring(0, 8)}... at ${wsAddress}`);
@@ -336,6 +347,80 @@ export class WebSocketConnectionManager extends ConnectionManager {
         reject(error);
       }
     });
+  }
+
+  /**
+   * Request browser to connect back using DHT signaling (Node.js → Browser)
+   */
+  async requestBrowserConnection(peerId, initiator) {
+    console.log(`📤 Requesting browser ${peerId.substring(0, 8)}... to connect back via DHT signaling`);
+    
+    try {
+      // Get our listening address for the browser to connect to
+      const listeningAddress = this.getListeningAddress();
+      if (!listeningAddress) {
+        throw new Error('No listening address available for reverse connection');
+      }
+      
+      // Send generic connection request via DHT messaging
+      if (this.dhtSignalingCallback) {
+        await this.dhtSignalingCallback('sendConnectionRequest', peerId, {
+          connectionType: 'websocket',
+          nodeType: 'nodejs',
+          listeningAddress: listeningAddress,
+          capabilities: ['websocket', 'dht'],
+          canRelay: true,
+          requestId: `conn_req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        });
+        
+        console.log(`📤 Sent WebSocket connection request to browser ${peerId.substring(0, 8)}...`);
+        
+        // Wait for the browser to connect back (with timeout)
+        const connectionWaitTime = 15000; // 15 seconds
+        const startTime = Date.now();
+        
+        return new Promise((resolve, reject) => {
+          const checkConnection = () => {
+            if (this.connections.has(peerId)) {
+              console.log(`✅ Browser ${peerId.substring(0, 8)}... connected back successfully`);
+              resolve();
+            } else if ((Date.now() - startTime) >= connectionWaitTime) {
+              console.warn(`⏰ Timeout waiting for browser ${peerId.substring(0, 8)}... to connect back`);
+              reject(new Error(`Timeout waiting for browser ${peerId} to connect back`));
+            } else {
+              // Check again in 1 second
+              setTimeout(checkConnection, 1000);
+            }
+          };
+          
+          // Start checking
+          setTimeout(checkConnection, 1000);
+        });
+        
+      } else {
+        throw new Error('DHT signaling callback not available');
+      }
+      
+    } catch (error) {
+      console.error(`❌ Failed to request browser connection from ${peerId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Set DHT signaling callback for reverse connections (connection-agnostic)
+   */
+  setDHTSignalingCallback(callback) {
+    this.dhtSignalingCallback = callback;
+  }
+
+  /**
+   * Get our WebSocket listening address
+   */
+  getListeningAddress() {
+    // This should return our WebSocket server address
+    // Implementation depends on how the WebSocket server is set up
+    return this.listeningAddress || `ws://localhost:${this.serverPort || 8083}`;
   }
 
   /**

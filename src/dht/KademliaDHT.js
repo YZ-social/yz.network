@@ -1182,11 +1182,11 @@ export class KademliaDHT extends EventEmitter {
         case 'peer_discovery_response':
           await this.handlePeerDiscoveryResponse(peerId, message);
           break;
-        case 'websocket_connection_request':
-          await this.handleWebSocketConnectionRequest(peerId, message);
+        case 'connection_request':
+          await this.handleConnectionRequest(peerId, message);
           break;
-        case 'websocket_connection_response':
-          await this.handleWebSocketConnectionResponse(peerId, message);
+        case 'connection_response':
+          await this.handleConnectionResponse(peerId, message);
           break;
         default:
           console.warn(`Unknown message type from ${peerId}: ${message.type}`);
@@ -2395,6 +2395,17 @@ export class KademliaDHT extends EventEmitter {
         peerNode.connectionManager.initialize(this.localNodeId.toString());
       }
       
+      // CRITICAL: Set up DHT signaling callback for connection requests (connection-agnostic)
+      if (typeof peerNode.connectionManager.setDHTSignalingCallback === 'function') {
+        peerNode.connectionManager.setDHTSignalingCallback(async (method, targetPeer, connectionInfo) => {
+          if (method === 'sendConnectionRequest') {
+            return await this.sendConnectionRequest(targetPeer, connectionInfo);
+          } else {
+            console.warn(`Unknown DHT signaling method: ${method}`);
+          }
+        });
+      }
+      
       // CRITICAL: Set up DHT message event listener for ALL connection managers (reused and new)
       peerNode.connectionManager.on('dhtMessage', ({ peerId: msgPeerId, message }) => {
         this.handlePeerMessage(msgPeerId, message);
@@ -3540,10 +3551,10 @@ export class KademliaDHT extends EventEmitter {
   }
 
   /**
-   * Handle WebSocket connection request from Node.js node
+   * Handle generic connection request (connection-agnostic)
    */
-  async handleWebSocketConnectionRequest(fromPeer, message) {
-    console.log(`🌐 Received WebSocket connection request from ${fromPeer}`);
+  async handleConnectionRequest(fromPeer, message) {
+    console.log(`🔗 Received connection request from ${fromPeer}`);
     
     // Message deduplication - prevent processing the same request multiple times (BEFORE routing check)
     const messageId = `${fromPeer}:${message.targetPeer}:${message.type}:${message.nodeType}:${message.listeningAddress}:${message.timestamp || Date.now()}`;
@@ -3627,10 +3638,10 @@ export class KademliaDHT extends EventEmitter {
   }
 
   /**
-   * Handle WebSocket connection response
+   * Handle generic connection response (connection-agnostic)
    */
-  async handleWebSocketConnectionResponse(fromPeer, message) {
-    console.log(`🌐 Received WebSocket connection response from ${fromPeer}: success=${message.success}`);
+  async handleConnectionResponse(fromPeer, message) {
+    console.log(`🔗 Received connection response from ${fromPeer}: success=${message.success}`);
     
     // Message deduplication - prevent processing the same response multiple times (BEFORE routing check)
     const messageId = `${fromPeer}:${message.targetPeer}:${message.type}:${message.success}:${message.timestamp || Date.now()}`;
@@ -3667,19 +3678,16 @@ export class KademliaDHT extends EventEmitter {
   }
 
   /**
-   * Send WebSocket connection request via DHT messaging
+   * Send generic connection request via DHT messaging (connection-agnostic)
    */
-  async sendWebSocketConnectionRequest(targetPeer, connectionInfo) {
-    console.log(`📤 Sending WebSocket connection request via DHT to ${targetPeer}`);
+  async sendConnectionRequest(targetPeer, connectionInfo) {
+    console.log(`📤 Sending connection request via DHT to ${targetPeer.substring(0, 8)}...`);
     
     const message = {
-      type: 'websocket_connection_request',
+      type: 'connection_request',
       senderPeer: this.localNodeId.toString(),
       targetPeer: targetPeer,
-      nodeType: connectionInfo.nodeType || 'nodejs',
-      listeningAddress: connectionInfo.listeningAddress,
-      capabilities: connectionInfo.capabilities || ['websocket'],
-      canRelay: connectionInfo.canRelay || false,
+      connectionInfo: connectionInfo, // Let connection managers handle the specifics
       timestamp: Date.now()
     };
 
@@ -3687,13 +3695,13 @@ export class KademliaDHT extends EventEmitter {
   }
 
   /**
-   * Send WebSocket connection response via DHT messaging
+   * Send generic connection response via DHT messaging (connection-agnostic)
    */
-  async sendWebSocketConnectionResponse(targetPeer, responseInfo) {
-    console.log(`📤 Sending WebSocket connection response via DHT to ${targetPeer}`);
+  async sendConnectionResponse(targetPeer, responseInfo) {
+    console.log(`📤 Sending connection response via DHT to ${targetPeer.substring(0, 8)}...`);
     
     const message = {
-      type: 'websocket_connection_response',
+      type: 'connection_response',
       senderPeer: this.localNodeId.toString(),
       targetPeer: targetPeer,
       success: responseInfo.success,
