@@ -236,7 +236,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
   /**
    * Handle new client connection
    */
-  handleClientConnection(ws, req) {
+  handleClientConnection(ws) {
     this.totalConnections++;
     
     console.log(`🔗 New client connection (total: ${this.totalConnections})`);
@@ -397,7 +397,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
       let bridgeConnection = null;
       
       // Check if target is a connected bridge node
-      for (const [addr, bridgeWs] of this.bridgeConnections) {
+      for (const [, bridgeWs] of this.bridgeConnections) {
         if (bridgeWs.readyState === WebSocket.OPEN && bridgeWs.bridgeNodeId === targetPeerId) {
           targetIsBridge = true;
           bridgeConnection = bridgeWs;
@@ -801,7 +801,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
    * Get available bridge node
    */
   getAvailableBridgeNode() {
-    for (const [addr, ws] of this.bridgeConnections) {
+    for (const [, ws] of this.bridgeConnections) {
       if (ws.readyState === WebSocket.OPEN) {
         return ws;
       }
@@ -814,7 +814,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
    */
   getAllAvailableBridgeNodes() {
     const bridgeNodes = [];
-    for (const [addr, ws] of this.bridgeConnections) {
+    for (const [, ws] of this.bridgeConnections) {
       if (ws.readyState === WebSocket.OPEN) {
         bridgeNodes.push(ws);
       }
@@ -1107,7 +1107,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
    * Get bridge node WebSocket by node ID
    */
   getBridgeNodeByNodeId(nodeId) {
-    for (const [addr, ws] of this.bridgeConnections) {
+    for (const [, ws] of this.bridgeConnections) {
       if (ws.bridgeNodeId === nodeId) {
         return ws;
       }
@@ -1314,7 +1314,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
     
     // Get all connected bridge nodes with their actual IDs
     const bridgeNodeIds = [];
-    for (const [addr, ws] of this.bridgeConnections) {
+    for (const [, ws] of this.bridgeConnections) {
       if (ws.readyState === WebSocket.OPEN && ws.bridgeNodeId) {
         bridgeNodeIds.push(ws.bridgeNodeId);
         console.log(`🔍 Found connected bridge node: ${ws.bridgeNodeId.substring(0, 8)}...`);

@@ -1235,6 +1235,320 @@ class App {
         console.log('🔄 Manually refreshing stale buckets...');
         this.dht.refreshStaleBuckets();
         return true;
+      },
+
+      // ===== ORGANIZED TEST SUITE =====
+      tests: {
+        // Network Testing
+        network: {
+          /**
+           * Simulate complete network disconnection
+           */
+          async simulateDisconnection() {
+            if (!window.YZSocialC.dht) {
+              console.error('❌ DHT not available');
+              return null;
+            }
+            
+            console.log('🔌 TEST: Simulating network disconnection...');
+            
+            const connectedPeers = window.YZSocialC.dht.getConnectedPeers();
+            console.log(`📊 Disconnecting from ${connectedPeers.length} connected peers`);
+            
+            // Store state for reconnection
+            const disconnectionState = {
+              timestamp: Date.now(),
+              connectedPeers: connectedPeers.slice(),
+              routingTableSize: window.YZSocialC.dht.routingTable.getAllNodes().length,
+              membershipToken: window.YZSocialC.dht.membershipToken,
+              useBootstrapForSignaling: window.YZSocialC.dht.useBootstrapForSignaling
+            };
+            
+            // Disconnect from all peers
+            const allNodes = window.YZSocialC.dht.routingTable.getAllNodes();
+            for (const node of allNodes) {
+              const peerId = node.id.toString();
+              try {
+                if (node.connectionManager && typeof node.connectionManager.destroyConnection === 'function') {
+                  node.connectionManager.destroyConnection(peerId, 'test_disconnection');
+                }
+              } catch (error) {
+                console.warn(`Failed to disconnect from ${peerId}:`, error);
+              }
+            }
+            
+            // Clear routing table
+            const routingNodes = [...allNodes];
+            for (const node of routingNodes) {
+              window.YZSocialC.dht.routingTable.removeNode(node.id.toString());
+            }
+            
+            // Disconnect from bootstrap
+            if (window.YZSocialC.dht.bootstrap && window.YZSocialC.dht.bootstrap.isConnected()) {
+              window.YZSocialC.dht.bootstrap.disconnect();
+            }
+            
+            console.log('💥 TEST: Complete disconnection achieved');
+            console.log('State before disconnection:', disconnectionState);
+            
+            return disconnectionState;
+          },
+
+          /**
+           * Test automatic reconnection using bridge system
+           */
+          async testReconnection() {
+            if (!window.YZSocialC.dht) {
+              console.error('❌ DHT not available');
+              return null;
+            }
+            
+            console.log('🔄 TEST: Starting reconnection test...');
+            
+            // Check if we have membership token
+            if (!window.YZSocialC.dht.membershipToken) {
+              console.error('❌ No membership token - cannot test reconnection');
+              console.log('💡 Run simulateDisconnection() first after joining DHT');
+              return null;
+            }
+            
+            console.log('✅ Found membership token, proceeding with reconnection...');
+            
+            // Force reconnection to bootstrap
+            window.YZSocialC.dht.useBootstrapForSignaling = true;
+            
+            try {
+              // Reconnect to bootstrap
+              if (window.YZSocialC.dht.bootstrap && typeof window.YZSocialC.dht.bootstrap.connect === 'function') {
+                await window.YZSocialC.dht.bootstrap.connect();
+                console.log('✅ Reconnected to bootstrap server');
+              }
+              
+              // Send reconnection request
+              const reconnectionRequest = {
+                type: 'reconnection_request', 
+                membershipToken: window.YZSocialC.dht.membershipToken,
+                nodeId: window.YZSocialC.dht.localNodeId.toString(),
+                timestamp: Date.now()
+              };
+              
+              if (window.YZSocialC.dht.bootstrap && typeof window.YZSocialC.dht.bootstrap.sendMessage === 'function') {
+                await window.YZSocialC.dht.bootstrap.sendMessage(reconnectionRequest);
+                console.log('📤 Sent reconnection request with membership token');
+              }
+              
+              // Wait for connections to establish
+              return new Promise((resolve) => {
+                let checkCount = 0;
+                const maxChecks = 15; // 30 seconds
+                
+                const checkInterval = setInterval(() => {
+                  checkCount++;
+                  const currentConnections = window.YZSocialC.dht.getConnectedPeers().length;
+                  
+                  console.log(`🔍 Check ${checkCount}/${maxChecks}: ${currentConnections} connections`);
+                  
+                  if (currentConnections > 0) {
+                    clearInterval(checkInterval);
+                    console.log(`✅ Reconnection successful! ${currentConnections} connections established`);
+                    
+                    // Trigger peer discovery to rebuild routing table
+                    setTimeout(() => {
+                      window.YZSocialC.triggerPeerDiscovery();
+                      window.YZSocialC.refreshBuckets();
+                    }, 2000);
+                    
+                    resolve({ success: true, connections: currentConnections });
+                  } else if (checkCount >= maxChecks) {
+                    clearInterval(checkInterval);
+                    console.log('⏰ Reconnection timeout - no connections established');
+                    resolve({ success: false, error: 'timeout' });
+                  }
+                }, 2000);
+              });
+              
+            } catch (error) {
+              console.error('❌ Reconnection test failed:', error);
+              return { success: false, error: error.message };
+            }
+          },
+
+          /**
+           * Test bridge node connectivity
+           */
+          async testBridgeNodes() {
+            console.log('🌉 TEST: Testing bridge node connectivity...');
+            
+            // This would test if bridge nodes are reachable
+            // For now, we'll test via bootstrap server
+            try {
+              const bootstrapConnected = window.YZSocialC.dht.bootstrap && window.YZSocialC.dht.bootstrap.isConnected();
+              console.log(`Bootstrap connection: ${bootstrapConnected ? '✅' : '❌'}`);
+              
+              if (bootstrapConnected) {
+                // Test bridge node communication
+                const testMessage = {
+                  type: 'bridge_test',
+                  nodeId: window.YZSocialC.dht.localNodeId.toString(),
+                  timestamp: Date.now()
+                };
+                
+                await window.YZSocialC.dht.bootstrap.sendMessage(testMessage);
+                console.log('📤 Sent bridge test message');
+                return { success: true, bootstrapConnected: true };
+              } else {
+                return { success: false, error: 'Bootstrap not connected' };
+              }
+              
+            } catch (error) {
+              console.error('❌ Bridge test failed:', error);
+              return { success: false, error: error.message };
+            }
+          },
+
+          /**
+           * Get reconnection status
+           */
+          getReconnectionStatus() {
+            if (!window.YZSocialC.dht) {
+              return { available: false, reason: 'DHT not available' };
+            }
+            
+            return {
+              available: true,
+              hasMembershipToken: !!window.YZSocialC.dht.membershipToken,
+              connectedPeers: window.YZSocialC.dht.getConnectedPeers().length,
+              routingTableSize: window.YZSocialC.dht.routingTable.getAllNodes().length,
+              bootstrapConnected: window.YZSocialC.dht.bootstrap ? window.YZSocialC.dht.bootstrap.isConnected() : false,
+              usingBootstrapSignaling: window.YZSocialC.dht.useBootstrapForSignaling
+            };
+          }
+        },
+
+        // DHT Protocol Testing
+        dht: {
+          /**
+           * Test store/retrieve operations
+           */
+          async testStoreRetrieve(testKey = 'test-key', testValue = 'test-value') {
+            console.log('📦 TEST: Testing DHT store/retrieve...');
+            
+            try {
+              const storeResult = await window.YZSocialC.testStore(testKey, testValue);
+              if (!storeResult) {
+                return { success: false, error: 'Store operation failed' };
+              }
+              
+              const retrieveResult = await window.YZSocialC.testGet(testKey);
+              const success = retrieveResult && retrieveResult.value === testValue;
+              
+              console.log(`Store/Retrieve test: ${success ? '✅' : '❌'}`);
+              return { success, stored: storeResult, retrieved: retrieveResult };
+              
+            } catch (error) {
+              console.error('❌ Store/retrieve test failed:', error);
+              return { success: false, error: error.message };
+            }
+          },
+
+          /**
+           * Test peer discovery mechanisms
+           */
+          async testPeerDiscovery() {
+            console.log('🔍 TEST: Testing peer discovery...');
+            
+            const beforeRouting = window.YZSocialC.dht.routingTable.getAllNodes().length;
+            const beforeConnections = window.YZSocialC.dht.getConnectedPeers().length;
+            
+            // Trigger discovery
+            window.YZSocialC.triggerPeerDiscovery();
+            window.YZSocialC.refreshBuckets();
+            
+            // Wait and check results
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            
+            const afterRouting = window.YZSocialC.dht.routingTable.getAllNodes().length;
+            const afterConnections = window.YZSocialC.dht.getConnectedPeers().length;
+            
+            const result = {
+              routingTableGrowth: afterRouting - beforeRouting,
+              connectionGrowth: afterConnections - beforeConnections,
+              finalRoutingSize: afterRouting,
+              finalConnections: afterConnections
+            };
+            
+            console.log('🔍 Peer discovery results:', result);
+            return result;
+          }
+        },
+
+        // Connection Testing
+        connection: {
+          /**
+           * Test WebRTC signaling modes
+           */
+          testSignalingModes() {
+            console.log('📡 TEST: Testing WebRTC signaling modes...');
+            
+            const currentMode = window.YZSocialC.getSignalingMode();
+            console.log(`Current signaling mode: ${currentMode}`);
+            
+            const connectedPeers = window.YZSocialC.dht.getConnectedPeers().length;
+            const expectedMode = connectedPeers >= 1 ? 'dht' : 'bootstrap';
+            
+            const isCorrect = currentMode === expectedMode;
+            console.log(`Expected: ${expectedMode}, Actual: ${currentMode} - ${isCorrect ? '✅' : '❌'}`);
+            
+            return {
+              current: currentMode,
+              expected: expectedMode,
+              correct: isCorrect,
+              connectedPeers
+            };
+          },
+
+          /**
+           * Test connection health for all peers
+           */
+          testConnectionHealth() {
+            console.log('🏥 TEST: Testing connection health...');
+            return window.YZSocialC.checkConnectionHealth();
+          }
+        }
+      },
+
+      /**
+       * Run all tests in sequence
+       */
+      async runAllTests() {
+        console.log('🧪 RUNNING ALL TESTS...');
+        console.log('='.repeat(50));
+        
+        const results = {};
+        
+        try {
+          // Network tests
+          console.log('\n📡 NETWORK TESTS');
+          console.log('-'.repeat(20));
+          results.signaling = this.tests.connection.testSignalingModes();
+          results.connectionHealth = this.tests.connection.testConnectionHealth();
+          results.bridgeStatus = this.tests.network.getReconnectionStatus();
+          
+          // DHT tests
+          console.log('\n📦 DHT TESTS');
+          console.log('-'.repeat(20));
+          results.storeRetrieve = await this.tests.dht.testStoreRetrieve();
+          results.peerDiscovery = await this.tests.dht.testPeerDiscovery();
+          
+          console.log('\n✅ ALL TESTS COMPLETED');
+          console.log('='.repeat(50));
+          
+          return results;
+          
+        } catch (error) {
+          console.error('❌ Test suite failed:', error);
+          return { error: error.message, partialResults: results };
+        }
       }
     };
 
@@ -1266,6 +1580,17 @@ class App {
     console.log('🔄 Refresh Stale: YZSocialC.refreshStaleBuckets() - Manually refresh only stale buckets');
     console.log('🔗 Background Connections (NEW): YZSocialC.triggerBackgroundConnections() - Connect to unconnected routing table nodes');
     console.log('🛣️ WebRTC Routing (NEW): YZSocialC.debugWebRTCRouting() - Debug DHT message routing paths');
+    console.log('');
+    console.log('🧪 ORGANIZED TEST SUITE:');
+    console.log('   YZSocialC.tests.network.simulateDisconnection() - Test complete network disconnection');
+    console.log('   YZSocialC.tests.network.testReconnection() - Test bridge-based reconnection');
+    console.log('   YZSocialC.tests.network.testBridgeNodes() - Test bridge node connectivity');
+    console.log('   YZSocialC.tests.network.getReconnectionStatus() - Check reconnection capability');
+    console.log('   YZSocialC.tests.dht.testStoreRetrieve() - Test DHT storage operations');
+    console.log('   YZSocialC.tests.dht.testPeerDiscovery() - Test peer discovery mechanisms');
+    console.log('   YZSocialC.tests.connection.testSignalingModes() - Test WebRTC signaling modes');
+    console.log('   YZSocialC.tests.connection.testConnectionHealth() - Test connection health');
+    console.log('   YZSocialC.runAllTests() - Run complete test suite');
   }
 
   /**

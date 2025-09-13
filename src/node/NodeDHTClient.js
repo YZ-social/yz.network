@@ -17,6 +17,8 @@ import { DHTClient } from '../core/DHTClient.js';
 import { WebSocketManager } from '../network/WebSocketManager.js';
 import { DHTNodeId } from '../core/DHTNodeId.js';
 import { InvitationToken } from '../core/InvitationToken.js';
+import { KademliaDHT } from '../dht/KademliaDHT.js';
+import { BootstrapClient } from '../bootstrap/BootstrapClient.js';
 
 // Setup Node.js crypto globals for browser compatibility
 global.window = global.window || {};

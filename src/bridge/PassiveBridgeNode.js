@@ -1,6 +1,5 @@
 import { DHTClient } from '../core/DHTClient.js';
 import { ConnectionManagerFactory } from '../network/ConnectionManagerFactory.js';
-import { InvitationToken } from '../core/InvitationToken.js';
 
 /**
  * Passive Bridge Node - DHT Observer for Reconnection Services
@@ -398,15 +397,10 @@ export class PassiveBridgeNode extends DHTClient {
   /**
    * Verify announcement signature
    */
-  async verifyAnnouncementSignature(announcement) {
-    try {
-      // This would use the same crypto verification as membership tokens
-      // For now, return true for connected peers
-      return true;
-    } catch (error) {
-      console.error('Error verifying announcement signature:', error);
-      return false;
-    }
+  async verifyAnnouncementSignature() {
+    // This would use the same crypto verification as membership tokens
+    // For now, return true for connected peers
+    return true;
   }
 
   /**
