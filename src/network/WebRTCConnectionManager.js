@@ -35,6 +35,8 @@ export class WebRTCConnectionManager extends ConnectionManager {
     this.signalQueues = new Map(); // peerId -> array of queued signals
     this.remoteDescriptionSet = new Map(); // peerId -> boolean (has remote description)
     this.offerCollisions = new Map(); // peerId -> collision detection state for Perfect Negotiation
+    this.handshakeCompleted = new Map(); // peerId -> boolean (prevent duplicate metadata updates)
+    this.processingSignals = new Map(); // peerId -> boolean (prevent concurrent signal processing)
 
     // Keep-alive system for browser tab visibility
     this.keepAliveIntervals = new Map(); // peerId -> intervalId
@@ -254,6 +256,7 @@ export class WebRTCConnectionManager extends ConnectionManager {
    */
   setupPeerConnectionEvents(peerId, pc, initiator) {
     console.log(`🔧 Setting up events for peer: ${peerId.substring(0, 8)}... (initiator: ${initiator})`);
+    console.log(`🔍 WebRTC Peer Connection state: ${pc.connectionState}, ICE state: ${pc.iceConnectionState}, Signaling state: ${pc.signalingState}`);
 
     // ICE candidate gathering with enhanced debugging
     pc.onicecandidate = (event) => {
@@ -276,36 +279,45 @@ export class WebRTCConnectionManager extends ConnectionManager {
     // Connection state changes
     pc.onconnectionstatechange = () => {
       console.log(`🔗 Connection state for ${peerId.substring(0, 8)}...: ${pc.connectionState}`);
-      
+
       if (pc.connectionState === 'connected') {
         clearTimeout(pc.timeout);
         this.connectionStates.set(peerId, 'connected');
         this.pendingConnections.delete(peerId);
-        
-        console.log(`✅ WebRTC Connected to ${peerId.substring(0, 8)}...`);
+
+        console.log(`✅ WebRTC Connected to ${peerId.substring(0, 8)}... - EMITTING peerConnected EVENT`);
         this.emit('peerConnected', { peerId, connection: pc });
-        
+
         // Start keep-alive for this connection
         this.startKeepAlive(peerId);
-        
+
       } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
         console.log(`❌ Connection failed/disconnected for ${peerId.substring(0, 8)}...: ${pc.connectionState}`);
         this.connectionStates.set(peerId, pc.connectionState);
         this.stopKeepAlive(peerId);
         this.cleanupConnection(peerId);
         this.emit('peerDisconnected', { peerId, reason: pc.connectionState });
+      } else {
+        console.log(`🔄 WebRTC connection state transition for ${peerId.substring(0, 8)}...: ${pc.connectionState} (waiting for 'connected')`);
+        this.connectionStates.set(peerId, pc.connectionState);
       }
     };
 
     // ICE connection state changes with enhanced debugging
     pc.oniceconnectionstatechange = () => {
       console.log(`🧊 ICE connection state for ${peerId.substring(0, 8)}...: ${pc.iceConnectionState}`);
-      
+
       if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
         console.log(`✅ ICE connection established for ${peerId.substring(0, 8)}...: ${pc.iceConnectionState}`);
       } else if (pc.iceConnectionState === 'failed') {
         console.error(`❌ ICE connection failed for ${peerId.substring(0, 8)}...`);
         this.destroyConnection(peerId, 'ice_failed');
+      } else if (pc.iceConnectionState === 'checking') {
+        console.log(`🔍 ICE connectivity checks started for ${peerId.substring(0, 8)}...`);
+      } else if (pc.iceConnectionState === 'disconnected') {
+        console.warn(`⚠️ ICE connection disconnected for ${peerId.substring(0, 8)}...`);
+      } else {
+        console.log(`🧊 ICE state transition for ${peerId.substring(0, 8)}...: ${pc.iceConnectionState}`);
       }
     };
 
@@ -318,6 +330,26 @@ export class WebRTCConnectionManager extends ConnectionManager {
         this.dataChannels.set(peerId, dataChannel);
       };
     }
+
+    // ICE gathering state monitoring - CRITICAL for debugging
+    pc.onicegatheringstatechange = () => {
+      console.log(`🧊 ICE gathering state for ${peerId.substring(0, 8)}...: ${pc.iceGatheringState}`);
+
+      if (pc.iceGatheringState === 'gathering') {
+        console.log(`✅ ICE gathering started for ${peerId.substring(0, 8)}...`);
+      } else if (pc.iceGatheringState === 'complete') {
+        console.log(`🏁 ICE gathering completed for ${peerId.substring(0, 8)}...`);
+      }
+    };
+
+    // DEBUG: Add periodic status monitoring to track connection progress
+    const statusMonitor = setInterval(() => {
+      if (pc.connectionState === 'connected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+        clearInterval(statusMonitor);
+        return;
+      }
+      console.log(`🔍 WebRTC Status Monitor for ${peerId.substring(0, 8)}...: connection=${pc.connectionState}, ice=${pc.iceConnectionState}, iceGathering=${pc.iceGatheringState}, signaling=${pc.signalingState}`);
+    }, 2000); // Check every 2 seconds
   }
 
   /**
@@ -325,7 +357,25 @@ export class WebRTCConnectionManager extends ConnectionManager {
    */
   setupDataChannelEvents(peerId, dataChannel) {
     dataChannel.onopen = () => {
-      console.log(`📡 Data channel opened for ${peerId.substring(0, 8)}...`);
+      console.log(`📡 Data channel opened for ${peerId.substring(0, 8)}... - WebRTC communication ready!`);
+
+      // Send initial metadata handshake (only once per peer)
+      if (!this.handshakeCompleted.has(peerId)) {
+        const myMetadata = this.getPeerMetadata(this.localNodeId);
+        if (myMetadata) {
+          const handshakeMessage = {
+            type: 'handshake',
+            peerId: this.localNodeId,
+            metadata: myMetadata,
+            timestamp: Date.now()
+          };
+          dataChannel.send(JSON.stringify(handshakeMessage));
+          console.log(`📤 Sent WebRTC handshake with metadata to ${peerId.substring(0, 8)}`);
+          this.handshakeCompleted.set(peerId, true);
+        }
+      } else {
+        console.log(`📤 Skipping duplicate handshake for ${peerId.substring(0, 8)} (already sent)`);
+      }
     };
 
     dataChannel.onclose = () => {
@@ -342,6 +392,19 @@ export class WebRTCConnectionManager extends ConnectionManager {
           return;
         } else if (message.type === 'keep_alive_pong') {
           this.handleKeepAlivePong(peerId, message);
+          return;
+        } else if (message.type === 'handshake') {
+          // Handle handshake with peer metadata (prevent duplicate processing)
+          if (message.metadata && !this.handshakeCompleted.has(`recv_${peerId}`)) {
+            console.log(`📋 Received WebRTC handshake metadata from ${peerId.substring(0, 8)}:`, message.metadata);
+            this.setPeerMetadata(peerId, message.metadata);
+            
+            // CRITICAL: Update routing table node metadata after handshake (only once)
+            this.emit('metadataUpdated', { peerId, metadata: message.metadata });
+            this.handshakeCompleted.set(`recv_${peerId}`, true);
+          } else if (message.metadata) {
+            console.log(`📋 Skipping duplicate handshake metadata from ${peerId.substring(0, 8)} (already processed)`);
+          }
           return;
         }
         
@@ -368,29 +431,19 @@ export class WebRTCConnectionManager extends ConnectionManager {
       const peerMetadata = this.getPeerMetadata?.(peerId) || {};
       const isTargetBrowser = peerMetadata.nodeType === 'browser' || !peerMetadata.nodeType; // default to browser
       const isLocalBrowser = typeof window !== 'undefined'; // we're in browser if window exists
+      const isBridgeNode = peerMetadata.isBridgeNode === true;
       
-      if (isLocalBrowser && isTargetBrowser && this.bootstrapClient) {
-        console.log(`📡 Sending WebRTC signal (${signal.type}) to ${peerId.substring(0, 8)}... via bootstrap server`);
-        
-        // Send through bootstrap server for browser-to-browser connections
-        await this.bootstrapClient.sendMessage({
-          type: 'signal',
-          fromPeer: this.localNodeId,
-          toPeer: peerId,
-          signal: signal,
-          timestamp: Date.now()
-        });
-        
-        console.log(`✅ WebRTC signal sent via bootstrap server`);
-      } else {
-        console.log(`🔄 Sending WebRTC signal (${signal.type}) to ${peerId.substring(0, 8)}... via DHT event`);
-        
-        // Fall back to event emission for DHT-based signaling or other connection types
-        this.emit('signal', {
-          peerId,
-          signal
-        });
-      }
+      // SIMPLIFIED LOGIC: Always use DHT signaling (event emission)
+      // Let OverlayNetwork.handleOutgoingSignal determine bootstrap vs DHT routing
+      // This fixes the issue where WebRTC answers weren't using DHT routing
+      
+      console.log(`🔄 Sending WebRTC signal (${signal.type}) to ${peerId.substring(0, 8)}... via DHT event (target: ${isTargetBrowser ? 'browser' : 'node'}, bridge: ${isBridgeNode})`);
+      
+      // Fall back to event emission for DHT-based signaling or other connection types
+      this.emit('signal', {
+        peerId,
+        signal
+      });
       
     } catch (error) {
       console.error(`❌ Failed to send WebRTC signal to ${peerId}:`, error);
@@ -409,6 +462,14 @@ export class WebRTCConnectionManager extends ConnectionManager {
   async handleSignal(peerId, signal) {
     console.log(`🔄 Handling signal from ${peerId.substring(0, 8)}...:`, signal.type);
 
+    // Prevent concurrent signal processing for the same peer
+    if (this.processingSignals.get(peerId)) {
+      console.log(`⚠️ Already processing signal for ${peerId.substring(0, 8)}..., ignoring duplicate ${signal.type}`);
+      return;
+    }
+
+    this.processingSignals.set(peerId, true);
+
     let pc = this.connections.get(peerId);
     
     // Perfect Negotiation Pattern: Determine who is polite/impolite based on node IDs
@@ -421,6 +482,7 @@ export class WebRTCConnectionManager extends ConnectionManager {
     // Perfect Negotiation: Handle collision resolution
     if (ignoreOffer) {
       console.log(`💪 Perfect Negotiation - Being impolite, ignoring offer from ${peerId.substring(0, 8)}... (we have precedence)`);
+      this.processingSignals.delete(peerId);
       return;
     }
 
@@ -465,10 +527,12 @@ export class WebRTCConnectionManager extends ConnectionManager {
           console.log(`✅ Incoming connection created synchronously for ${peerId.substring(0, 8)}...`);
         } catch (error) {
           console.error(`❌ Failed to create incoming connection for ${peerId}:`, error);
+          this.processingSignals.delete(peerId);
           return;
         }
       } else {
         console.warn(`⚠️ Received ${signal.type} signal for unknown peer ${peerId.substring(0, 8)}...`);
+        this.processingSignals.delete(peerId);
         return;
       }
     }
@@ -490,29 +554,47 @@ export class WebRTCConnectionManager extends ConnectionManager {
         this.signalQueues.set(peerId, []);
       }
       this.signalQueues.get(peerId).push(signal);
+      this.processingSignals.delete(peerId);
       return;
     }
 
     try {
       if (signal.type === 'offer') {
         console.log(`📥 Processing offer from ${peerId.substring(0, 8)}...`);
-        
+
+        // Check if remote description is already set to prevent duplicate offer processing
+        if (this.remoteDescriptionSet.get(peerId)) {
+          console.log(`⚠️ Ignoring duplicate offer from ${peerId.substring(0, 8)}... (remote description already set)`);
+          return;
+        }
+
         await pc.setRemoteDescription(new RTCSessionDescription({
           type: 'offer',
           sdp: signal.sdp
         }));
-        
+
         // Mark remote description as set
         this.remoteDescriptionSet.set(peerId, true);
-        
+
         // Process any queued ICE candidates
         await this.processQueuedSignals(peerId);
 
         // Create answer
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        
+
         console.log(`📤 Created answer for ${peerId.substring(0, 8)}...`);
+        console.log(`🔍 Answer peer connection state after setLocalDescription: connection=${pc.connectionState}, ice=${pc.iceConnectionState}, iceGathering=${pc.iceGatheringState}, signaling=${pc.signalingState}`);
+
+        // CRITICAL: Check if ICE gathering is starting
+        if (pc.iceGatheringState === 'new') {
+          console.warn(`⚠️ WARNING: ICE gathering state is still 'new' after setLocalDescription for ${peerId.substring(0, 8)}... - this may indicate a WebRTC configuration issue`);
+        } else if (pc.iceGatheringState === 'gathering') {
+          console.log(`✅ ICE gathering is active for ${peerId.substring(0, 8)}...`);
+        } else if (pc.iceGatheringState === 'complete') {
+          console.log(`🏁 ICE gathering already complete for ${peerId.substring(0, 8)}... (all candidates should have been sent)`);
+        }
+
         // Send answer through appropriate signaling channel
         await this.sendSignal(peerId, {
           type: 'answer',
@@ -521,35 +603,56 @@ export class WebRTCConnectionManager extends ConnectionManager {
 
       } else if (signal.type === 'answer') {
         console.log(`📥 Processing answer from ${peerId.substring(0, 8)}...`);
+
+        // Check if remote description is already set to prevent duplicate answer processing
+        if (this.remoteDescriptionSet.get(peerId)) {
+          console.log(`⚠️ Ignoring duplicate answer from ${peerId.substring(0, 8)}... (remote description already set)`);
+          return; // Exit early to prevent duplicate processing
+        }
+
         await pc.setRemoteDescription(new RTCSessionDescription({
           type: 'answer',
           sdp: signal.sdp
         }));
-        
+
         // Mark remote description as set
         this.remoteDescriptionSet.set(peerId, true);
-        
+        console.log(`📥 Answer processed for ${peerId.substring(0, 8)}... - connection=${pc.connectionState}, ice=${pc.iceConnectionState}, signaling=${pc.signalingState}`);
+
         // Process any queued ICE candidates
         await this.processQueuedSignals(peerId);
 
       } else if (signal.type === 'candidate') {
-        console.log(`📥 Processing ICE candidate from ${peerId.substring(0, 8)}...`);
-        await pc.addIceCandidate(new RTCIceCandidate({
-          candidate: signal.candidate,
-          sdpMLineIndex: signal.sdpMLineIndex,
-          sdpMid: signal.sdpMid
-        }));
+        const candidatePreview = signal.candidate ?
+          (typeof signal.candidate === 'string' ? signal.candidate.substring(0, 50) : String(signal.candidate).substring(0, 50)) :
+          'null';
+        console.log(`📥 Processing ICE candidate from ${peerId.substring(0, 8)}...: ${candidatePreview}...`);
+
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate({
+            candidate: signal.candidate,
+            sdpMLineIndex: signal.sdpMLineIndex,
+            sdpMid: signal.sdpMid
+          }));
+          console.log(`✅ ICE candidate added successfully for ${peerId.substring(0, 8)}...`);
+        } catch (error) {
+          console.error(`❌ Failed to add ICE candidate for ${peerId.substring(0, 8)}...:`, error);
+        }
       }
 
     } catch (error) {
       // Perfect Negotiation: Handle signaling errors gracefully
       if (isPolite && signal.type === 'offer') {
         console.log(`🤝 Perfect Negotiation - Polite peer handling offer error gracefully for ${peerId.substring(0, 8)}...`);
-        console.warn(`⚠️ Polite signaling error from ${peerId}:`, error.message);
+        console.warn(`⚠️ Polite signaling error from ${peerId}:`, error.message || error);
       } else {
-        console.error(`❌ Error processing signal from ${peerId}:`, error);
+        console.error(`❌ Error processing signal from ${peerId}:`, error.message || error);
+        console.error(`❌ Signal type: ${signal.type}, Error stack:`, error.stack);
         this.destroyConnection(peerId, 'signal_error');
       }
+    } finally {
+      // Clear processing flag
+      this.processingSignals.delete(peerId);
     }
   }
 
@@ -653,6 +756,9 @@ export class WebRTCConnectionManager extends ConnectionManager {
     this.signalQueues.delete(peerId);
     this.remoteDescriptionSet.delete(peerId);
     this.offerCollisions.delete(peerId);
+    this.handshakeCompleted.delete(peerId);
+    this.handshakeCompleted.delete(`recv_${peerId}`);
+    this.processingSignals.delete(peerId);
   }
 
   // ===========================================

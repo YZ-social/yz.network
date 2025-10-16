@@ -1226,6 +1226,15 @@ export class EnhancedBootstrapServer extends EventEmitter {
     }));
 
     console.log(`📡 WebRTC signal forwarded: ${fromPeer.substring(0, 8)} → ${toPeer.substring(0, 8)} (${signal.type || 'unknown'})`);
+
+    // Send success response back to requesting client
+    if (message.requestId) {
+      ws.send(JSON.stringify({
+        type: 'response',
+        requestId: message.requestId,
+        success: true
+      }));
+    }
   }
 
   /**

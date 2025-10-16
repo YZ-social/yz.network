@@ -33,8 +33,27 @@ export class DHTVisualizer {
       getBtn: document.getElementById('get-btn'),
       inviteBtn: document.getElementById('invite-btn'),
       clearLogBtn: document.getElementById('clear-log'),
-      debugConnectionBtn: document.getElementById('debug-connection-btn'),
-      debugPhantomBtn: document.getElementById('debug-phantom-btn'),
+      runAllTestsBtn: document.getElementById('run-all-tests-btn'),
+      
+      // Test buttons
+      testBootstrapBtn: document.getElementById('test-bootstrap-btn'),
+      testInvitationBtn: document.getElementById('test-invitation-btn'),
+      testConnectionBtn: document.getElementById('test-connection-btn'),
+      testStorageBtn: document.getElementById('test-storage-btn'),
+      testRoutingBtn: document.getElementById('test-routing-btn'),
+      testDiscoveryBtn: document.getElementById('test-discovery-btn'),
+      testMaintenanceBtn: document.getElementById('test-maintenance-btn'),
+      testReconnectionBtn: document.getElementById('test-reconnection-btn'),
+      
+      // Test status indicators
+      testBootstrapStatus: document.getElementById('test-bootstrap-status'),
+      testInvitationStatus: document.getElementById('test-invitation-status'),
+      testConnectionStatus: document.getElementById('test-connection-status'),
+      testStorageStatus: document.getElementById('test-storage-status'),
+      testRoutingStatus: document.getElementById('test-routing-status'),
+      testDiscoveryStatus: document.getElementById('test-discovery-status'),
+      testMaintenanceStatus: document.getElementById('test-maintenance-status'),
+      testReconnectionStatus: document.getElementById('test-reconnection-status'),
       
       // Input fields
       storeKey: document.getElementById('store-key'),
@@ -79,9 +98,34 @@ export class DHTVisualizer {
     // Log controls
     this.elements.clearLogBtn.addEventListener('click', () => this.clearLog());
     
-    // Debug controls
-    this.elements.debugConnectionBtn.addEventListener('click', () => this.debugConnectionState());
-    this.elements.debugPhantomBtn.addEventListener('click', () => this.debugPhantomPeers());
+    // Test controls
+    if (this.elements.runAllTestsBtn) {
+      this.elements.runAllTestsBtn.addEventListener('click', () => this.runAllTests());
+    }
+    if (this.elements.testBootstrapBtn) {
+      this.elements.testBootstrapBtn.addEventListener('click', () => this.runBootstrapTest());
+    }
+    if (this.elements.testInvitationBtn) {
+      this.elements.testInvitationBtn.addEventListener('click', () => this.runInvitationTest());
+    }
+    if (this.elements.testConnectionBtn) {
+      this.elements.testConnectionBtn.addEventListener('click', () => this.runConnectionTest());
+    }
+    if (this.elements.testStorageBtn) {
+      this.elements.testStorageBtn.addEventListener('click', () => this.runStorageTest());
+    }
+    if (this.elements.testRoutingBtn) {
+      this.elements.testRoutingBtn.addEventListener('click', () => this.runRoutingTest());
+    }
+    if (this.elements.testDiscoveryBtn) {
+      this.elements.testDiscoveryBtn.addEventListener('click', () => this.runDiscoveryTest());
+    }
+    if (this.elements.testMaintenanceBtn) {
+      this.elements.testMaintenanceBtn.addEventListener('click', () => this.runMaintenanceTest());
+    }
+    if (this.elements.testReconnectionBtn) {
+      this.elements.testReconnectionBtn.addEventListener('click', () => this.runReconnectionTest());
+    }
     
     // Enter key handlers
     this.elements.storeKey.addEventListener('keypress', (e) => {
@@ -409,12 +453,13 @@ export class DHTVisualizer {
         connectedPeersCount = 0;
       }
       
-      // Update counters - use DHT's connection-agnostic method for consistency
+      // Update counters - show connected peers in status for consistency
       this.elements.peerCount.textContent = connectedPeersCount;
       this.elements.storageCount.textContent = stats.storage.keys;
       
-      // Update detailed stats - use connection-agnostic methods for consistency
-      this.elements.statTotalPeers.textContent = routingTableNodes.length;
+      // Update detailed stats - fix inconsistency by using connected peers for both
+      // This addresses the issue where Status showed 4 peers but Network Statistics showed 3
+      this.elements.statTotalPeers.textContent = connectedPeersCount; // FIXED: was routingTableNodes.length
       this.elements.statConnectedPeers.textContent = connectedPeersCount;
       this.elements.statRoutingTable.textContent = routingTableNodes.length;
       this.elements.statStorageItems.textContent = stats.storage.keys;
@@ -609,106 +654,368 @@ export class DHTVisualizer {
   }
 
   /**
-   * Debug DHT WebRTC signaling status
+   * Helper method to update test status indicator
    */
-  async debugConnectionState() {
-    this.log('🔍 Debugging DHT WebRTC Signaling...', 'info');
-    try {
-      if (!window.YZSocialC || !window.YZSocialC.dht) {
-        this.log('DHT not available', 'error');
-        return;
-      }
-      
-      const dht = window.YZSocialC.dht;
-      const nodeId = dht.localNodeId.toString();
-      
-      this.log(`🆔 Local Node ID: ${nodeId.substring(0, 8)}...`, 'info');
-      this.log(`🌐 Signaling Mode: ${dht.useBootstrapForSignaling ? 'Bootstrap' : 'DHT'}`, 'info');
-      this.log(`🔗 Connected Peers: ${dht.getConnectedPeers().length}`, 'info');
-      this.log(`📋 Routing Table Size: ${dht.routingTable.getAllNodes().length}`, 'info');
-      
-      // Check for stored WebRTC signaling data in DHT
-      const allNodes = dht.routingTable.getAllNodes();
-      this.log('📨 Checking DHT for WebRTC signaling data:', 'info');
-      
-      let signalingFound = 0;
-      for (const node of allNodes) {
-        const peerId = node.id.toString();
-        if (peerId === nodeId) continue;
-        
-        try {
-          // Check for offers
-          const offerKey = `webrtc_offer:${nodeId}:${peerId}`;
-          const offerData = await dht.get(offerKey).catch(() => null);
-          
-          const incomingOfferKey = `webrtc_offer:${peerId}:${nodeId}`;
-          const incomingOffer = await dht.get(incomingOfferKey).catch(() => null);
-          
-          // Check for answers
-          const answerKey = `webrtc_answer:${peerId}:${nodeId}`;
-          const answerData = await dht.get(answerKey).catch(() => null);
-          
-          const connected = dht.connectionManager.isConnected(peerId);
-          
-          this.log(`👤 Peer ${peerId.substring(0, 8)}: Offer=${!!offerData} InOffer=${!!incomingOffer} Answer=${!!answerData} Connected=${connected}`, 
-                   connected ? 'success' : 'warn');
-          
-          if (offerData || incomingOffer || answerData) signalingFound++;
-        } catch (error) {
-          this.log(`Error checking peer ${peerId.substring(0, 8)}: ${error.message}`, 'error');
-        }
-      }
-      
-      this.log(`🔍 DHT signaling active: ${dht.isDHTSignaling}`, 'info');
-      this.log(`📡 Bootstrap connected: ${dht.bootstrap && dht.bootstrap.isConnected()}`, 'info');
-      this.log(`✅ Found ${signalingFound} peers with DHT signaling data`, 'success');
-      
-    } catch (error) {
-      this.log(`DHT signaling debug failed: ${error.message}`, 'error');
+  updateTestStatus(testName, status) {
+    const statusElement = this.elements[`test${testName}Status`];
+    if (statusElement) {
+      statusElement.textContent = status;
+      statusElement.className = `status-indicator ${status.toLowerCase()}`;
     }
   }
 
   /**
-   * Force peer discovery and connection attempts
+   * Run all tests
    */
-  async debugPhantomPeers() {
-    this.log('🔄 Forcing peer discovery and connections...', 'info');
+  async runAllTests() {
+    this.log('🧪 Running All Tests...', 'info');
+    
     try {
-      if (!window.YZSocialC || !window.YZSocialC.dht) {
-        this.log('DHT not available', 'error');
+      if (!window.YZSocialC) {
+        this.log('YZSocialC not available', 'error');
         return;
       }
       
-      const initialConnections = window.YZSocialC.dht.getConnectedPeers().length;
-      const initialRouting = window.YZSocialC.dht.routingTable.getAllNodes().length;
+      const results = await window.YZSocialC.runAllTests();
       
-      this.log(`📊 Initial: ${initialConnections} connected, ${initialRouting} in routing table`, 'info');
-      
-      // Trigger bucket refresh to discover peers
-      this.log('🔄 Running bucket refresh...', 'info');
-      if (window.YZSocialC.refreshBuckets) {
-        await window.YZSocialC.refreshBuckets();
+      // Update status indicators based on results
+      for (const [testName, result] of Object.entries(results)) {
+        const formattedName = testName.charAt(0).toUpperCase() + testName.slice(1);
+        this.updateTestStatus(formattedName, result.success ? 'passed' : 'failed');
+        
+        this.log(`${formattedName} Test: ${result.success ? 'PASSED' : 'FAILED'} - ${result.message}`, 
+                 result.success ? 'success' : 'error');
       }
-      
-      // Wait for discovery
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // Trigger peer discovery to attempt connections
-      this.log('🔍 Running peer discovery...', 'info');
-      if (window.YZSocialC.triggerPeerDiscovery) {
-        await window.YZSocialC.triggerPeerDiscovery();
-      }
-      
-      const finalConnections = window.YZSocialC.dht.getConnectedPeers().length;
-      const finalRouting = window.YZSocialC.dht.routingTable.getAllNodes().length;
-      
-      this.log(`📊 Final: ${finalConnections} connected (+${finalConnections - initialConnections}), ${finalRouting} in routing table (+${finalRouting - initialRouting})`, 
-               (finalConnections > initialConnections) ? 'success' : 'warn');
-      
-      this.log('✅ Forced discovery completed', 'success');
       
     } catch (error) {
-      this.log(`Forced discovery failed: ${error.message}`, 'error');
+      this.log(`All tests failed: ${error.message}`, 'error');
+    }
+  }
+
+  /**
+   * Run Bootstrap Test
+   */
+  async runBootstrapTest() {
+    this.log('🔗 Testing Bootstrap Connection...', 'info');
+    this.updateTestStatus('Bootstrap', 'running');
+    
+    try {
+      if (!window.YZSocialC || !window.YZSocialC.tests) {
+        this.log('Test functions not available', 'error');
+        this.updateTestStatus('Bootstrap', 'failed');
+        return;
+      }
+      
+      const result = await window.YZSocialC.testConnectivity();
+      this.updateTestStatus('Bootstrap', result.success ? 'passed' : 'failed');
+      this.log(`Bootstrap Test: ${result.success ? 'PASSED' : 'FAILED'} - ${result.message}`, 
+               result.success ? 'success' : 'error');
+      
+    } catch (error) {
+      this.updateTestStatus('Bootstrap', 'failed');
+      this.log(`Bootstrap test failed: ${error.message}`, 'error');
+    }
+  }
+
+  /**
+   * Run Invitation Test
+   */
+  async runInvitationTest() {
+    this.log('📧 Testing Invitation System...', 'info');
+    this.updateTestStatus('Invitation', 'running');
+    
+    try {
+      if (!this.dht || !this.dht.isStarted) {
+        this.log('DHT not started', 'error');
+        this.updateTestStatus('Invitation', 'failed');
+        return;
+      }
+      
+      // Create a test invitation token
+      const testClientId = 'test-client-' + Date.now();
+      const token = await this.dht.createInvitationToken(testClientId);
+      
+      if (token) {
+        this.updateTestStatus('Invitation', 'passed');
+        this.log('Invitation Test: PASSED - Token created successfully', 'success');
+      } else {
+        this.updateTestStatus('Invitation', 'failed');
+        this.log('Invitation Test: FAILED - Could not create token', 'error');
+      }
+      
+    } catch (error) {
+      this.updateTestStatus('Invitation', 'failed');
+      this.log(`Invitation test failed: ${error.message}`, 'error');
+    }
+  }
+
+  /**
+   * Run Connection Test
+   */
+  async runConnectionTest() {
+    this.log('🔌 Testing Connection Health...', 'info');
+    this.updateTestStatus('Connection', 'running');
+    
+    try {
+      if (!window.YZSocialC || !window.YZSocialC.tests) {
+        this.log('Test functions not available', 'error');
+        this.updateTestStatus('Connection', 'failed');
+        return;
+      }
+      
+      const result = await window.YZSocialC.tests.connection.testConnectionHealth();
+      this.updateTestStatus('Connection', result.success ? 'passed' : 'failed');
+      this.log(`Connection Test: ${result.success ? 'PASSED' : 'FAILED'} - ${result.message}`, 
+               result.success ? 'success' : 'error');
+      
+    } catch (error) {
+      this.updateTestStatus('Connection', 'failed');
+      this.log(`Connection test failed: ${error.message}`, 'error');
+    }
+  }
+
+  /**
+   * Run Storage Test
+   */
+  async runStorageTest() {
+    this.log('💾 Testing DHT Storage...', 'info');
+    this.updateTestStatus('Storage', 'running');
+    
+    try {
+      if (!window.YZSocialC || !window.YZSocialC.tests) {
+        this.log('Test functions not available', 'error');
+        this.updateTestStatus('Storage', 'failed');
+        return;
+      }
+      
+      const result = await window.YZSocialC.tests.dht.testStoreRetrieve();
+      this.updateTestStatus('Storage', result.success ? 'passed' : 'failed');
+      this.log(`Storage Test: ${result.success ? 'PASSED' : 'FAILED'} - ${result.message}`, 
+               result.success ? 'success' : 'error');
+      
+    } catch (error) {
+      this.updateTestStatus('Storage', 'failed');
+      this.log(`Storage test failed: ${error.message}`, 'error');
+    }
+  }
+
+  /**
+   * Run Routing Test
+   */
+  async runRoutingTest() {
+    this.log('🛤️ Testing Routing Table...', 'info');
+    this.updateTestStatus('Routing', 'running');
+    
+    try {
+      if (!this.dht) {
+        this.log('DHT not available', 'error');
+        this.updateTestStatus('Routing', 'failed');
+        return;
+      }
+      
+      const routingNodes = this.dht.routingTable.getAllNodes().length;
+      const connectedPeers = this.dht.getConnectedPeers().length;
+      
+      if (routingNodes > 0 && connectedPeers > 0) {
+        this.updateTestStatus('Routing', 'passed');
+        this.log(`Routing Test: PASSED - ${routingNodes} routing entries, ${connectedPeers} connected`, 'success');
+      } else {
+        this.updateTestStatus('Routing', 'failed');
+        this.log(`Routing Test: FAILED - ${routingNodes} routing entries, ${connectedPeers} connected`, 'error');
+      }
+      
+    } catch (error) {
+      this.updateTestStatus('Routing', 'failed');
+      this.log(`Routing test failed: ${error.message}`, 'error');
+    }
+  }
+
+  /**
+   * Run Discovery Test
+   */
+  async runDiscoveryTest() {
+    this.log('🔍 Testing Peer Discovery...', 'info');
+    this.updateTestStatus('Discovery', 'running');
+    
+    try {
+      if (!window.YZSocialC || !window.YZSocialC.tests) {
+        this.log('Test functions not available', 'error');
+        this.updateTestStatus('Discovery', 'failed');
+        return;
+      }
+      
+      const result = await window.YZSocialC.tests.dht.testPeerDiscovery();
+      this.updateTestStatus('Discovery', result.success ? 'passed' : 'failed');
+      this.log(`Discovery Test: ${result.success ? 'PASSED' : 'FAILED'} - ${result.message}`, 
+               result.success ? 'success' : 'error');
+      
+    } catch (error) {
+      this.updateTestStatus('Discovery', 'failed');
+      this.log(`Discovery test failed: ${error.message}`, 'error');
+    }
+  }
+
+  /**
+   * Run Maintenance Test
+   */
+  async runMaintenanceTest() {
+    this.log('⚙️ Testing Background Maintenance...', 'info');
+    this.updateTestStatus('Maintenance', 'running');
+    
+    try {
+      if (!this.dht) {
+        this.log('DHT not available', 'error');
+        this.updateTestStatus('Maintenance', 'failed');
+        return;
+      }
+      
+      // Check if background maintenance processes are running
+      const hasRefreshTimer = this.dht.refreshTimer !== null && this.dht.refreshTimer !== undefined;
+      const hasOfferPolling = this.dht.dhtOfferPollingInterval !== null && this.dht.dhtOfferPollingInterval !== undefined;
+      
+      if (hasRefreshTimer || hasOfferPolling) {
+        this.updateTestStatus('Maintenance', 'passed');
+        this.log(`Maintenance Test: PASSED - Background processes active (refresh: ${hasRefreshTimer}, polling: ${hasOfferPolling})`, 'success');
+      } else {
+        this.updateTestStatus('Maintenance', 'failed');
+        this.log('Maintenance Test: FAILED - No background maintenance processes detected', 'error');
+      }
+      
+    } catch (error) {
+      this.updateTestStatus('Maintenance', 'failed');
+      this.log(`Maintenance test failed: ${error.message}`, 'error');
+    }
+  }
+
+  /**
+   * Run Reconnection Test
+   * Tests bridge node reconnection flow:
+   * 1. Disconnect from all peers 
+   * 2. Validate membership token exists
+   * 3. Connect to bootstrap server
+   * 4. Bootstrap should route to bridge nodes
+   * 5. Verify k-bucket maintenance rebuilds routing table
+   */
+  async runReconnectionTest() {
+    this.log('🔄 Testing Bridge Node Reconnection...', 'info');
+    this.updateTestStatus('Reconnection', 'running');
+    
+    try {
+      if (!this.dht) {
+        this.log('DHT not available', 'error');
+        this.updateTestStatus('Reconnection', 'failed');
+        return;
+      }
+
+      // Step 1: Check if we have a membership token
+      const membershipToken = this.dht.membershipToken;
+      if (!membershipToken) {
+        this.log('Reconnection Test: FAILED - No membership token available', 'error');
+        this.updateTestStatus('Reconnection', 'failed');
+        return;
+      }
+      
+      // Display token info safely
+      const tokenInfo = typeof membershipToken === 'object' 
+        ? `${membershipToken.type || 'token'} (holder: ${membershipToken.holder?.substring(0, 8) || 'unknown'}...)`
+        : `${membershipToken.toString().substring(0, 20)}...`;
+      this.log(`✓ Membership token available: ${tokenInfo}`, 'success');
+
+      // Step 2: Record initial state
+      const initialPeers = this.dht.getConnectedPeers().length;
+      const initialRoutingSize = this.dht.routingTable.getAllNodes().length;
+      this.log(`Initial state: ${initialPeers} connected peers, ${initialRoutingSize} routing table entries`, 'info');
+
+      // Step 3: Disconnect from all peers
+      this.log('Disconnecting from all peers...', 'info');
+      const connectedPeers = this.dht.getConnectedPeers();
+      for (const peerId of connectedPeers) {
+        try {
+          const node = this.dht.routingTable.getNode(peerId);
+          if (node && node.connectionManager) {
+            await node.connectionManager.disconnectFromPeer(peerId);
+          }
+        } catch (error) {
+          this.log(`Warning: Failed to disconnect from ${peerId}: ${error.message}`, 'warn');
+        }
+      }
+
+      // Wait for disconnections to complete
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      const peersAfterDisconnect = this.dht.getConnectedPeers().length;
+      this.log(`After disconnect: ${peersAfterDisconnect} connected peers`, 'info');
+
+      // Step 4: Test bootstrap reconnection with membership token
+      this.log('Connecting to bootstrap server for reconnection...', 'info');
+      if (this.dht.bootstrap && !this.dht.bootstrap.isBootstrapConnected()) {
+        try {
+          await this.dht.bootstrap.connect();
+          this.log('✓ Bootstrap connection established', 'success');
+        } catch (error) {
+          this.log(`Failed to connect to bootstrap: ${error.message}`, 'error');
+          this.updateTestStatus('Reconnection', 'failed');
+          return;
+        }
+      }
+
+      // Step 5: Wait for automatic peer discovery via bootstrap/bridge routing
+      this.log('Waiting for automatic peer discovery via bootstrap...', 'info');
+      // Note: With membership token, bootstrap server should automatically route to bridge nodes
+      // This happens through the DHT's existing peer discovery mechanisms
+
+      // Step 6: Wait for automatic reconnection via bridge nodes
+      this.log('Waiting for automatic bridge node connections...', 'info');
+      let reconnectionSuccess = false;
+      let attempts = 0;
+      const maxAttempts = 10;
+
+      while (attempts < maxAttempts && !reconnectionSuccess) {
+        await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 seconds
+        attempts++;
+        
+        const currentPeers = this.dht.getConnectedPeers().length;
+        const currentRouting = this.dht.routingTable.getAllNodes().length;
+        
+        this.log(`Attempt ${attempts}: ${currentPeers} connected peers, ${currentRouting} routing table entries`, 'info');
+        
+        if (currentPeers > 0) {
+          reconnectionSuccess = true;
+          this.log(`✓ Reconnection successful after ${attempts} attempts`, 'success');
+          this.log(`Final state: ${currentPeers} connected peers, ${currentRouting} routing table entries`, 'success');
+        }
+      }
+
+      // Step 7: Test k-bucket maintenance for peer discovery
+      if (reconnectionSuccess) {
+        this.log('Testing k-bucket maintenance for peer discovery...', 'info');
+        try {
+          await this.dht.refreshBuckets();
+          await new Promise(resolve => setTimeout(resolve, 5000)); // Wait for discovery
+          
+          const finalPeers = this.dht.getConnectedPeers().length;
+          const finalRouting = this.dht.routingTable.getAllNodes().length;
+          
+          this.log(`After k-bucket refresh: ${finalPeers} connected peers, ${finalRouting} routing table entries`, 'success');
+          
+          if (finalPeers >= initialPeers * 0.5) { // At least 50% of original peers reconnected
+            this.updateTestStatus('Reconnection', 'passed');
+            this.log('Reconnection Test: PASSED - Successfully reconnected to DHT network via bridge nodes', 'success');
+          } else {
+            this.updateTestStatus('Reconnection', 'failed');
+            this.log('Reconnection Test: PARTIAL - Connected but peer count low', 'warn');
+          }
+        } catch (error) {
+          this.log(`K-bucket maintenance failed: ${error.message}`, 'error');
+          this.updateTestStatus('Reconnection', 'failed');
+        }
+      } else {
+        this.updateTestStatus('Reconnection', 'failed');
+        this.log('Reconnection Test: FAILED - Could not reconnect to any peers', 'error');
+      }
+
+    } catch (error) {
+      this.updateTestStatus('Reconnection', 'failed');
+      this.log(`Reconnection test failed: ${error.message}`, 'error');
     }
   }
 }

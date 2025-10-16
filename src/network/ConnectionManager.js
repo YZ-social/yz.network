@@ -10,7 +10,7 @@ export class ConnectionManager extends EventEmitter {
     
     this.options = {
       maxConnections: options.maxConnections || 50,
-      timeout: options.timeout || 30000,
+      timeout: options.timeout || 45000, // Increased from 30s to 45s for better WebRTC reliability
       ...options
     };
 

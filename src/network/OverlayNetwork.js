@@ -51,11 +51,9 @@ export class OverlayNetwork extends EventEmitter {
         this.handleDHTDisconnection(peerId);
       });
 
-      this.dht.connectionManager.on('data', ({ peerId, data }) => {
-        if (data.type && data.type.startsWith('overlay_')) {
-          this.handleOverlayMessage(peerId, data);
-        }
-      });
+      // Note: Individual connection managers handle their own data events
+      // OverlayNetwork will receive overlay messages via DHT message routing
+      // No need to listen to a single connectionManager since we have per-node managers
     }
   }
 
@@ -96,9 +94,9 @@ export class OverlayNetwork extends EventEmitter {
     console.log(`Creating direct connection to ${peerId} for ${purpose}`);
 
     // First, establish connection through DHT if not already connected
-    if (!this.dht.connectionManager.isConnected(peerId)) {
+    if (!this.dht.isPeerConnected(peerId)) {
       try {
-        await this.dht.connectionManager.createConnection(peerId, true);
+        await this.dht.connectToPeerViaDHT(peerId);
       } catch (error) {
         throw new Error(`Failed to establish DHT connection: ${error.message}`);
       }
@@ -107,7 +105,7 @@ export class OverlayNetwork extends EventEmitter {
     // Create overlay connection metadata
     const connectionInfo = {
       peerId,
-      connection: this.dht.connectionManager.peers.get(peerId), // Reuse DHT connection
+      connection: null, // Will be set by DHT connection management
       purposes: new Set([purpose]),
       createdAt: Date.now(),
       lastActivity: Date.now(),
@@ -145,7 +143,7 @@ export class OverlayNetwork extends EventEmitter {
     }
 
     // Try DHT connection
-    if (this.dht.connectionManager.isConnected(peerId)) {
+    if (this.dht.isPeerConnected(peerId)) {
       return this.sendViaDHT(peerId, message, { priority, reliable });
     }
 
@@ -175,7 +173,7 @@ export class OverlayNetwork extends EventEmitter {
     };
 
     connectionInfo.lastActivity = Date.now();
-    return this.dht.connectionManager.sendData(peerId, overlayMessage);
+    return this.dht.sendMessage(peerId, overlayMessage);
   }
 
   /**
@@ -190,7 +188,7 @@ export class OverlayNetwork extends EventEmitter {
       timestamp: Date.now()
     };
 
-    return this.dht.connectionManager.sendData(peerId, overlayMessage);
+    return this.dht.sendMessage(peerId, overlayMessage);
   }
 
   /**
@@ -217,7 +215,7 @@ export class OverlayNetwork extends EventEmitter {
     const nextHop = route[0];
     console.log(`Routing message to ${targetPeerId} via ${nextHop}`);
     
-    return this.dht.connectionManager.sendData(nextHop, routedMessage);
+    return this.dht.sendMessage(nextHop, routedMessage);
   }
 
   /**
@@ -239,7 +237,7 @@ export class OverlayNetwork extends EventEmitter {
 
     // Filter to only connected nodes
     const connectedNodes = closestNodes.filter(node => 
-      this.dht.connectionManager.isConnected(node.id.toString())
+      this.dht.isPeerConnected(node.id.toString())
     );
 
     if (connectedNodes.length === 0) {
@@ -323,7 +321,7 @@ export class OverlayNetwork extends EventEmitter {
     // Accept the connection
     const connectionInfo = {
       peerId,
-      connection: this.dht.connectionManager.peers.get(peerId),
+      connection: null, // Will be set by DHT connection management
       purposes: new Set([purpose]),
       createdAt: Date.now(),
       lastActivity: Date.now(),
@@ -399,8 +397,8 @@ export class OverlayNetwork extends EventEmitter {
         ttl: ttl - 1
       };
 
-      if (this.dht.connectionManager.isConnected(nextHop)) {
-        await this.dht.connectionManager.sendData(nextHop, forwardedMessage);
+      if (this.dht.isPeerConnected(nextHop)) {
+        await this.dht.sendMessage(nextHop, forwardedMessage);
         console.log(`Forwarded message to ${nextHop}`);
       } else {
         console.warn(`Next hop ${nextHop} not connected, dropping message`);
@@ -412,7 +410,7 @@ export class OverlayNetwork extends EventEmitter {
    * Send overlay message
    */
   async sendOverlayMessage(peerId, message) {
-    return this.dht.connectionManager.sendData(peerId, message);
+    return this.dht.sendMessage(peerId, message);
   }
 
   /**
@@ -598,5 +596,348 @@ export class OverlayNetwork extends EventEmitter {
     this.emit('stopped');
     
     console.log('Overlay network stopped');
+  }
+
+  // ============================================================================
+  // WebRTC Signaling Methods (moved from KademliaDHT)
+  // ============================================================================
+
+  /**
+   * Handle outgoing WebRTC signal
+   */
+  async handleOutgoingSignal(peerId, signal) {
+    // Determine signaling method based on peer status
+    const isDHTMember = this.dht.routingTable.getNode(peerId) !== null;
+    // Check if this peer is currently being invited
+    const isInvitationFlow = signal.invitationFlow || this.dht.pendingInvitations.has(peerId);
+
+    if (!isDHTMember || isInvitationFlow || this.dht.useBootstrapForSignaling) {
+      // Use bootstrap server for:
+      // 1. New client invitations (invitation flow)
+      // 2. Peers not yet in our routing table (not DHT members)
+      // 3. When we're still using bootstrap for signaling
+      console.log(`🔗 Using bootstrap signaling for ${peerId} (invitation: ${isInvitationFlow}, DHT member: ${isDHTMember})`);
+      await this.dht.bootstrap.forwardSignal(peerId, signal);
+    } else {
+      // Use DHT direct messaging for signaling between existing DHT members
+      console.log(`🌐 Using DHT messaging for ${peerId} (existing DHT member)`);
+      await this.sendDHTSignal(peerId, signal);
+    }
+  }
+
+  /**
+   * Send WebRTC signal via DHT direct messaging (for existing DHT members only)
+   */
+  async sendDHTSignal(peerId, signal) {
+    console.log(`🚀 DHT Signaling: Sending ${signal.type} to ${peerId} via DHT messaging`);
+    
+    try {
+      if (signal.type === 'offer') {
+        await this.sendWebRTCOffer(peerId, signal.sdp);
+      } else if (signal.type === 'answer') {
+        await this.sendWebRTCAnswer(peerId, signal.sdp);
+      } else if (signal.type === 'candidate') {
+        await this.sendWebRTCIceCandidate(peerId, {
+          candidate: signal.candidate,
+          sdpMLineIndex: signal.sdpMLineIndex,
+          sdpMid: signal.sdpMid
+        });
+      } else {
+        console.warn(`Unknown signal type for DHT messaging: ${signal.type}`);
+      }
+    } catch (error) {
+      console.error(`Failed to send DHT signal ${signal.type} to ${peerId}:`, error);
+      
+      // Fallback to bootstrap signaling if DHT messaging fails
+      console.log(`🔄 Falling back to bootstrap signaling for ${peerId}`);
+      await this.dht.bootstrap.forwardSignal(peerId, signal);
+    }
+  }
+
+  /**
+   * Route WebRTC message to target peer through DHT
+   */
+  async routeWebRTCMessage(targetPeer, message) {
+    console.log(`🚀 Routing WebRTC message to ${targetPeer}: ${message.type}`);
+    
+    try {
+      // Try to send directly if we have a connection to the target
+      if (this.dht.isPeerConnected(targetPeer)) {
+        await this.dht.sendMessage(targetPeer, message);
+        console.log(`✅ Directly routed WebRTC message to ${targetPeer}`);
+        return;
+      }
+      
+      // In small networks, any connected peer can potentially route to the target
+      // Try XOR-closest nodes first, then fall back to any connected peer
+      const targetNodeId = this.dht.localNodeId.constructor.fromHex(targetPeer);
+      const closestNodes = this.dht.routingTable.findClosestNodes(targetNodeId, this.dht.options.alpha);
+      
+      // Try closest nodes first if they're connected
+      for (const node of closestNodes) {
+        const nextHop = node.id.toString();
+        if (this.dht.isPeerConnected(nextHop)) {
+          await this.dht.sendMessage(nextHop, message);
+          console.log(`✅ Routed WebRTC message via closest peer ${nextHop.substring(0, 8)}... to ${targetPeer.substring(0, 8)}...`);
+          return;
+        }
+      }
+      
+      // Fall back to any connected peer for small networks where XOR-closest might not be connected
+      const connectedPeers = this.dht.getConnectedPeers();
+      if (connectedPeers.length === 0) {
+        console.warn(`No connected peers available to route WebRTC message to ${targetPeer.substring(0, 8)}...`);
+        return;
+      }
+      
+      // Try any connected peer as a potential route
+      for (const nextHop of connectedPeers) {
+        try {
+          await this.dht.sendMessage(nextHop, message);
+          console.log(`✅ Routed WebRTC message via connected peer ${nextHop.substring(0, 8)}... to ${targetPeer.substring(0, 8)}...`);
+          return;
+        } catch (error) {
+          console.warn(`Failed to route via ${nextHop.substring(0, 8)}...: ${error.message}`);
+        }
+      }
+      
+      console.warn(`No connected route found to forward WebRTC message to ${targetPeer.substring(0, 8)}... (tried ${connectedPeers.length} peers)`);
+    } catch (error) {
+      console.error(`Failed to route WebRTC message to ${targetPeer}:`, error);
+    }
+  }
+
+  /**
+   * Send WebRTC offer via DHT messaging
+   */
+  async sendWebRTCOffer(targetPeer, offer) {
+    console.log(`📤 Sending WebRTC offer via DHT to ${targetPeer}`);
+    
+    const message = {
+      type: 'webrtc_offer',
+      senderPeer: this.dht.localNodeId.toString(),
+      targetPeer: targetPeer,
+      offer: offer,
+      timestamp: Date.now()
+    };
+    await this.routeWebRTCMessage(targetPeer, message);
+  }
+
+  /**
+   * Send WebRTC answer via DHT messaging
+   */
+  async sendWebRTCAnswer(targetPeer, answer) {
+    console.log(`📤 Sending WebRTC answer via DHT to ${targetPeer}`);
+    
+    const message = {
+      type: 'webrtc_answer',
+      senderPeer: this.dht.localNodeId.toString(),
+      targetPeer: targetPeer,
+      answer: answer,
+      timestamp: Date.now()
+    };
+    await this.routeWebRTCMessage(targetPeer, message);
+  }
+
+  /**
+   * Send WebRTC ICE candidate via DHT messaging
+   */
+  async sendWebRTCIceCandidate(targetPeer, candidate) {
+    console.log(`📤 Sending WebRTC ICE candidate via DHT to ${targetPeer}`);
+    
+    const message = {
+      type: 'webrtc_ice',
+      senderPeer: this.dht.localNodeId.toString(),
+      targetPeer: targetPeer,
+      candidate: candidate,
+      timestamp: Date.now()
+    };
+    await this.routeWebRTCMessage(targetPeer, message);
+  }
+
+  /**
+   * Handle WebRTC offer message via DHT
+   */
+  async handleWebRTCOffer(fromPeer, message) {
+    console.log(`🔄 DHT WebRTC: Received offer from ${fromPeer} for peer ${message.targetPeer}`);
+
+    // Check if this offer is for us
+    if (message.targetPeer !== this.dht.localNodeId.toString()) {
+      // Add routing hop tracking to prevent loops
+      if (!message.hops) {
+        message.hops = [];
+      }
+
+      // Check for actual routing loops - only block if we appear multiple times in the path
+      const localNodeId = this.dht.localNodeId.toString();
+      const hopOccurrences = message.hops.filter(id => id === localNodeId).length;
+
+      if (hopOccurrences > 0) {
+        console.warn(`🔄 Dropping WebRTC offer - actual routing loop detected (node appears ${hopOccurrences + 1} times in path)`);
+        return;
+      }
+
+      // Allow reasonable hop counts for small networks
+      if (message.hops.length >= 4) {
+        console.warn(`🔄 Dropping WebRTC offer - maximum hop count exceeded (${message.hops.length})`);
+        return;
+      }
+
+      // Add ourselves to the hop list
+      message.hops.push(this.dht.localNodeId.toString());
+
+      // This is a routed message - forward it to the target peer
+      await this.routeWebRTCMessage(message.targetPeer, message);
+      return;
+    }
+    // This offer is for us - delegate to connection manager
+    console.log(`📥 Received signaling offer from ${message.senderPeer} - delegating to connection manager`);
+
+    // Get or create the connection manager for the sender peer
+    const senderPeer = message.senderPeer;
+    let peerNode = this.dht.routingTable.getNode(senderPeer);
+
+    if (!peerNode || !peerNode.connectionManager) {
+      console.log(`🔧 Creating connection manager for new peer ${senderPeer} during WebRTC signaling`);
+
+      // Use DHT helper to create peer node with connection manager
+      peerNode = this.dht.getOrCreatePeerNode(senderPeer, { nodeType: 'browser' });
+
+      if (!peerNode.connectionManager) {
+        console.error(`❌ Failed to create connection manager for sender ${senderPeer}`);
+        return;
+      }
+    }
+
+    // Delegate WebRTC offer processing to the connection manager
+    await peerNode.connectionManager.handleSignal(senderPeer, {
+      type: 'offer',
+      sdp: message.offer
+    });
+  }
+
+  /**
+   * Handle WebRTC answer message via DHT
+   */
+  async handleWebRTCAnswer(fromPeer, message) {
+    console.log(`🔄 DHT WebRTC: Received answer from ${fromPeer} for peer ${message.targetPeer}`);
+
+    // Check if this answer is for us
+    if (message.targetPeer !== this.dht.localNodeId.toString()) {
+      // Add routing hop tracking to prevent loops
+      if (!message.hops) {
+        message.hops = [];
+      }
+
+      // Check for actual routing loops - only block if we appear multiple times in the path
+      const localNodeId = this.dht.localNodeId.toString();
+      const hopOccurrences = message.hops.filter(id => id === localNodeId).length;
+
+      if (hopOccurrences > 0) {
+        console.warn(`🔄 Dropping WebRTC answer - actual routing loop detected (node appears ${hopOccurrences + 1} times in path)`);
+        return;
+      }
+
+      // Allow reasonable hop counts for small networks
+      if (message.hops.length >= 4) {
+        console.warn(`🔄 Dropping WebRTC answer - maximum hop count exceeded (${message.hops.length})`);
+        return;
+      }
+
+      // Add ourselves to the hop list
+      message.hops.push(this.dht.localNodeId.toString());
+
+      // This is a routed message - forward it to the target peer
+      await this.routeWebRTCMessage(message.targetPeer, message);
+      return;
+    }
+    // This answer is for us - delegate to connection manager
+    console.log(`📥 Received signaling answer from ${message.senderPeer} - delegating to connection manager`);
+
+    // Get or create the connection manager for the sender peer
+    const senderPeer = message.senderPeer;
+    let peerNode = this.dht.routingTable.getNode(senderPeer);
+
+    if (!peerNode || !peerNode.connectionManager) {
+      console.log(`🔧 Creating connection manager for new peer ${senderPeer} during WebRTC signaling`);
+
+      // Use DHT helper to create peer node with connection manager
+      peerNode = this.dht.getOrCreatePeerNode(senderPeer, { nodeType: 'browser' });
+
+      if (!peerNode.connectionManager) {
+        console.error(`❌ Failed to create connection manager for sender ${senderPeer}`);
+        return;
+      }
+    }
+
+    // Delegate WebRTC answer processing to the connection manager
+    await peerNode.connectionManager.handleSignal(senderPeer, {
+      type: 'answer',
+      sdp: message.answer
+    });
+  }
+
+  /**
+   * Handle WebRTC ICE candidate message via DHT
+   */
+  async handleWebRTCIceCandidate(fromPeer, message) {
+    console.log(`🔄 DHT WebRTC: Received ICE candidate from ${fromPeer} for peer ${message.targetPeer}`);
+
+    // Check if this ICE candidate is for us
+    if (message.targetPeer !== this.dht.localNodeId.toString()) {
+      // Add routing hop tracking to prevent loops
+      if (!message.hops) {
+        message.hops = [];
+      }
+
+      // Check for actual routing loops - only block if we appear multiple times in the path
+      const localNodeId = this.dht.localNodeId.toString();
+      const hopOccurrences = message.hops.filter(id => id === localNodeId).length;
+
+      if (hopOccurrences > 0) {
+        console.warn(`🔄 Dropping WebRTC ICE candidate - actual routing loop detected (node appears ${hopOccurrences + 1} times in path)`);
+        return;
+      }
+
+      // Allow reasonable hop counts for small networks
+      if (message.hops.length >= 4) {
+        console.warn(`🔄 Dropping WebRTC ICE candidate - maximum hop count exceeded (${message.hops.length})`);
+        return;
+      }
+
+      // Add ourselves to the hop list
+      message.hops.push(this.dht.localNodeId.toString());
+
+      // This is a routed message - forward it to the target peer
+      await this.routeWebRTCMessage(message.targetPeer, message);
+      return;
+    }
+    // This ICE candidate is for us - delegate to connection manager
+    console.log(`📥 Received ICE candidate from ${message.senderPeer} - delegating to connection manager`);
+
+    // Get or create the connection manager for the sender peer
+    const senderPeer = message.senderPeer;
+    let peerNode = this.dht.routingTable.getNode(senderPeer);
+
+    if (!peerNode || !peerNode.connectionManager) {
+      console.log(`🔧 Creating connection manager for new peer ${senderPeer} during WebRTC signaling`);
+
+      // Use DHT helper to create peer node with connection manager
+      peerNode = this.dht.getOrCreatePeerNode(senderPeer, { nodeType: 'browser' });
+
+      if (!peerNode.connectionManager) {
+        console.error(`❌ Failed to create connection manager for sender ${senderPeer}`);
+        return;
+      }
+    }
+
+    // Delegate WebRTC ICE candidate processing to the connection manager
+    // Extract fields from the candidate object (message.candidate contains {candidate, sdpMLineIndex, sdpMid})
+    await peerNode.connectionManager.handleSignal(senderPeer, {
+      type: 'candidate',
+      candidate: message.candidate.candidate,
+      sdpMLineIndex: message.candidate.sdpMLineIndex,
+      sdpMid: message.candidate.sdpMid
+    });
   }
 }

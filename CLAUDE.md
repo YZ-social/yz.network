@@ -732,6 +732,93 @@ node src/bridge/start-enhanced-bootstrap.js                 # Standard mode
 - **Connection Health**: Automatic detection of failed connections and cleanup
 - **Debug Tools**: `YZSocialC.getKeepAliveStatus()`, `YZSocialC.testKeepAlivePing()`, `YZSocialC.simulateTabVisibilityChange()`
 
+**CRITICAL LESSONS LEARNED - INVITATION SYSTEM REGRESSION (RESOLVED):**
+
+⚠️ **NEVER modify working invitation system without extreme caution**
+
+**What Happened (2025-09-16 Debugging Session):**
+- **Working State**: Git commit 8120d8b had functioning invitation system
+- **Regression Introduced**: Added automatic bootstrap disconnection logic in `considerDHTSignaling()` method
+- **Critical Bug**: `setTimeout(() => this.bootstrap.disconnect(), 2000)` conflicted with 45-second invitation timer
+- **Result**: Invitations failed with "Cannot coordinate WebRTC - one or both peers are offline"
+
+**Root Cause Analysis:**
+- **Design Conflict**: DHT signaling optimization vs invitation coordination requirements
+- **Timing Issue**: Bootstrap disconnection (2s) vs WebRTC coordination window (45s)
+- **Architecture Violation**: DHT layer making connection management decisions
+
+**Fix Applied:**
+```javascript
+// REMOVED: Automatic bootstrap disconnection
+setTimeout(() => {
+  if (this.bootstrap && this.bootstrap.isBootstrapConnected()) {
+    console.log('🔌 Disconnecting from bootstrap server - now using DHT signaling');
+    this.bootstrap.disconnect();
+  }
+}, 2000);
+
+// REPLACED WITH: Keep connection for invitation coordination
+// Keep bootstrap connection for invitation coordination
+// Bootstrap will disconnect naturally when no longer needed
+```
+
+**Key Prevention Rules:**
+1. **Git Checkpoint Before Changes**: Always commit working state before debugging
+2. **Minimal Change Principle**: Fix specific issues without touching working systems
+3. **Invitation System Isolation**: Never modify bootstrap connection logic during invitation flows
+4. **Test Invitation First**: Always verify invitation system works before other optimizations
+5. **Bootstrap Connection Timing**: Respect 45-second WebRTC coordination window
+6. **Layer Separation**: DHT should not make connection management decisions
+
+**Debug Pattern for Future Issues:**
+```bash
+# 1. Check git status - is current code committed?
+git status
+git diff  # Check what changed since last working commit
+
+# 2. Test invitation system first
+YZSocialC.inviteNewClient('test_client_id')
+
+# 3. If broken, revert to last known good commit
+git checkout HEAD~1 -- src/dht/KademliaDHT.js
+# Then identify specific problematic changes
+```
+
+**Diagnostic Tools Added:**
+- Enhanced logging shows when bootstrap connection is maintained vs disconnected
+- Clear distinction between DHT signaling activation and bootstrap disconnection
+- Better error messages for invitation coordination failures
+
+**ROUTING TABLE PERFORMANCE ISSUE (OBSERVED):**
+
+**Symptom**: Excessive "ROUTING TABLE DEBUG" logs showing repeated fallback searches:
+```
+🔧 ROUTING TABLE DEBUG - getNode for 404865da:
+🔍 Starting fallback search for node 404865da - not found in bucket 0
+🚨 Fallback search FAILED for node 404865da - not found in any bucket
+```
+
+**Root Cause**: Frequent routing table lookups for nodes during WebRTC connection establishment
+- Multiple calls to `getOrCreatePeerNode()` during connection setup
+- Each call triggers routing table search even when node doesn't exist yet
+- Fallback search logs are too verbose for normal operation
+
+**Performance Impact**: 
+- Excessive logging creates noise in console output
+- Multiple searches for same non-existent node during connection setup
+- No functional impact but degrades debugging experience
+
+**Potential Fixes** (for future consideration):
+1. **Cache negative lookups** temporarily during connection establishment
+2. **Reduce logging verbosity** for routing table searches (only log failures)
+3. **Batch node creation** during connection setup to minimize searches
+4. **Add exists-check** before expensive fallback searches
+
+**Current Workaround**: 
+- Logs are informational only and don't affect functionality
+- Successfully connecting peers are added to routing table after WebRTC establishment
+- Issue primarily affects debugging experience, not network performance
+
 **WebRTC Signaling Fixes (FIXED):**
 - **Missing handleSignal**: Added complete WebRTC signaling handling to connection managers
 - **Perfect Negotiation Pattern**: Proper collision handling using node ID comparison for polite/impolite roles

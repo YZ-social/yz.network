@@ -8,6 +8,7 @@ export class ConnectionManagerFactory {
   static localNodeType = null;
   static defaultOptions = {};
   static managerCache = new Map(); // Cache connection managers by peer ID
+  static globalMetadata = new Map(); // Global metadata store for all managers
 
   /**
    * Detect the current node type from environment
@@ -74,6 +75,13 @@ export class ConnectionManagerFactory {
       ConnectionManagerFactory.defaultOptions
     );
     
+    // Apply any existing global metadata to the new manager
+    for (const [metaPeerId, metadata] of ConnectionManagerFactory.globalMetadata.entries()) {
+      if (manager.setPeerMetadata) {
+        manager.setPeerMetadata(metaPeerId, metadata);
+      }
+    }
+
     // Cache the manager for future use
     ConnectionManagerFactory.managerCache.set(peerId, manager);
     console.log(`💾 Cached new connection manager for ${peerId.substring(0, 8)}...`);
@@ -159,10 +167,43 @@ export class ConnectionManagerFactory {
   }
 
   /**
+   * Get all cached connection managers
+   * @returns {Array} Array of all cached connection manager instances
+   */
+  static getAllCachedManagers() {
+    return Array.from(ConnectionManagerFactory.managerCache.values());
+  }
+
+  /**
    * Clear all cached connection managers
    */
   static clearManagerCache() {
     console.log(`🧹 Clearing ${ConnectionManagerFactory.managerCache.size} cached connection managers`);
     ConnectionManagerFactory.managerCache.clear();
+  }
+
+  /**
+   * Set global metadata for a peer ID (applies to all connection managers)
+   * @param {string} peerId - Peer ID
+   * @param {object} metadata - Metadata to set
+   */
+  static setPeerMetadata(peerId, metadata) {
+    ConnectionManagerFactory.globalMetadata.set(peerId, metadata);
+    
+    // Apply metadata to all cached managers
+    for (const manager of ConnectionManagerFactory.managerCache.values()) {
+      if (manager.setPeerMetadata) {
+        manager.setPeerMetadata(peerId, metadata);
+      }
+    }
+  }
+
+  /**
+   * Get global metadata for a peer ID
+   * @param {string} peerId - Peer ID
+   * @returns {object|null} Metadata or null if not found
+   */
+  static getPeerMetadata(peerId) {
+    return ConnectionManagerFactory.globalMetadata.get(peerId) || null;
   }
 }

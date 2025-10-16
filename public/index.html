@@ -309,6 +309,43 @@
             font-style: italic;
         }
         
+        .status-indicator {
+            font-size: 12px;
+            font-weight: 600;
+            padding: 4px 8px;
+            border-radius: 12px;
+            text-align: center;
+            min-width: 60px;
+            display: inline-block;
+        }
+        
+        .status-indicator.pending {
+            background: #f8f9fa;
+            color: #6c757d;
+        }
+        
+        .status-indicator.running {
+            background: #fff3cd;
+            color: #856404;
+            animation: pulse 1.5s infinite;
+        }
+        
+        .status-indicator.passed {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status-indicator.failed {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.6; }
+            100% { opacity: 1; }
+        }
+
         @media (max-width: 768px) {
             .grid {
                 grid-template-columns: 1fr;
@@ -380,8 +417,7 @@
                         </div>
                         
                         <div class="controls">
-                            <button class="btn btn-primary" id="debug-connection-btn" style="background: linear-gradient(135deg, #6f42c1, #563d7c);">Check DHT Signaling</button>
-                            <button class="btn btn-primary" id="debug-phantom-btn" style="background: linear-gradient(135deg, #e83e8c, #c2185b);">Force Peer Discovery</button>
+                            <button class="btn btn-primary" id="run-all-tests-btn" style="background: linear-gradient(135deg, #28a745, #20c997);">Run All Tests</button>
                         </div>
                     </div>
                 </div>
@@ -410,6 +446,44 @@
                     </div>
                 </div>
                 
+                <div class="card">
+                    <div class="card-header">Debug Tests</div>
+                    <div class="card-body">
+                        <div class="controls" style="display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-bottom: 10px;">
+                            <button class="btn btn-primary" id="test-bootstrap-btn" style="background: linear-gradient(135deg, #6f42c1, #563d7c); font-size: 12px; padding: 8px 16px;">Bootstrap Test</button>
+                            <span class="status-indicator" id="test-bootstrap-status">-</span>
+                        </div>
+                        <div class="controls" style="display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-bottom: 10px;">
+                            <button class="btn btn-primary" id="test-invitation-btn" style="background: linear-gradient(135deg, #007bff, #0056b3); font-size: 12px; padding: 8px 16px;">Invitation Test</button>
+                            <span class="status-indicator" id="test-invitation-status">-</span>
+                        </div>
+                        <div class="controls" style="display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-bottom: 10px;">
+                            <button class="btn btn-primary" id="test-connection-btn" style="background: linear-gradient(135deg, #17a2b8, #117a8b); font-size: 12px; padding: 8px 16px;">Connection Test</button>
+                            <span class="status-indicator" id="test-connection-status">-</span>
+                        </div>
+                        <div class="controls" style="display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-bottom: 10px;">
+                            <button class="btn btn-primary" id="test-storage-btn" style="background: linear-gradient(135deg, #28a745, #1e7e34); font-size: 12px; padding: 8px 16px;">Storage Test</button>
+                            <span class="status-indicator" id="test-storage-status">-</span>
+                        </div>
+                        <div class="controls" style="display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-bottom: 10px;">
+                            <button class="btn btn-primary" id="test-routing-btn" style="background: linear-gradient(135deg, #ffc107, #e0a800); font-size: 12px; padding: 8px 16px;">Routing Test</button>
+                            <span class="status-indicator" id="test-routing-status">-</span>
+                        </div>
+                        <div class="controls" style="display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-bottom: 10px;">
+                            <button class="btn btn-primary" id="test-discovery-btn" style="background: linear-gradient(135deg, #e83e8c, #c2185b); font-size: 12px; padding: 8px 16px;">Discovery Test</button>
+                            <span class="status-indicator" id="test-discovery-status">-</span>
+                        </div>
+                        <div class="controls" style="display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-bottom: 10px;">
+                            <button class="btn btn-primary" id="test-maintenance-btn" style="background: linear-gradient(135deg, #fd7e14, #dc6502); font-size: 12px; padding: 8px 16px;">Maintenance Test</button>
+                            <span class="status-indicator" id="test-maintenance-status">-</span>
+                        </div>
+                        <div class="controls" style="display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-bottom: 10px;">
+                            <button class="btn btn-primary" id="test-reconnection-btn" style="background: linear-gradient(135deg, #6c757d, #495057); font-size: 12px; padding: 8px 16px;">Reconnection Test</button>
+                            <span class="status-indicator" id="test-reconnection-status">-</span>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="card">
                     <div class="card-header">Connected Peers</div>
                     <div class="card-body">

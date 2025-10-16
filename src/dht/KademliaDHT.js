@@ -5,6 +5,7 @@ import { RoutingTable } from './RoutingTable.js';
 import { BootstrapClient } from '../bootstrap/BootstrapClient.js';
 import { InvitationToken } from '../core/InvitationToken.js';
 import { ConnectionManagerFactory } from '../network/ConnectionManagerFactory.js';
+import { OverlayNetwork } from '../network/OverlayNetwork.js';
 
 /**
  * Main Kademlia DHT implementation with connection-agnostic transport
@@ -45,6 +46,13 @@ export class KademliaDHT extends EventEmitter {
 
     // Core components
     this.routingTable = new RoutingTable(this.localNodeId, this.options.k);
+
+    // Track network formation start time for anti-spam logic
+    this.startTime = Date.now();
+    
+    // Overlay network will be initialized in start() method after DHT is fully ready
+    this.overlayNetwork = null;
+    this.overlayOptions = options.overlayOptions || {};
     
     // Store transport options for ConnectionManagerFactory
     this.transportOptions = {
@@ -64,6 +72,9 @@ export class KademliaDHT extends EventEmitter {
     // Request tracking
     this.pendingRequests = new Map(); // requestId -> { resolve, reject, timeout }
     this.requestId = 0;
+    
+    // Invitation tracking to prevent duplicates
+    this.pendingInvitations = new Set();
 
     // Message Queue System for DHT-based peer signaling
     this.messageQueue = new Map(); // peerId -> Array<{ message, timestamp }>
@@ -88,10 +99,21 @@ export class KademliaDHT extends EventEmitter {
     this.failedPeerQueries = new Map(); // Track peers that consistently fail queries
     this.peerFailureBackoff = new Map(); // Track backoff timers for failed peers
     
+    // Peer connection queue for non-blocking connection attempts
+    this.peerConnectionQueue = new Set();
+    this.processingConnectionQueue = false;
+    
     // Throttling and rate limiting for reducing excessive find_node traffic
     this.lastBucketRefreshTime = 0; // Track last bucket refresh for throttling
     this.findNodeRateLimit = new Map(); // Rate limit find_node requests per peer
     this.findNodeMinInterval = 10000; // Minimum 10 seconds between find_node to same peer
+    
+    // Sleep/Wake memory protection - global message processing limiter
+    this.globalMessageCount = 0;
+    this.globalMessageLimit = 10000; // Maximum messages per session before emergency throttling
+    this.emergencyThrottleActive = false;
+    this.lastSystemTime = Date.now(); // Track for sleep/wake detection
+    this.sleepWakeThreshold = 60000; // If system time jumps >60s, assume sleep/wake
     
     // Proper Kademlia bucket staleness tracking
     this.bucketLastActivity = new Map(); // bucketIndex -> last lookup timestamp
@@ -173,6 +195,47 @@ export class KademliaDHT extends EventEmitter {
     this.setupBootstrapEventHandlers();
   }
 
+  /**
+   * Set up routing table to receive connection manager events
+   */
+  setupRoutingTableEventHandlers() {
+    console.log('🔗 Setting up routing table connection event handlers...');
+    
+    // Set up callback for routing table to notify DHT
+    this.routingTable.onNodeAdded = (eventType, data) => {
+      if (eventType === 'nodeAdded') {
+        console.log(`📋 RoutingTable notified DHT: node ${data.peerId.substring(0, 8)} added`);
+        this.handlePeerConnected(data.peerId);
+      } else if (eventType === 'disconnect') {
+        console.log(`📋 RoutingTable notified DHT: node ${data.peerId.substring(0, 8)} disconnected`);
+        this.handlePeerDisconnected(data.peerId);
+      }
+    };
+    
+    // Set up event handler that will be used for all connection managers
+    this.connectionManagerEventHandler = ({ peerId, connection, manager, initiator }) => {
+      console.log(`🔗 DHT received peerConnected: ${peerId.substring(0, 8)}... (via ${manager?.constructor.name})`);
+
+      // CRITICAL: Update lastSeen timestamp to prevent stale node removal during reconnection
+      const peerNode = this.routingTable.getNode(peerId);
+      if (peerNode) {
+        peerNode.updateLastSeen();
+        console.log(`🕐 Updated lastSeen for reconnected peer ${peerId.substring(0, 8)}...`);
+      }
+
+      // Clean up pending invitations when connection succeeds
+      if (this.pendingInvitations.has(peerId)) {
+        this.pendingInvitations.delete(peerId);
+        console.log(`📝 Removed ${peerId.substring(0, 8)}... from pending invitations (connection established)`);
+      }
+
+      // Delegate to routing table to create and manage the node
+      this.routingTable.handlePeerConnected(peerId, connection, manager);
+    };
+    
+    console.log('✅ Routing table event handlers configured');
+  }
+
 
   /**
    * Setup bootstrap client event handlers
@@ -244,10 +307,22 @@ export class KademliaDHT extends EventEmitter {
     // Include bootstrap client reference for WebRTC signaling
     const transportOptionsWithBootstrap = {
       ...this.transportOptions,
-      bootstrapClient: this.bootstrap
+      bootstrapClient: this.bootstrap,
+      dht: this // Pass DHT reference so connection managers can check signaling mode
     };
     
     ConnectionManagerFactory.initializeTransports(transportOptionsWithBootstrap);
+
+    // Initialize default metadata for this DHT client (not a bridge node)
+    ConnectionManagerFactory.setPeerMetadata(this.localNodeId.toString(), {
+      isBridgeNode: false,
+      nodeType: 'client',
+      capabilities: typeof window !== 'undefined' ? ['webrtc'] : ['websocket'],
+      startTime: Date.now()
+    });
+
+    // Set up routing table to listen to connection manager events
+    this.setupRoutingTableEventHandlers();
 
     // Recreate bootstrap client if it was destroyed
     if (this.bootstrap.isDestroyed) {
@@ -293,6 +368,12 @@ export class KademliaDHT extends EventEmitter {
     } else {
       console.log('🌟 Genesis peer starting with no initial peers - DHT ready for token-based invitations');
       this.isBootstrapped = true; // Genesis peer is considered bootstrapped even without connections
+    }
+
+    // Initialize overlay network after DHT is fully ready
+    if (!this.overlayNetwork) {
+      console.log('🌐 Initializing overlay network for WebRTC signaling...');
+      this.overlayNetwork = new OverlayNetwork(this, this.overlayOptions);
     }
 
     // Start maintenance tasks
@@ -599,6 +680,24 @@ export class KademliaDHT extends EventEmitter {
       return true;
     }
     
+    // Check if invitation is already in progress to prevent duplicates
+    if (this.pendingInvitations.has(clientId)) {
+      console.log(`🔄 Invitation to ${clientId} already in progress, skipping duplicate`);
+      return false;
+    }
+    
+    // Mark invitation as in progress
+    this.pendingInvitations.add(clientId);
+    console.log(`📝 Added ${clientId} to pending invitations`);
+
+    // Set up timeout to clean up pending invitation if connection never succeeds
+    setTimeout(() => {
+      if (this.pendingInvitations.has(clientId)) {
+        this.pendingInvitations.delete(clientId);
+        console.log(`📝 Removed ${clientId} from pending invitations (timeout - connection never established)`);
+      }
+    }, 120000); // 2 minute timeout
+    
     try {
       // Create invitation token for the client
       const invitationToken = await this.createInvitationToken(clientId, 30 * 60 * 1000); // 30 minute expiry
@@ -611,6 +710,11 @@ export class KademliaDHT extends EventEmitter {
       
       if (!invitationResult.success) {
         console.warn(`Bootstrap server rejected invitation for ${clientId}: ${invitationResult.error}`);
+        
+        // Remove from pending invitations
+        this.pendingInvitations.delete(clientId);
+        console.log(`📝 Removed ${clientId} from pending invitations (bootstrap rejected)`);
+        
         return false;
       }
       
@@ -629,15 +733,18 @@ export class KademliaDHT extends EventEmitter {
       this.useBootstrapForSignaling = true;
       
       try {
+        // Declare peerNode outside conditional block for scope access
+        let peerNode = null;
+
         // Create connection to the invited peer using the correct transport
         if (invitationResult.data && invitationResult.data.targetPeerMetadata) {
           const targetMetadata = invitationResult.data.targetPeerMetadata;
           console.log(`🔗 Connecting to invited peer using metadata: ${targetMetadata.nodeType}`);
-          
+
           // Create connection using per-node connection manager
-          const peerNode = this.getOrCreatePeerNode(clientId, targetMetadata);
+          peerNode = this.getOrCreatePeerNode(clientId, targetMetadata);
           console.log(`🔗 Creating connection to invited peer using ${targetMetadata.nodeType || 'browser'} transport`);
-          
+
           // Check if connection already exists (race condition handling)
           if (this.isPeerConnected(clientId)) {
             console.log(`🔄 Connection to ${clientId} already exists, using existing connection`);
@@ -648,20 +755,66 @@ export class KademliaDHT extends EventEmitter {
           console.log(`📤 Invitation sent - waiting for peer to connect (no metadata available)`);
         }
         
-        // Wait a bit for the invitation to be processed and connection to establish
-        setTimeout(() => {
-          // Restore previous signaling mode
-          console.log(`🔄 Restoring signaling mode to: ${wasUsingBootstrapSignaling ? 'bootstrap' : 'DHT'}`);
-          this.useBootstrapForSignaling = wasUsingBootstrapSignaling;
+        // Wait for WebRTC connection to complete before disconnecting
+        // CRITICAL FIX: Don't disconnect until WebRTC connection succeeds or fails
+        const waitForConnection = () => {
+          const checkInterval = setInterval(() => {
+            const isConnected = this.isPeerConnected(clientId);
+            const connectionState = peerNode?.connectionManager?.connectionStates?.get(clientId);
+            
+            if (isConnected && connectionState === 'connected') {
+              console.log(`✅ WebRTC connection established to ${clientId.substring(0, 8)}... - safe to disconnect bootstrap`);
+              clearInterval(checkInterval);
+              
+              // Restore previous signaling mode
+              console.log(`🔄 Restoring signaling mode to: ${wasUsingBootstrapSignaling ? 'bootstrap' : 'DHT'}`);
+              this.useBootstrapForSignaling = wasUsingBootstrapSignaling;
+              
+              // Disconnect from bootstrap after successful connection
+              if (!wasUsingBootstrapSignaling) {
+                console.log(`🔌 Disconnecting from bootstrap after successful WebRTC connection`);
+                setTimeout(() => {
+                  this.bootstrap.disconnect();
+                }, 5000); // Short delay to ensure connection is stable
+              }
+            } else if (connectionState === 'failed' || connectionState === 'disconnected') {
+              console.log(`❌ WebRTC connection failed to ${clientId.substring(0, 8)}... - restoring signaling mode`);
+              clearInterval(checkInterval);
+              
+              // Restore previous signaling mode
+              console.log(`🔄 Restoring signaling mode to: ${wasUsingBootstrapSignaling ? 'bootstrap' : 'DHT'}`);
+              this.useBootstrapForSignaling = wasUsingBootstrapSignaling;
+              
+              // Keep bootstrap connection for potential retry
+              if (!wasUsingBootstrapSignaling) {
+                console.log(`🔌 Keeping bootstrap connection for potential retry after failed WebRTC`);
+                setTimeout(() => {
+                  this.bootstrap.disconnect();
+                }, 30000); // Wait longer before disconnecting after failure
+              }
+            }
+          }, 2000); // Check every 2 seconds
           
-          // Disconnect from bootstrap again after invitation (if we were using DHT signaling)
-          if (!wasUsingBootstrapSignaling) {
-            console.log(`🔌 Disconnecting from bootstrap after invitation sent`);
-            setTimeout(() => {
-              this.bootstrap.disconnect();
-            }, 5000); // Wait 5 seconds for any pending operations
-          }
-        }, 15000); // Wait 15 seconds for connection to fully establish
+          // Fallback timeout to prevent infinite waiting
+          setTimeout(() => {
+            clearInterval(checkInterval);
+            console.log(`⏰ WebRTC connection timeout reached - restoring signaling mode`);
+            
+            // Restore previous signaling mode
+            console.log(`🔄 Restoring signaling mode to: ${wasUsingBootstrapSignaling ? 'bootstrap' : 'DHT'}`);
+            this.useBootstrapForSignaling = wasUsingBootstrapSignaling;
+            
+            // Disconnect from bootstrap after timeout
+            if (!wasUsingBootstrapSignaling) {
+              console.log(`🔌 Disconnecting from bootstrap after WebRTC timeout`);
+              setTimeout(() => {
+                this.bootstrap.disconnect();
+              }, 10000);
+            }
+          }, 60000); // 60 second fallback timeout
+        };
+        
+        waitForConnection();
         
       } catch (error) {
         // Restore signaling mode even if connection failed
@@ -671,10 +824,20 @@ export class KademliaDHT extends EventEmitter {
       }
       
       console.log(`✅ Successfully invited ${clientId} to join DHT with token-based system`);
+
+      // NOTE: Don't remove from pendingInvitations here - cleanup happens when connection succeeds
+      // this.pendingInvitations.delete(clientId);
+      // console.log(`📝 Removed ${clientId} from pending invitations (success)`);
+
       return true;
       
     } catch (error) {
       console.error(`❌ Failed to invite client ${clientId}:`, error);
+      
+      // Remove from pending invitations
+      this.pendingInvitations.delete(clientId);
+      console.log(`📝 Removed ${clientId} from pending invitations (failure)`);
+      
       return false;
     }
   }
@@ -932,7 +1095,7 @@ export class KademliaDHT extends EventEmitter {
         
         // Create peer node with bridge metadata
         const peerNode = this.getOrCreatePeerNode(bridgeNode.nodeId, {
-          nodeType: 'bridge',
+          nodeType: 'nodejs',
           isBridgeNode: true,
           listeningAddress: bridgeNode.metadata.listeningAddress,
           capabilities: bridgeNode.metadata.capabilities,
@@ -1030,6 +1193,9 @@ export class KademliaDHT extends EventEmitter {
       }
       
       if (this.routingTable.getNode(peerId)) {
+        // Node already exists - still consider DHT signaling switch
+        console.log(`📋 Node ${peerId} already in routing table - checking signaling mode`);
+        this.considerDHTSignaling();
         return;
       }
       
@@ -1038,23 +1204,70 @@ export class KademliaDHT extends EventEmitter {
       // Peer metadata will be set when connection manager is created
       
       const addResult = this.routingTable.addNode(node);
-      
+
       if (addResult) {
         console.log(`📋 Added ${peerId} to routing table (${this.routingTable.getAllNodes().length} total)`);
+
+        // CRITICAL FIX: Attach DHT message handlers immediately after adding to routing table
+        // This ensures the peer can respond to DHT queries (find_node, find_value, etc.)
+        // The getOrCreatePeerNode method has guards to prevent duplicate handler attachment
+        try {
+          this.getOrCreatePeerNode(peerId);
+          console.log(`✅ DHT handlers initialized for newly connected peer ${peerId.substring(0, 8)}`);
+        } catch (error) {
+          console.error(`❌ Failed to initialize DHT handlers for ${peerId.substring(0, 8)}:`, error);
+        }
+
         this.considerDHTSignaling();
       } else {
+        // Even if adding failed, still check signaling mode
+        this.considerDHTSignaling();
         return;
       }
-      
+
       // Send ping to establish RTT
       this.sendPing(peerId).catch(error => {
         console.warn(`Failed to ping newly connected peer ${peerId}:`, error);
       });
-      
+
       this.emit('peerConnected', peerId);
     }, 1000); // 1 second delay to ensure connection stability
   }
 
+  /**
+   * Consider switching to DHT-based signaling if we have sufficient peers
+   */
+  considerDHTSignaling() {
+    // Only consider switching if we're currently using bootstrap signaling
+    if (!this.useBootstrapForSignaling) {
+      return; // Already using DHT signaling
+    }
+    
+    const connectedPeers = this.getConnectedPeers().length;
+    const routingTableSize = this.routingTable.getAllNodes().length;
+    
+    // Switch to DHT signaling if we have at least 1 stable connection
+    // This aligns with the documentation expectation: ≥1 DHT connection
+    if (connectedPeers >= 1 && routingTableSize >= 1) {
+      console.log(`🌐 SWITCHING TO DHT SIGNALING: ${connectedPeers} connected peers, ${routingTableSize} routing table entries`);
+      
+      this.useBootstrapForSignaling = false;
+      
+      // Keep bootstrap connection for invitation coordination
+      // Bootstrap will disconnect naturally when no longer needed
+      
+      // Emit event for UI updates
+      this.emit('signalingModeChanged', { 
+        mode: 'dht', 
+        connectedPeers,
+        routingTableSize 
+      });
+      
+      console.log('✅ DHT signaling mode activated - minimal server dependency achieved');
+    } else {
+      console.log(`📡 Staying in bootstrap signaling mode: ${connectedPeers} peers connected, ${routingTableSize} routing entries (need ≥1 for DHT signaling)`);
+    }
+  }
 
   /**
    * Validate that a peer ID represents a valid DHT peer
@@ -1130,7 +1343,39 @@ export class KademliaDHT extends EventEmitter {
    * Handle incoming message from peer
    */
   async handlePeerMessage(peerId, message) {
+    // EMERGENCY: Sleep/Wake memory protection
+    const currentTime = Date.now();
+    const timeDiff = currentTime - this.lastSystemTime;
+    
+    // Detect sleep/wake cycle (system time jump > 60 seconds)
+    if (timeDiff > this.sleepWakeThreshold) {
+      console.warn(`🛌 Sleep/wake detected: ${Math.round(timeDiff/1000)}s gap - resetting message counters`);
+      this.globalMessageCount = 0; // Reset counter after sleep/wake
+      this.emergencyThrottleActive = false; // Reset throttle
+    }
+    this.lastSystemTime = currentTime;
+    
+    // Global message rate limiting to prevent memory exhaustion
+    this.globalMessageCount++;
+    if (this.globalMessageCount > this.globalMessageLimit) {
+      if (!this.emergencyThrottleActive) {
+        console.error(`🚨 EMERGENCY: Message flood detected (${this.globalMessageCount} messages) - activating emergency throttle`);
+        this.emergencyThrottleActive = true;
+      }
+      
+      // Drop messages during emergency throttle (except critical ones)
+      if (message.type !== 'ping' && message.type !== 'pong') {
+        return; // Silently drop non-critical messages
+      }
+    }
+    
     console.log(`Message from ${peerId}:`, message.type);
+
+    // CRITICAL: Update lastSeen timestamp for any message received to prevent stale node removal
+    const peerNode = this.routingTable.getNode(peerId);
+    if (peerNode) {
+      peerNode.updateLastSeen();
+    }
 
     try {
       switch (message.type) {
@@ -1168,13 +1413,19 @@ export class KademliaDHT extends EventEmitter {
           await this.handleICEResponse(peerId, message);
           break;
         case 'webrtc_offer':
-          await this.handleWebRTCOffer(peerId, message);
+          if (this.overlayNetwork) {
+            await this.overlayNetwork.handleWebRTCOffer(peerId, message);
+          }
           break;
         case 'webrtc_answer':
-          await this.handleWebRTCAnswer(peerId, message);
+          if (this.overlayNetwork) {
+            await this.overlayNetwork.handleWebRTCAnswer(peerId, message);
+          }
           break;
         case 'webrtc_ice':
-          await this.handleWebRTCIceCandidate(peerId, message);
+          if (this.overlayNetwork) {
+            await this.overlayNetwork.handleWebRTCIceCandidate(peerId, message);
+          }
           break;
         case 'peer_discovery_request':
           await this.handlePeerDiscoveryRequest(peerId, message);
@@ -1196,92 +1447,7 @@ export class KademliaDHT extends EventEmitter {
     }
   }
 
-  /**
-   * Handle outgoing WebRTC signal
-   */
-  async handleOutgoingSignal(peerId, signal) {
-    // Determine signaling method based on peer status
-    const isDHTMember = this.routingTable.getNode(peerId) !== null;
-    const isInvitationFlow = signal.invitationFlow || false; // Flag for invitation process
-    
-    if (this.useBootstrapForSignaling || isInvitationFlow || !isDHTMember) {
-      // Use bootstrap server for:
-      // 1. New client invitations (invitation flow)
-      // 2. Peers not yet in our routing table (not DHT members)
-      // 3. When we're still using bootstrap for signaling
-      console.log(`🔗 Using bootstrap signaling for ${peerId} (invitation: ${isInvitationFlow}, DHT member: ${isDHTMember})`);
-      await this.bootstrap.forwardSignal(peerId, signal);
-    } else {
-      // Use DHT direct messaging for signaling between existing DHT members
-      console.log(`🌐 Using DHT messaging for ${peerId} (existing DHT member)`);
-      await this.sendDHTSignal(peerId, signal);
-    }
-  }
 
-  /**
-   * Send WebRTC signal via DHT direct messaging (for existing DHT members only)
-   */
-  async sendDHTSignal(peerId, signal) {
-    console.log(`🚀 DHT Signaling: Sending ${signal.type} to ${peerId} via DHT messaging`);
-    
-    try {
-      if (signal.type === 'offer') {
-        await this.sendWebRTCOffer(peerId, signal.sdp);
-      } else if (signal.type === 'answer') {
-        await this.sendWebRTCAnswer(peerId, signal.sdp);
-      } else if (signal.type === 'candidate') {
-        await this.sendWebRTCIceCandidate(peerId, {
-          candidate: signal.candidate,
-          sdpMLineIndex: signal.sdpMLineIndex,
-          sdpMid: signal.sdpMid
-        });
-      } else {
-        console.warn(`Unknown signal type for DHT messaging: ${signal.type}`);
-      }
-    } catch (error) {
-      console.error(`Failed to send DHT signal ${signal.type} to ${peerId}:`, error);
-      
-      // Fallback to bootstrap signaling if DHT messaging fails
-      console.log(`🔄 Falling back to bootstrap signaling for ${peerId}`);
-      await this.bootstrap.forwardSignal(peerId, signal);
-    }
-  }
-
-  /**
-   * Store WebRTC signal in DHT with appropriate key based on signal type
-   */
-  async storeDHTSignal(peerId, signal) {
-    let key;
-    let logMessage;
-    
-    if (signal.type === 'offer') {
-      key = `webrtc_offer:${this.localNodeId.toString()}:${peerId}`;
-      logMessage = `📤 Stored WebRTC offer for ${peerId} in DHT`;
-    } else if (signal.type === 'answer') {
-      key = `webrtc_answer:${this.localNodeId.toString()}:${peerId}`;
-      logMessage = `📤 Stored WebRTC answer for ${peerId} in DHT`;
-    } else if (signal.candidate) {
-      key = `ice_candidate:${this.localNodeId.toString()}:${peerId}:${Date.now()}`;
-      logMessage = `📤 Stored ICE candidate for ${peerId} in DHT`;
-    } else {
-      console.warn(`Unknown signal type for ${peerId}:`, signal);
-      return;
-    }
-
-    const value = {
-      signal,
-      timestamp: Date.now(),
-      from: this.localNodeId.toString(),
-      to: peerId
-    };
-
-    try {
-      await this.store(key, value);
-      console.log(logMessage);
-    } catch (error) {
-      console.error(`Failed to store signal for ${peerId}:`, error);
-    }
-  }
 
   /**
    * Handle incoming signal from bootstrap
@@ -1329,36 +1495,6 @@ export class KademliaDHT extends EventEmitter {
     }
   }
 
-  /**
-   * Consider switching to DHT-based signaling
-   */
-  considerDHTSignaling() {
-    const connectedPeers = this.getConnectedPeers().length;
-    
-    if (connectedPeers >= 1 && !this.useBootstrapForSignaling) {
-      return;
-    }
-    
-    if (connectedPeers >= 1) {
-      console.log('🌐 Switching to DHT-based signaling');
-      this.useBootstrapForSignaling = false;
-      
-      // NOTE: DHT offer polling is obsolete - we now use direct DHT messaging
-      // WebRTC offers are sent via 'webrtc_offer' messages and handled immediately
-      // No need to poll DHT storage for offers anymore
-      
-      setTimeout(() => {
-        this.bootstrap.disconnect();
-      }, 5000);
-    }
-  }
-
-  /**
-   * Force enable/disable bootstrap signaling (for testing)
-   */
-  setBootstrapSignaling(enabled) {
-    this.useBootstrapForSignaling = enabled;
-  }
 
   /**
    * Connect to peer using appropriate transport based on node type
@@ -1981,8 +2117,8 @@ export class KademliaDHT extends EventEmitter {
                   peerNode.setMetadata('endpoint', peerNode.endpoint);
                 }
                 
-                // Note: Discovered nodes are added to routing table but not immediately connected
-                // Background process will handle connection attempts based on k-bucket priority
+                // Queue for immediate connection attempt (non-blocking)
+                this.queuePeerForConnection(peerId);
               }
             }
           }
@@ -2309,6 +2445,12 @@ export class KademliaDHT extends EventEmitter {
    * Check if peer is connected using per-node connection manager
    */
   isPeerConnected(peerId) {
+    // CRITICAL FIX: Add null check to prevent TypeError
+    if (!peerId) {
+      console.warn('⚠️ isPeerConnected called with undefined/null peerId');
+      return false;
+    }
+    
     const peerNode = this.routingTable.getNode(peerId);
     if (peerNode && peerNode.connectionManager) {
       return peerNode.connectionManager.isConnected(peerId);
@@ -2375,7 +2517,7 @@ export class KademliaDHT extends EventEmitter {
       for (const [key, value] of Object.entries(metadata)) {
         peerNode.setMetadata(key, value);
       }
-      this.routingTable.addNode(peerNode);
+      // Don't add to routing table here - wait for actual connection via peerConnected event
     }
     
     // CRITICAL FIX: Always store in peerNodes Map for connection management
@@ -2387,12 +2529,43 @@ export class KademliaDHT extends EventEmitter {
         // Reuse server connection manager for bridge/server nodes
         console.log(`🔗 Reusing server connection manager for peer ${peerId.substring(0, 8)}...`);
         peerNode.connectionManager = this.serverConnectionManager;
+        
+        // CRITICAL: Set up event handler for server connection manager too
+        if (this.connectionManagerEventHandler && !this.serverEventHandlerAttached) {
+          this.serverConnectionManager.on('peerConnected', this.connectionManagerEventHandler);
+          this.serverEventHandlerAttached = true;
+          console.log(`🔗 Event handler attached to server connection manager`);
+        }
       } else {
         // Create new connection manager for client nodes
         peerNode.connectionManager = ConnectionManagerFactory.getManagerForPeer(peerId, peerNode.metadata);
         
         // CRITICAL: Initialize connection manager with local node ID
         peerNode.connectionManager.initialize(this.localNodeId.toString());
+        
+        // CRITICAL: Set up event handler for peerConnected events (only once)
+        if (this.connectionManagerEventHandler && !peerNode.connectionManager._dhtEventHandlersAttached) {
+          peerNode.connectionManager.on('peerConnected', this.connectionManagerEventHandler);
+          console.log(`🔗 Event handler attached to ${peerNode.connectionManager.constructor.name} for ${peerId.substring(0, 8)}`);
+
+          // CRITICAL: Set up event handler for metadata updates (WebRTC handshakes)
+          peerNode.connectionManager.on('metadataUpdated', (event) => {
+            console.log(`📋 Updating routing table metadata for ${event.peerId.substring(0, 8)}`);
+            const node = this.routingTable.getNode(event.peerId);
+            if (node) {
+              // Update the routing table node with the new metadata
+              for (const [key, value] of Object.entries(event.metadata)) {
+                node.setMetadata(key, value);
+                console.log(`📋 Updated routing table: ${key}=${value} for ${event.peerId.substring(0, 8)}`);
+              }
+            }
+          });
+
+          // Mark that event handlers are attached to prevent duplicates
+          peerNode.connectionManager._dhtEventHandlersAttached = true;
+        } else if (peerNode.connectionManager._dhtEventHandlersAttached) {
+          console.log(`🔄 Reusing existing event handlers for ${peerId.substring(0, 8)} (already attached)`);
+        }
       }
       
       // CRITICAL: Set up DHT signaling callback for connection requests (connection-agnostic)
@@ -2406,15 +2579,25 @@ export class KademliaDHT extends EventEmitter {
         });
       }
       
-      // CRITICAL: Set up DHT message event listener for ALL connection managers (reused and new)
-      peerNode.connectionManager.on('dhtMessage', ({ peerId: msgPeerId, message }) => {
-        this.handlePeerMessage(msgPeerId, message);
-      });
+      // CRITICAL: Set up DHT message event listener for ALL connection managers (only if not already attached)
+      if (!peerNode.connectionManager._dhtMessageHandlerAttached) {
+        peerNode.connectionManager.on('dhtMessage', ({ peerId: msgPeerId, message }) => {
+          this.handlePeerMessage(msgPeerId, message);
+        });
+        peerNode.connectionManager._dhtMessageHandlerAttached = true;
+        console.log(`📨 DHT message handler attached for ${peerId.substring(0, 8)}`);
+      }
       
-      // CRITICAL: Set up signal event listener for DHT-based WebRTC signaling
-      peerNode.connectionManager.on('signal', ({ peerId: signalPeerId, signal }) => {
-        this.handleOutgoingSignal(signalPeerId, signal);
-      });
+      // CRITICAL: Set up signal event listener for DHT-based WebRTC signaling (only if not already attached)
+      if (!peerNode.connectionManager._dhtSignalHandlerAttached) {
+        peerNode.connectionManager.on('signal', ({ peerId: signalPeerId, signal }) => {
+          if (this.overlayNetwork) {
+            this.overlayNetwork.handleOutgoingSignal(signalPeerId, signal);
+          }
+        });
+        peerNode.connectionManager._dhtSignalHandlerAttached = true;
+        console.log(`📡 Signal handler attached for ${peerId.substring(0, 8)}`);
+      }
       
       // CRITICAL: Transfer metadata to connection manager
       if (peerNode.metadata && Object.keys(peerNode.metadata).length > 0) {
@@ -2508,8 +2691,8 @@ export class KademliaDHT extends EventEmitter {
     
     // Determine appropriate refresh interval based on connectivity
     let nextInterval;
-    if (connectedPeers < 2 || routingNodes < 3) {
-      // New/isolated node - aggressive discovery
+    if (connectedPeers < 3 || routingNodes < 4) {
+      // New/isolated node - aggressive discovery for mesh formation
       nextInterval = this.options.aggressiveRefreshInterval;
       console.log(`🚀 Aggressive refresh mode: ${nextInterval/1000}s (${connectedPeers} peers, ${routingNodes} routing)`);
     } else if (connectedPeers < 5 || routingNodes < 8) {
@@ -2555,9 +2738,10 @@ export class KademliaDHT extends EventEmitter {
     // Track bucket activity during lookups (this should be called from findNode)
     this.updateBucketActivity();
     
-    // For new/isolated nodes, be more aggressive
-    if (connectedPeers < 2 || routingNodes < 3) {
-      console.log(`🆘 Emergency peer discovery - very few peers`);
+    // For new/isolated nodes, be more aggressive to enable mesh formation
+    // CRITICAL: Nodes with only 1-2 connections need to actively discover more peers
+    if (connectedPeers < 3 && routingNodes < 4) {
+      console.log(`🆘 Emergency peer discovery - insufficient peers for mesh (${connectedPeers} connected, ${routingNodes} routing)`);
       await this.emergencyPeerDiscovery();
       return;
     }
@@ -2657,42 +2841,43 @@ export class KademliaDHT extends EventEmitter {
     if (!this.lastEmergencyDiscovery) {
       this.lastEmergencyDiscovery = 0;
     }
-    
+
     const now = Date.now();
     const timeSinceLastEmergency = now - this.lastEmergencyDiscovery;
-    const emergencyInterval = 5 * 60 * 1000; // 5 minutes between emergency discoveries
-    
+    const emergencyInterval = 10 * 60 * 1000; // 10 minutes between emergency discoveries (increased from 5 minutes)
+
     if (timeSinceLastEmergency < emergencyInterval) {
       console.log(`🚫 Throttling emergency discovery (${Math.round((emergencyInterval - timeSinceLastEmergency) / 1000)}s remaining)`);
       return;
     }
-    
+
     this.lastEmergencyDiscovery = now;
     console.log(`🚨 Emergency peer discovery mode`);
-    
-    // Use direct peer discovery first
+
+    // Use direct peer discovery first (more efficient)
     await this.discoverPeersViaDHT();
-    
-    // Limited targeted searches for emergency only
-    const maxSearches = 3;
-    const targetDistances = [1, 32, 80, 120, 159]; // Spread across key space
+
+    // REDUCED: Only 1 targeted search for emergency to prevent find_node spam
+    const maxSearches = 1;
+    const targetDistances = [80]; // Single search in middle of key space
     const searchPromises = [];
-    
+
     for (let i = 0; i < Math.min(maxSearches, targetDistances.length); i++) {
       const distance = targetDistances[i];
       const randomId = DHTNodeId.generateAtDistance(this.localNodeId, distance);
-      
+
+      // CRITICAL: Don't use emergency bypass to prevent rate limit violations
       searchPromises.push(
-        this.findNode(randomId, { emergencyBypass: true }).catch(error => {
+        this.findNode(randomId, { emergencyBypass: false }).catch(error => {
           console.warn(`Emergency search failed for distance ${distance}:`, error);
         })
       );
     }
-    
+
     if (searchPromises.length > 0) {
       console.log(`🔍 Running ${searchPromises.length} emergency searches...`);
       await Promise.allSettled(searchPromises);
-      
+
       // CRITICAL: After emergency discovery, attempt connections to newly found peers
       await this.connectToRecentlyDiscoveredPeers();
     }
@@ -2966,6 +3151,62 @@ export class KademliaDHT extends EventEmitter {
   }
 
   /**
+   * Queue peer for immediate connection attempt (non-blocking)
+   */
+  queuePeerForConnection(peerId) {
+    this.peerConnectionQueue.add(peerId);
+    console.log(`🚀 Queued peer ${peerId.substring(0, 8)}... for connection (queue: ${this.peerConnectionQueue.size})`);
+    
+    // Process queue asynchronously without blocking
+    this.processConnectionQueue();
+  }
+
+  /**
+   * Process peer connection queue asynchronously
+   */
+  async processConnectionQueue() {
+    // Prevent multiple queue processors running simultaneously
+    if (this.processingConnectionQueue || this.peerConnectionQueue.size === 0) {
+      return;
+    }
+    
+    this.processingConnectionQueue = true;
+    
+    // Use setTimeout to make this truly non-blocking
+    setTimeout(async () => {
+      try {
+        const peers = Array.from(this.peerConnectionQueue);
+        this.peerConnectionQueue.clear();
+        
+        console.log(`🔗 Processing ${peers.length} queued peer connections...`);
+        
+        // Process connections with concurrency limit
+        const maxConcurrent = 3;
+        for (let i = 0; i < peers.length; i += maxConcurrent) {
+          const batch = peers.slice(i, i + maxConcurrent);
+          
+          await Promise.allSettled(
+            batch.map(async (peerId) => {
+              try {
+                if (!this.isPeerConnected(peerId)) {
+                  console.log(`🔗 Connecting to queued peer: ${peerId.substring(0, 8)}...`);
+                  await this.connectToPeerViaDHT(peerId);
+                }
+              } catch (error) {
+                console.warn(`⚠️ Queued connection failed for ${peerId.substring(0, 8)}...: ${error.message}`);
+              }
+            })
+          );
+        }
+      } catch (error) {
+        console.error('Error processing connection queue:', error);
+      } finally {
+        this.processingConnectionQueue = false;
+      }
+    }, 10); // Small delay to avoid blocking find_node processing
+  }
+
+  /**
    * Background process to connect to unconnected nodes in routing table
    * This is called periodically during adaptive refresh
    */
@@ -3096,6 +3337,29 @@ export class KademliaDHT extends EventEmitter {
   }
 
   /**
+   * Reset emergency throttling (for manual recovery)
+   */
+  resetEmergencyThrottle() {
+    console.log('🔄 Manually resetting emergency throttle');
+    this.globalMessageCount = 0;
+    this.emergencyThrottleActive = false;
+    this.lastSystemTime = Date.now();
+  }
+
+  /**
+   * Get sleep/wake protection status
+   */
+  getSleepWakeStatus() {
+    return {
+      globalMessageCount: this.globalMessageCount,
+      globalMessageLimit: this.globalMessageLimit,
+      emergencyThrottleActive: this.emergencyThrottleActive,
+      lastSystemTime: new Date(this.lastSystemTime).toISOString(),
+      uptimeHours: Math.round((Date.now() - this.lastSystemTime) / 3600000 * 100) / 100
+    };
+  }
+
+  /**
    * Clean up tracking maps to prevent memory leaks
    */
   cleanupTrackingMaps() {
@@ -3126,6 +3390,17 @@ export class KademliaDHT extends EventEmitter {
       if (now > backoffUntil) {
         this.peerFailureBackoff.delete(peerId);
         cleaned++;
+      }
+    }
+    
+    // Clean up unsolicited response tracking for disconnected peers (MEMORY LEAK FIX)
+    if (this.unsolicitedResponseCounts) {
+      const connectedPeers = new Set(this.getConnectedPeers());
+      for (const peerId of this.unsolicitedResponseCounts.keys()) {
+        if (!connectedPeers.has(peerId)) {
+          this.unsolicitedResponseCounts.delete(peerId);
+          cleaned++;
+        }
       }
     }
     
@@ -3234,9 +3509,106 @@ export class KademliaDHT extends EventEmitter {
     const request = this.pendingRequests.get(message.requestId);
     if (request) {
       this.pendingRequests.delete(message.requestId);
-      
-      // Pure response handling - peer discovery is now handled by dedicated discoverPeers() method
+
+      // CRITICAL: Process discovered peers and add them to routing table with DHT token validation
+      // This is essential for k-bucket maintenance and mesh formation
+      if (message.nodes && Array.isArray(message.nodes)) {
+        console.log(`📋 Processing ${message.nodes.length} discovered peers from ${peerId.substring(0, 8)}...`);
+
+        for (const nodeInfo of message.nodes) {
+          try {
+            // Validate node info structure
+            if (!nodeInfo.id || !this.isValidDHTPeer(nodeInfo.id)) {
+              console.log(`❌ Skipping invalid peer ID: ${nodeInfo.id}`);
+              continue;
+            }
+
+            // Don't add ourselves to routing table
+            if (nodeInfo.id === this.localNodeId.toString()) {
+              continue;
+            }
+
+            // SECURITY: Validate DHT token to ensure peer belongs in this DHT network
+            if (nodeInfo.metadata && nodeInfo.metadata.membershipToken) {
+              const tokenValidation = await this.validateMembershipToken(nodeInfo.metadata.membershipToken);
+              if (!tokenValidation.valid) {
+                console.warn(`🚨 Rejecting peer ${nodeInfo.id.substring(0, 8)}... - invalid DHT membership token: ${tokenValidation.reason}`);
+                continue;
+              }
+              console.log(`✅ DHT membership token validated for peer ${nodeInfo.id.substring(0, 8)}...`);
+            } else {
+              // Check if this is a bridge node (has bridgeAuthToken or isBridgeNode metadata)
+              const isBridgeNode = nodeInfo.metadata?.isBridgeNode || nodeInfo.metadata?.bridgeAuthToken;
+
+              // LENIENT: If this peer is already connected, trust the connection managers
+              // Connection managers are responsible for validating bridge nodes during connection
+              const isAlreadyConnected = this.getConnectedPeers().includes(nodeInfo.id);
+
+              if (!isBridgeNode && !isAlreadyConnected) {
+                console.warn(`🚨 Rejecting peer ${nodeInfo.id.substring(0, 8)}... - no DHT membership token and not a bridge node`);
+                continue;
+              }
+
+              if (isBridgeNode) {
+                console.log(`🌉 Allowing bridge node ${nodeInfo.id.substring(0, 8)}... without membership token`);
+              } else {
+                console.log(`🌉 Allowing already connected peer ${nodeInfo.id.substring(0, 8)}... (connection manager validated)`);
+              }
+            }
+
+            // Create DHTNode and add to routing table
+            const nodeId = DHTNodeId.fromHex(nodeInfo.id);
+            const existingNode = this.routingTable.getNode(nodeInfo.id);
+
+            if (!existingNode) {
+              const dhtNode = new DHTNode(nodeId, nodeInfo.endpoint);
+              if (nodeInfo.metadata) {
+                dhtNode.metadata = nodeInfo.metadata;
+              }
+
+              // Add to routing table
+              const added = this.routingTable.addNode(dhtNode);
+              if (added) {
+                console.log(`✅ Added validated peer ${nodeInfo.id.substring(0, 8)}... to routing table`);
+              }
+            } else {
+              // Update existing node metadata and refresh timestamp
+              if (nodeInfo.metadata) {
+                existingNode.metadata = { ...existingNode.metadata, ...nodeInfo.metadata };
+              }
+              existingNode.updateLastSeen();
+              console.log(`🔄 Updated existing peer ${nodeInfo.id.substring(0, 8)}... in routing table`);
+            }
+
+          } catch (error) {
+            console.warn(`Failed to process discovered peer ${nodeInfo.id}:`, error);
+          }
+        }
+
+        console.log(`📊 Routing table now has ${this.routingTable.totalNodes} entries after processing find_node_response`);
+      }
+
       request.resolve(message);
+    } else {
+      // EMERGENCY: Rate limit unsolicited response logging to prevent memory crashes
+      if (!this._unsolicitedLogCache) {
+        this._unsolicitedLogCache = new Set();
+      }
+
+      const peerPrefix = peerId.substring(0, 8);
+      const shouldLog = !this._unsolicitedLogCache.has(peerPrefix);
+
+      if (shouldLog) {
+        console.warn(`⚠️ Ignoring unsolicited find_node_response from ${peerPrefix}... (requestId: ${message.requestId})`);
+        this._unsolicitedLogCache.add(peerPrefix);
+
+        // Clear cache periodically to prevent infinite growth
+        if (this._unsolicitedLogCache.size > 50) {
+          this._unsolicitedLogCache.clear();
+        }
+      }
+
+      await this.trackUnsolicitedResponse(peerId);
     }
   }
 
@@ -3248,6 +3620,10 @@ export class KademliaDHT extends EventEmitter {
     if (request) {
       this.pendingRequests.delete(message.requestId);
       request.resolve(message);
+    } else {
+      // MEMORY LEAK FIX: Log and ignore unsolicited responses
+      console.warn(`⚠️ Ignoring unsolicited store_response from ${peerId.substring(0, 8)}... (requestId: ${message.requestId})`);
+      this.trackUnsolicitedResponse(peerId);
     }
   }
 
@@ -3259,6 +3635,10 @@ export class KademliaDHT extends EventEmitter {
     if (request) {
       this.pendingRequests.delete(message.requestId);
       request.resolve(message);
+    } else {
+      // MEMORY LEAK FIX: Log and ignore unsolicited responses
+      console.warn(`⚠️ Ignoring unsolicited find_value_response from ${peerId.substring(0, 8)}... (requestId: ${message.requestId})`);
+      this.trackUnsolicitedResponse(peerId);
     }
   }
 
@@ -3270,6 +3650,76 @@ export class KademliaDHT extends EventEmitter {
     if (request) {
       this.pendingRequests.delete(message.requestId);
       request.resolve(message);
+    } else {
+      // MEMORY LEAK FIX: Log and ignore unsolicited responses
+      console.warn(`⚠️ Ignoring unsolicited ice_response from ${peerId.substring(0, 8)}... (requestId: ${message.requestId})`);
+      await this.trackUnsolicitedResponse(peerId);
+    }
+  }
+
+  /**
+   * Track unsolicited responses and disconnect spamming peers
+   * MEMORY LEAK FIX: Prevents memory exhaustion from spam responses
+   */
+  async trackUnsolicitedResponse(peerId) {
+    // Rate limiting for unsolicited responses to prevent spam
+    if (!this.unsolicitedResponseCounts) {
+      this.unsolicitedResponseCounts = new Map();
+    }
+    
+    const count = (this.unsolicitedResponseCounts.get(peerId) || 0) + 1;
+    this.unsolicitedResponseCounts.set(peerId, count);
+    
+    // BRIDGE NODE PROTECTION: Don't disconnect bridge nodes for legitimate DHT responses
+    // Check both routing table AND peerNodes map (bridge nodes may not be in routing table yet)
+    let peerNode = this.routingTable.getNode(peerId);
+    if (!peerNode && this.peerNodes) {
+      peerNode = this.peerNodes.get(peerId);
+    }
+    const isBridgeNode = peerNode && peerNode.metadata && peerNode.metadata.isBridgeNode;
+
+    // Debug bridge node detection
+    if (count > 50) {
+      console.log(`🔍 Spam check for ${peerId.substring(0, 8)}...: count=${count}, isBridgeNode=${isBridgeNode}, hasMetadata=${!!peerNode?.metadata}, metadata:`, peerNode?.metadata);
+    }
+
+    if (isBridgeNode) {
+      // Bridge nodes can send many legitimate responses during emergency discovery
+      // Use higher threshold and log more details
+      if (count > 200) { // Much higher threshold for bridge nodes
+        console.warn(`🌉 Bridge node ${peerId.substring(0, 8)}... sending many responses (${count}) - this may be normal during network startup`);
+        // Reset counter but don't disconnect bridge nodes
+        this.unsolicitedResponseCounts.set(peerId, 0);
+      }
+      return; // Never disconnect bridge nodes
+    }
+    
+    // EMERGENCY DISCOVERY PROTECTION: Be more lenient during network formation and emergency periods
+    const now = Date.now();
+    const recentEmergencyDiscovery = this.lastEmergencyDiscovery && (now - this.lastEmergencyDiscovery) < 300000; // 5 minutes (extended)
+    const isSmallNetwork = this.getConnectedPeers().length < 8; // Extended threshold for small networks
+    const isNetworkFormation = (now - this.startTime) < 600000; // First 10 minutes of network formation
+
+    let threshold = 50; // Default threshold
+    if (recentEmergencyDiscovery || isSmallNetwork || isNetworkFormation) {
+      threshold = 200; // Quadruple threshold during emergency periods
+      if (count === 51) { // Log once when reaching normal threshold
+        console.log(`⚠️ Using relaxed spam threshold (${threshold}) for ${peerId.substring(0, 8)}... during emergency/formation period (${this.getConnectedPeers().length} peers)`);
+      }
+    }
+    
+    // Disconnect regular peers sending excessive unsolicited responses
+    if (count > threshold) {
+      console.error(`🚫 Disconnecting ${peerId.substring(0, 8)}... for sending ${count} unsolicited responses (potential spam/attack, threshold: ${threshold})`);
+      
+      // Remove from routing table and disconnect
+      this.routingTable.removeNode(peerId);
+      if (peerNode && peerNode.connectionManager) {
+        await peerNode.connectionManager.disconnect(peerId);
+      }
+      
+      // Clean up tracking
+      this.unsolicitedResponseCounts.delete(peerId);
     }
   }
 
@@ -3817,7 +4267,25 @@ export class KademliaDHT extends EventEmitter {
             target: this.localNodeId.toString(), // Ask for nodes close to us
             timestamp: Date.now()
           };
-          
+
+          // CRITICAL FIX: Register request in pendingRequests to prevent "unsolicited" response detection
+          // Using timeout of 30 seconds for discovery requests
+          const timeoutHandle = setTimeout(() => {
+            this.pendingRequests.delete(findNodeRequest.requestId);
+            console.log(`⏰ Discovery request timeout for peer ${connectedPeer.substring(0, 8)}...`);
+          }, 30000);
+
+          this.pendingRequests.set(findNodeRequest.requestId, {
+            resolve: () => {
+              clearTimeout(timeoutHandle);
+              // Response will be handled by handleFindNodeResponse()
+            },
+            reject: () => {
+              clearTimeout(timeoutHandle);
+              // Errors will be handled by handleFindNodeResponse()
+            }
+          });
+
           await this.sendMessage(connectedPeer, findNodeRequest);
         } catch (error) {
           console.warn(`Failed to request nodes from ${connectedPeer}:`, error);

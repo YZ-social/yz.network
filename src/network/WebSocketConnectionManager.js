@@ -176,12 +176,16 @@ export class WebSocketConnectionManager extends ConnectionManager {
           const peerId = message.peerId;
           console.log(`✅ DHT peer connected: ${peerId.substring(0, 8)}...`);
           
-          // Send confirmation
+          // Get this node's metadata (especially isBridgeNode flag)
+          const myMetadata = this.getPeerMetadata(this.localNodeId);
+          
+          // Send confirmation with bridge metadata
           ws.send(JSON.stringify({
             type: 'dht_peer_connected',
             bridgeNodeId: this.localNodeId,
             success: true,
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            metadata: myMetadata  // Include bridge node metadata
           }));
 
           // Set up the connection

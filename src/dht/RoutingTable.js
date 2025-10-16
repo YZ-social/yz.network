@@ -15,6 +15,11 @@ export class RoutingTable {
     // Event handling for connection managers
     this.onNodeAdded = null; // Callback to notify DHT when nodes are added via connections
     this.eventHandlersSetup = false;
+    
+    // EMERGENCY: Circuit breaker to completely disable debug logging after threshold
+    this._debugLoggingDisabled = false;
+    this._debugLogCount = 0;
+    this._maxDebugLogs = 50; // After 50 debug logs, disable completely
   }
 
   /**
@@ -42,6 +47,13 @@ export class RoutingTable {
     }
 
     const bucketIndex = this.getBucketIndex(node.id);
+
+    // SAFETY CHECK: Ensure buckets array and target bucket exist
+    if (!this.buckets || bucketIndex >= this.buckets.length || !this.buckets[bucketIndex]) {
+      console.error(`❌ RoutingTable.addNode: Invalid bucket access - buckets=${!!this.buckets}, bucketIndex=${bucketIndex}, bucketsLength=${this.buckets?.length}`);
+      return false;
+    }
+
     const bucket = this.buckets[bucketIndex];
 
     // Try to add to existing bucket
@@ -79,6 +91,13 @@ export class RoutingTable {
   removeNode(nodeId) {
     const id = nodeId instanceof DHTNodeId ? nodeId : DHTNodeId.fromHex(nodeId);
     const bucketIndex = this.getBucketIndex(id);
+
+    // SAFETY CHECK: Ensure buckets array and target bucket exist
+    if (!this.buckets || bucketIndex >= this.buckets.length || !this.buckets[bucketIndex]) {
+      console.error(`❌ RoutingTable.removeNode: Invalid bucket access - buckets=${!!this.buckets}, bucketIndex=${bucketIndex}, bucketsLength=${this.buckets?.length}`);
+      return false;
+    }
+
     const bucket = this.buckets[bucketIndex];
 
     if (bucket.removeNode(id)) {
@@ -92,22 +111,58 @@ export class RoutingTable {
    * Get a node by ID
    */
   getNode(nodeId) {
+    // CRITICAL FIX: Add null check to prevent TypeError
+    if (!nodeId) {
+      console.warn('⚠️ RoutingTable.getNode called with undefined/null nodeId');
+      return null;
+    }
+
+    // CRITICAL FIX: Nodes should never look up themselves in routing table
+    // This prevents the negative bucket index issue
+    const nodeIdStr = nodeId instanceof DHTNodeId ? nodeId.toString() : nodeId;
+    if (nodeIdStr === this.localNodeId.toString()) {
+      console.warn(`⚠️ Attempted to look up local node ID ${nodeIdStr.substring(0, 8)}... in routing table - returning null`);
+      return null;
+    }
+
     // CRITICAL FIX: Use fromHex() for existing node IDs, not fromString() which hashes them!
     const id = nodeId instanceof DHTNodeId ? nodeId : DHTNodeId.fromHex(nodeId);
     const bucketIndex = this.getBucketIndex(id);
-    
+
+    // SAFETY CHECK: Ensure buckets array and target bucket exist
+    if (!this.buckets || bucketIndex >= this.buckets.length || !this.buckets[bucketIndex]) {
+      console.error(`❌ RoutingTable.getNode: Invalid bucket access - buckets=${!!this.buckets}, bucketIndex=${bucketIndex}, bucketsLength=${this.buckets?.length}, targetBucket=${!!this.buckets?.[bucketIndex]}`);
+      return null;
+    }
+
     // Try normal bucket lookup first
     let foundNode = this.buckets[bucketIndex].getNode(id);
+
+    // EMERGENCY: Circuit breaker to prevent memory crashes from debug logging
+    // Reuse nodeIdStr from above to avoid duplicate declaration
+    const nodePrefix = nodeIdStr.substring(0, 8);
     
-    // DEBUG: Always log for bridge node lookups to see what's happening
-    const nodeIdStr = id.toString();
-    if (nodeIdStr.includes('8b7f7fb8') || foundNode === undefined || foundNode === null) {
-      console.log(`🔧 ROUTING TABLE DEBUG - getNode for ${nodeIdStr.substring(0, 8)}:`);
-      console.log(`  bucketIndex: ${bucketIndex} of ${this.buckets.length}`);
-      console.log(`  bucket.getNode result: ${foundNode}`);
-      console.log(`  foundNode === null: ${foundNode === null}`);
-      console.log(`  foundNode === undefined: ${foundNode === undefined}`);
-      console.log(`  !foundNode: ${!foundNode}`);
+    if (!this._debugLoggingDisabled && this._debugLogCount < this._maxDebugLogs) {
+      if (!this._debugLogged) {
+        this._debugLogged = new Set();
+      }
+      
+      // Only log once per unique node prefix AND only for specific debug cases
+      const shouldDebugLog = !this._debugLogged.has(nodePrefix) && 
+                            (nodeIdStr.includes('8b7f7fb8') || nodeIdStr.includes('88bcbfa2'));
+      
+      if (shouldDebugLog) {
+        console.log(`🔧 ROUTING TABLE DEBUG - getNode for ${nodePrefix}: bucket=${bucketIndex}, found=${!!foundNode}`);
+        
+        this._debugLogged.add(nodePrefix);
+        this._debugLogCount++;
+        
+        // Circuit breaker: disable all debug logging after threshold
+        if (this._debugLogCount >= this._maxDebugLogs) {
+          this._debugLoggingDisabled = true;
+          console.warn(`🚨 EMERGENCY: Routing table debug logging DISABLED after ${this._maxDebugLogs} logs to prevent memory crash`);
+        }
+      }
     }
     
     // CRITICAL FIX: If not found in expected bucket, search all buckets
@@ -115,29 +170,32 @@ export class RoutingTable {
     if (!foundNode) {
       const nodeIdStr = id.toString();
       
-      console.warn(`🔍 Starting fallback search for node ${nodeIdStr.substring(0, 8)} - not found in bucket ${bucketIndex}`);
+      // EMERGENCY: Disable most fallback search logging to prevent memory crashes
+      if (!this._fallbackSearchLogged) {
+        this._fallbackSearchLogged = new Set();
+      }
       
-      // First, try string comparison across ALL buckets (including the original bucket)
+      const nodePrefix = nodeIdStr.substring(0, 8);
+      const shouldLog = !this._fallbackSearchLogged.has(nodePrefix) && this._fallbackSearchLogged.size < 5;
+      
+      if (shouldLog) {
+        console.warn(`🔍 Fallback search for ${nodePrefix} (bucket ${bucketIndex})`);
+        this._fallbackSearchLogged.add(nodePrefix);
+      }
+      
+      // Silent fallback search across ALL buckets
       for (let i = 0; i < this.buckets.length; i++) {
         const bucket = this.buckets[i];
         const nodes = bucket.getNodes();
         
-        console.log(`🔍 Fallback: Searching bucket ${i} with ${nodes.length} nodes`);
-        
         for (const node of nodes) {
           const nodeStr = node.id.toString();
-          console.log(`🔍 Fallback: Comparing "${nodeStr.substring(0, 8)}..." vs "${nodeIdStr.substring(0, 8)}..."`);
-          console.log(`🔍 String lengths: ${nodeStr.length} vs ${nodeIdStr.length}`);
-          console.log(`🔍 String equality: ${nodeStr === nodeIdStr}`);
-          console.log(`🔍 equals() method: ${node.id.equals(id)}`);
           
           // Try both string comparison and equals() method
-          if (nodeStr === nodeIdStr) {
-            console.warn(`🔍 FOUND node ${nodeIdStr.substring(0, 8)} using STRING comparison!`);
-            foundNode = node;
-            break;
-          } else if (node.id.equals(id)) {
-            console.warn(`🔍 FOUND node ${nodeIdStr.substring(0, 8)} using EQUALS() method!`);
+          if (nodeStr === nodeIdStr || node.id.equals(id)) {
+            if (shouldLog) {
+              console.warn(`🔍 FOUND ${nodePrefix} in bucket ${i}`);
+            }
             foundNode = node;
             break;
           }
@@ -146,8 +204,8 @@ export class RoutingTable {
         if (foundNode) break;
       }
       
-      if (!foundNode) {
-        console.error(`🚨 Fallback search FAILED for node ${nodeIdStr.substring(0, 8)} - not found in any bucket`);
+      if (!foundNode && shouldLog) {
+        console.error(`🚨 ${nodePrefix} not found in any bucket`);
       }
     }
     
@@ -254,12 +312,25 @@ export class RoutingTable {
    * Get the appropriate bucket index for a node ID
    */
   getBucketIndex(nodeId) {
+    // CRITICAL FIX: Prevent looking up our own node ID (distance = 0, leadingZeros = 160)
+    // Nodes should never store themselves in their own routing table
+    if (nodeId instanceof DHTNodeId ? nodeId.equals(this.localNodeId) : nodeId === this.localNodeId.toString()) {
+      console.warn(`⚠️ Attempted to get bucket index for local node ID ${this.localNodeId.toString().substring(0, 8)}... - this should not happen`);
+      return 0; // Return bucket 0 as fallback to prevent negative index
+    }
+
     const distance = this.localNodeId.xorDistance(nodeId);
     const leadingZeros = distance.leadingZeroBits();
-    
+
     // Map to bucket index (160 - leadingZeros - 1)
     let bucketIndex = 159 - leadingZeros;
-    
+
+    // SAFETY: Ensure bucket index is non-negative and within bounds
+    if (bucketIndex < 0) {
+      console.warn(`⚠️ Negative bucket index calculated: ${bucketIndex} (leadingZeros: ${leadingZeros}) - using bucket 0`);
+      bucketIndex = 0;
+    }
+
     // Ensure we don't exceed available buckets
     return Math.min(bucketIndex, this.buckets.length - 1);
   }

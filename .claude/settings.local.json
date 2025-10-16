@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npm run bootstrap:genesis:*)"
+      "Bash(npm run bootstrap:genesis:*)",
+      "Bash(npm run:*)"
     ],
     "deny": []
   }
