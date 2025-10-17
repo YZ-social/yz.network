@@ -81,7 +81,9 @@ export class PassiveBridgeNode extends DHTClient {
       on: () => {},
       emit: () => {},
       requestPeersOrGenesis: async () => ({ isGenesis: false, peers: [], message: 'Bridge node' }),
-      announceIndependent: async () => Promise.resolve()
+      announceIndependent: async () => Promise.resolve(),
+      disableAutoReconnect: () => {}, // Mock method - bridge nodes don't use bootstrap auto-reconnect
+      enableAutoReconnect: () => {}   // Mock method - bridge nodes don't use bootstrap auto-reconnect
     };
   }
 

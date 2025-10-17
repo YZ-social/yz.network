@@ -169,9 +169,16 @@ export class KademliaDHT extends EventEmitter {
       console.error('🚨 SECURITY: Cannot overwrite existing membership token');
       return false;
     }
-    
+
     this._membershipToken = token;
-    console.log('🎫 Membership token set');
+
+    // CRITICAL FIX: Store membership token in connection manager metadata
+    // so it's included in WebRTC handshakes and find_node responses
+    ConnectionManagerFactory.setPeerMetadata(this.localNodeId.toString(), {
+      membershipToken: token
+    });
+
+    console.log('🎫 Membership token set and added to connection manager metadata');
     return true;
   }
 
@@ -774,6 +781,7 @@ export class KademliaDHT extends EventEmitter {
               if (!wasUsingBootstrapSignaling) {
                 console.log(`🔌 Disconnecting from bootstrap after successful WebRTC connection`);
                 setTimeout(() => {
+                  this.bootstrap.disableAutoReconnect();
                   this.bootstrap.disconnect();
                 }, 5000); // Short delay to ensure connection is stable
               }
@@ -789,6 +797,7 @@ export class KademliaDHT extends EventEmitter {
               if (!wasUsingBootstrapSignaling) {
                 console.log(`🔌 Keeping bootstrap connection for potential retry after failed WebRTC`);
                 setTimeout(() => {
+                  this.bootstrap.disableAutoReconnect();
                   this.bootstrap.disconnect();
                 }, 30000); // Wait longer before disconnecting after failure
               }
@@ -808,6 +817,7 @@ export class KademliaDHT extends EventEmitter {
             if (!wasUsingBootstrapSignaling) {
               console.log(`🔌 Disconnecting from bootstrap after WebRTC timeout`);
               setTimeout(() => {
+                this.bootstrap.disableAutoReconnect();
                 this.bootstrap.disconnect();
               }, 10000);
             }
@@ -852,13 +862,17 @@ export class KademliaDHT extends EventEmitter {
     }
 
     console.log(`🔄 Temporarily reconnecting to bootstrap for invitation`);
+
+    // Temporarily enable auto-reconnect for invitation coordination
+    this.bootstrap.enableAutoReconnect();
+
     try {
       await this.bootstrap.connect(this.localNodeId.toString(), {
         publicKey: this.keyPair?.publicKey,
         isNative: this.keyPair?.isNative,
         ...this.bootstrapMetadata
       });
-      
+
       // CRITICAL FIX: Wait for registration to complete before sending invitation
       console.log(`⏳ Waiting for registration confirmation from bootstrap server...`);
       await new Promise((resolve, reject) => {
@@ -866,20 +880,22 @@ export class KademliaDHT extends EventEmitter {
           this.bootstrap.removeListener('registered', onRegistered);
           reject(new Error('Registration timeout - bootstrap server did not confirm registration'));
         }, 5000); // 5 second timeout for registration
-        
+
         const onRegistered = (message) => {
           console.log(`✅ Registration confirmed by bootstrap server`);
           clearTimeout(timeout);
           this.bootstrap.removeListener('registered', onRegistered);
           resolve();
         };
-        
+
         this.bootstrap.once('registered', onRegistered);
       });
-      
+
       console.log(`✅ Temporarily reconnected to bootstrap for invitation with registration confirmed`);
     } catch (error) {
       console.error(`❌ Failed to reconnect to bootstrap for invitation:`, error);
+      // Disable auto-reconnect again on error
+      this.bootstrap.disableAutoReconnect();
       throw error;
     }
   }
@@ -1242,20 +1258,23 @@ export class KademliaDHT extends EventEmitter {
     if (!this.useBootstrapForSignaling) {
       return; // Already using DHT signaling
     }
-    
+
     const connectedPeers = this.getConnectedPeers().length;
     const routingTableSize = this.routingTable.getAllNodes().length;
-    
+
     // Switch to DHT signaling if we have at least 1 stable connection
     // This aligns with the documentation expectation: ≥1 DHT connection
     if (connectedPeers >= 1 && routingTableSize >= 1) {
       console.log(`🌐 SWITCHING TO DHT SIGNALING: ${connectedPeers} connected peers, ${routingTableSize} routing table entries`);
-      
+
       this.useBootstrapForSignaling = false;
-      
-      // Keep bootstrap connection for invitation coordination
-      // Bootstrap will disconnect naturally when no longer needed
-      
+
+      // Disable bootstrap auto-reconnect to prevent reconnection every ~6 minutes
+      // It will be re-enabled temporarily when sending invitations
+      if (this.bootstrap) {
+        this.bootstrap.disableAutoReconnect();
+      }
+
       // Emit event for UI updates
       this.emit('signalingModeChanged', { 
         mode: 'dht', 
@@ -1309,11 +1328,37 @@ export class KademliaDHT extends EventEmitter {
    */
   handlePeerDisconnected(peerId) {
     console.log(`Peer disconnected: ${peerId}`);
-    
+
     // Remove from routing table
     this.routingTable.removeNode(peerId);
-    
+
     this.emit('peerDisconnected', peerId);
+
+    // CRITICAL: If we've lost all connections, re-enable bootstrap auto-reconnect
+    // This allows reconnection after sleep/wake or network issues
+    const connectedPeers = this.getConnectedPeers().length;
+    const routingTableSize = this.routingTable.getAllNodes().length;
+
+    if (connectedPeers === 0 && routingTableSize === 0) {
+      console.log('⚠️ Lost all connections - re-enabling bootstrap auto-reconnect for recovery');
+      if (this.bootstrap) {
+        this.bootstrap.enableAutoReconnect();
+
+        // If not already connected to bootstrap, reconnect now to facilitate recovery
+        if (!this.bootstrap.isBootstrapConnected()) {
+          console.log('🔄 Reconnecting to bootstrap for network recovery...');
+          this.bootstrap.connect(this.localNodeId.toString(), {
+            publicKey: this.keyPair?.publicKey,
+            isNative: this.keyPair?.isNative,
+            ...this.bootstrapMetadata
+          }).catch(error => {
+            console.error('❌ Failed to reconnect to bootstrap for recovery:', error);
+          });
+        }
+      }
+      // Switch back to bootstrap signaling mode
+      this.useBootstrapForSignaling = true;
+    }
   }
 
   /**

@@ -7,7 +7,7 @@ import { EventEmitter } from 'events';
 export class BootstrapClient extends EventEmitter {
   constructor(options = {}) {
     super();
-    
+
     this.options = {
       bootstrapServers: options.bootstrapServers || ['ws://localhost:8080'],
       reconnectInterval: options.reconnectInterval || 5000,
@@ -25,6 +25,7 @@ export class BootstrapClient extends EventEmitter {
     this.pendingRequests = new Map(); // requestId -> { resolve, reject, timeout }
     this.isDestroyed = false;
     this.deliberateDisconnect = false; // Track if disconnect was intentional
+    this.autoReconnectEnabled = true; // NEW: Control auto-reconnect behavior
   }
 
   /**
@@ -94,16 +95,21 @@ export class BootstrapClient extends EventEmitter {
           this.isConnected = false;
           this.isRegistered = false; // Reset registration state on disconnect
           console.log(`Bootstrap connection closed: ${event.code} ${event.reason}`);
-          
+
           if (!this.isDestroyed) {
             this.emit('disconnected', { code: event.code, reason: event.reason });
-            
-            // Only auto-reconnect if this wasn't a deliberate disconnect
-            if (!this.deliberateDisconnect) {
+
+            // Only auto-reconnect if enabled and this wasn't a deliberate disconnect
+            if (!this.deliberateDisconnect && this.autoReconnectEnabled) {
               this.scheduleReconnect();
             } else {
-              console.log('Deliberate disconnect - not auto-reconnecting');
-              this.deliberateDisconnect = false; // Reset flag
+              if (this.deliberateDisconnect) {
+                console.log('Deliberate disconnect - not auto-reconnecting');
+                this.deliberateDisconnect = false; // Reset flag
+              }
+              if (!this.autoReconnectEnabled) {
+                console.log('Auto-reconnect disabled - staying disconnected');
+              }
             }
           }
         };
@@ -490,6 +496,22 @@ export class BootstrapClient extends EventEmitter {
       pendingRequests: this.pendingRequests.size,
       destroyed: this.isDestroyed
     };
+  }
+
+  /**
+   * Disable automatic reconnection (used when switching to DHT signaling)
+   */
+  disableAutoReconnect() {
+    console.log('🔒 Bootstrap auto-reconnect disabled');
+    this.autoReconnectEnabled = false;
+  }
+
+  /**
+   * Enable automatic reconnection (used when explicitly needing bootstrap)
+   */
+  enableAutoReconnect() {
+    console.log('🔓 Bootstrap auto-reconnect enabled');
+    this.autoReconnectEnabled = true;
   }
 
   /**
