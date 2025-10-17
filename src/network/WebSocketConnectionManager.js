@@ -1,6 +1,10 @@
 import { ConnectionManager } from './ConnectionManager.js';
 
 // WebSocket will be determined at runtime
+// This belts-and-suspenders test shouldn't need the first part (checking window),
+// but it leaving it out fails some browser tests (connection, storage, routing, discovery, & reconnect).
+// As written here it works. I do not know why. Maybe webpack isn't configured correctly?
+const isNodeJS = typeof window === 'undefined' && typeof process !== 'undefined';
 
 /**
  * WebSocket-based connection manager for Node.js peers
@@ -16,7 +20,6 @@ export class WebSocketConnectionManager extends ConnectionManager {
     this.webSocketInitialized = false;
     
     // Determine if we should enable server based on environment
-    const isNodeJS = typeof window === 'undefined';
     
     this.wsOptions = {
       port: options.port || 8083,
@@ -45,7 +48,6 @@ export class WebSocketConnectionManager extends ConnectionManager {
    * Initialize WebSocket classes based on environment
    */
   async initializeWebSocketClasses() {
-    const isNodeJS = typeof window === 'undefined';
     console.log(`🔍 Initializing WebSocket classes for ${isNodeJS ? 'Node.js' : 'browser'} environment`);
     
     if (isNodeJS) {
@@ -252,7 +254,7 @@ export class WebSocketConnectionManager extends ConnectionManager {
     // Get WebSocket address from peer metadata
     const metadata = this.getPeerMetadata(peerId);
     const wsAddress = metadata?.listeningAddress;
-    const localNodeType = typeof window !== 'undefined' ? 'browser' : 'nodejs';
+    const localNodeType = isNodeJS ? 'nodejs' : 'browser';
     const targetNodeType = metadata?.nodeType || 'browser';
     
     console.log(`🔗 WebSocket connection: ${localNodeType} → ${targetNodeType}`);
@@ -438,7 +440,6 @@ export class WebSocketConnectionManager extends ConnectionManager {
     console.log(`📋 WebSocket connection setup complete for ${peerId.substring(0, 8)}...`);
 
     // Handle messages using correct API for environment
-    const isNodeJS = typeof window === 'undefined';
     
     if (isNodeJS) {
       // Node.js WebSocket (ws library) - uses .on() event listeners

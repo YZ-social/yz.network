@@ -277,7 +277,7 @@ export class InvitationToken {
     const randomBytes = new Uint8Array(16);
     
     // Use crypto.getRandomValues in browsers, crypto.randomFillSync in Node.js
-    if (typeof window !== 'undefined' && window.crypto && window.crypto.getRandomValues) {
+    if (typeof process === 'undefined' && window.crypto && window.crypto.getRandomValues) {
       // Browser environment
       window.crypto.getRandomValues(randomBytes);
     } else if (typeof global !== 'undefined' && global.crypto && global.crypto.getRandomValues) {

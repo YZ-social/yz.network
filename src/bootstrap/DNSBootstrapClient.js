@@ -227,7 +227,7 @@ export class DNSBootstrapClient extends BootstrapClient {
    * Perform SRV record lookup (browser-compatible)
    */
   async _performSRVLookup(srvName) {
-    if (typeof window !== 'undefined') {
+    if (typeof process === 'undefined') {
       // Browser environment - use DNS-over-HTTPS
       return this._browserSRVLookup(srvName);
     } else {
@@ -284,7 +284,7 @@ export class DNSBootstrapClient extends BootstrapClient {
    * Perform TXT record lookup
    */
   async _performTXTLookup(txtName) {
-    if (typeof window !== 'undefined') {
+    if (typeof process === 'undefined') {
       return this._browserTXTLookup(txtName);
     } else {
       return this._nodeTXTLookup(txtName);
@@ -332,7 +332,7 @@ export class DNSBootstrapClient extends BootstrapClient {
    * Perform A record lookup
    */
   async _performALookup(hostname) {
-    if (typeof window !== 'undefined') {
+    if (typeof process === 'undefined') {
       return this._browserALookup(hostname);
     } else {
       return this._nodeALookup(hostname);

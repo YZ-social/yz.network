@@ -21,7 +21,7 @@ export class ConnectionManagerFactory {
     }
     
     // Check for browser globals
-    if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+    if (typeof process === 'undefined' && typeof document !== 'undefined') {
       return 'browser';
     }
     
