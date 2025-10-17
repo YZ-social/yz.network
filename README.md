@@ -19,6 +19,9 @@ A browser-based Distributed Hash Table (DHT) implementation using the Kademlia a
 # Install dependencies
 npm install
 
+# Start Bridge nodes server
+npm run bridge-nodes
+
 # Start bootstrap server
  npm run bridge-bootstrap:genesis
 
