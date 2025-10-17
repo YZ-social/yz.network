@@ -19,14 +19,27 @@ A browser-based Distributed Hash Table (DHT) implementation using the Kademlia a
 # Install dependencies
 npm install
 
-# Start bootstrap server
-npm run bootstrap:genesis
+# Start bridge nodes
+npm run bridge-nodes
 
-# Start development server
+# In a different terminal, start bootstrap server
+npm run bridge-bootstrap:genesis
+
+# In a third terminal, start development server
 npm run dev
+
 ```
 
 Open your browser to the development server URL. The first client becomes the genesis peer automatically.
+1. Press the `START DHT` button.
+2. Open another browser to the same url.
+3. In the new browser, press the `START DHT` button, and grab the Node ID at the top of the screen.
+4. In the first browser, paste that Node ID into the box next to the `INIVITE` button, and then press the button.
+5. Repeat 2-4 as desired.
+6. Run the Debug Tests one at a time. (Not `RUN ALL TESTS`)
+7. Enter a key and value next to the `STORE` button and press the button.
+8. Enter the same key next to the `GET` button and press the button. Scroll down to the Activity Log and see that the value was retrieved.
+9. Now you can repeat step 4 in the second browser, and it will display the right info in the Activity Log below.
 
 ## Network Setup
 
