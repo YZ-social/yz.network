@@ -20,7 +20,7 @@ A browser-based Distributed Hash Table (DHT) implementation using the Kademlia a
 npm install
 
 # Start bootstrap server
-npm run bootstrap:genesis
+ npm run bridge-bootstrap:genesis
 
 # Start development server
 npm run dev
