@@ -586,9 +586,32 @@ export class WebRTCConnectionManager extends ConnectionManager {
         console.log(`📤 Created answer for ${peerId.substring(0, 8)}...`);
         console.log(`🔍 Answer peer connection state after setLocalDescription: connection=${pc.connectionState}, ice=${pc.iceConnectionState}, iceGathering=${pc.iceGatheringState}, signaling=${pc.signalingState}`);
 
-        // CRITICAL: Check if ICE gathering is starting
+        // CRITICAL: Wait for ICE gathering to start before sending answer
+        // This prevents the race condition where answer is sent before ICE candidates
         if (pc.iceGatheringState === 'new') {
-          console.warn(`⚠️ WARNING: ICE gathering state is still 'new' after setLocalDescription for ${peerId.substring(0, 8)}... - this may indicate a WebRTC configuration issue`);
+          console.warn(`⚠️ WARNING: ICE gathering state is still 'new' after setLocalDescription for ${peerId.substring(0, 8)}... - waiting for it to start`);
+
+          // Wait for ICE gathering to start (with timeout)
+          await new Promise((resolve) => {
+            const timeout = setTimeout(() => {
+              console.warn(`⏰ Timeout waiting for ICE gathering to start for ${peerId.substring(0, 8)}...`);
+              resolve();
+            }, 1000); // 1 second timeout
+
+            const checkGathering = () => {
+              if (pc.iceGatheringState !== 'new') {
+                clearTimeout(timeout);
+                console.log(`✅ ICE gathering started for ${peerId.substring(0, 8)}... (state: ${pc.iceGatheringState})`);
+                resolve();
+              }
+            };
+
+            // Check immediately
+            checkGathering();
+
+            // Listen for gathering state change
+            pc.addEventListener('icegatheringstatechange', checkGathering, { once: true });
+          });
         } else if (pc.iceGatheringState === 'gathering') {
           console.log(`✅ ICE gathering is active for ${peerId.substring(0, 8)}...`);
         } else if (pc.iceGatheringState === 'complete') {

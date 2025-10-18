@@ -15,24 +15,38 @@ export class ConnectionManagerFactory {
    * @returns {string} Node type ('nodejs', 'browser', 'webworker', etc.)
    */
   static detectNodeType() {
-    // Check for Node.js specific globals
-    if (typeof process !== 'undefined' && process.versions && process.versions.node) {
-      return 'nodejs';
-    }
-    
-    // Check for browser globals
-    if (typeof process === 'undefined' && typeof document !== 'undefined') {
-      return 'browser';
-    }
-    
-    // Check for Web Workers
+    // PRIORITY 1: Check for Web Workers first (most specific)
     if (typeof self !== 'undefined' && typeof importScripts === 'function') {
       return 'webworker';
     }
-    
+
+    // PRIORITY 2: Belt-and-suspenders Node.js detection
+    // Check both window absence AND process presence to avoid bundler polyfill issues
+    // This approach proven to work in WebSocketConnectionManager despite bundler quirks
+    if (typeof window === 'undefined' && typeof process !== 'undefined') {
+      // Additional verification: check for Node.js-specific process properties
+      if (process.versions && process.versions.node) {
+        return 'nodejs';
+      }
+      // Even without versions.node, if we have no window but have process, likely Node.js
+      return 'nodejs';
+    }
+
+    // PRIORITY 3: Browser detection (if not Node.js from above)
+    // Use process absence as primary check (more reliable per Howard's findings)
+    if (typeof process === 'undefined' && typeof document !== 'undefined') {
+      return 'browser';
+    }
+
     // Future: Add other environment detection (Deno, Bun, etc.)
-    
-    // Fallback - assume Node.js if uncertain
+
+    // Fallback - if we have document but unclear environment, assume browser
+    if (typeof document !== 'undefined') {
+      return 'browser';
+    }
+
+    // Last resort - assume Node.js
+    console.warn('⚠️ Unable to confidently detect environment, defaulting to nodejs');
     return 'nodejs';
   }
 

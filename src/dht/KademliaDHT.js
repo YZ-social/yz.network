@@ -3590,13 +3590,17 @@ export class KademliaDHT extends EventEmitter {
               const isAlreadyConnected = this.getConnectedPeers().includes(nodeInfo.id);
 
               if (!isBridgeNode && !isAlreadyConnected) {
-                console.warn(`🚨 Rejecting peer ${nodeInfo.id.substring(0, 8)}... - no DHT membership token and not a bridge node`);
-                continue;
+                // LENIENT: Allow peers discovered from trusted connected peers
+                // Membership tokens will be validated during WebRTC handshake
+                // This prevents chicken-and-egg problem where peers can't discover each other
+                // because they haven't exchanged tokens yet
+                console.log(`⚠️ Peer ${nodeInfo.id.substring(0, 8)}... discovered without membership token - will validate during handshake`);
+                // Don't reject - allow connection attempt
               }
 
               if (isBridgeNode) {
                 console.log(`🌉 Allowing bridge node ${nodeInfo.id.substring(0, 8)}... without membership token`);
-              } else {
+              } else if (isAlreadyConnected) {
                 console.log(`🌉 Allowing already connected peer ${nodeInfo.id.substring(0, 8)}... (connection manager validated)`);
               }
             }
