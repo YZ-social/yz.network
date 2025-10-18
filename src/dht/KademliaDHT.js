@@ -324,7 +324,7 @@ export class KademliaDHT extends EventEmitter {
     ConnectionManagerFactory.setPeerMetadata(this.localNodeId.toString(), {
       isBridgeNode: false,
       nodeType: 'client',
-      capabilities: typeof window !== 'undefined' ? ['webrtc'] : ['websocket'],
+      capabilities: typeof process === 'undefined' ? ['webrtc'] : ['websocket'],
       startTime: Date.now()
     });
 
@@ -4082,7 +4082,7 @@ export class KademliaDHT extends EventEmitter {
     if (message.nodeType === 'nodejs' && message.listeningAddress) {
       // Another Node.js client is asking us to connect to their WebSocket server
       try {
-        if (typeof window !== 'undefined') {
+        if (typeof process === 'undefined') {
           // Use connection-agnostic approach to connect to peer
           console.log(`🔗 Connecting to peer server: ${message.listeningAddress}`);
           const peerNode = this.getOrCreatePeerNode(message.senderPeer, {
@@ -4115,10 +4115,10 @@ export class KademliaDHT extends EventEmitter {
         await this.sendWebSocketConnectionResponse(message.senderPeer, {
           success: false,
           error: error.message,
-          nodeType: typeof window !== 'undefined' ? 'browser' : 'nodejs'
+          nodeType: typeof process === 'undefined' ? 'browser' : 'nodejs'
         });
       }
-    } else if (message.nodeType === 'browser' && typeof window === 'undefined') {
+    } else if (message.nodeType === 'browser' && typeof process !== 'undefined') {
       // Browser is asking Node.js to connect - this doesn't make sense since browsers can't run servers
       console.log(`ℹ️ Browser client asking Node.js to connect - not applicable (browsers can't run WebSocket servers)`);
       await this.sendWebSocketConnectionResponse(message.senderPeer, {
@@ -4128,7 +4128,7 @@ export class KademliaDHT extends EventEmitter {
       });
     } else {
       console.log(`ℹ️ WebSocket connection request not applicable for this configuration`);
-      console.log(`   Our type: ${typeof window !== 'undefined' ? 'browser' : 'nodejs'}, Request from: ${message.nodeType}`);
+      console.log(`   Our type: ${typeof process === 'undefined' ? 'browser' : 'nodejs'}, Request from: ${message.nodeType}`);
     }
   }
 

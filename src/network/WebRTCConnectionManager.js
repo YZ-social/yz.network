@@ -430,7 +430,7 @@ export class WebRTCConnectionManager extends ConnectionManager {
       // Determine if we should use bootstrap signaling (browser-to-browser)
       const peerMetadata = this.getPeerMetadata?.(peerId) || {};
       const isTargetBrowser = peerMetadata.nodeType === 'browser' || !peerMetadata.nodeType; // default to browser
-      const isLocalBrowser = typeof window !== 'undefined'; // we're in browser if window exists
+      const isLocalBrowser = typeof process === 'undefined'; // we're in browser if window exists
       const isBridgeNode = peerMetadata.isBridgeNode === true;
       
       // SIMPLIFIED LOGIC: Always use DHT signaling (event emission)

@@ -14,7 +14,7 @@ export class DHTNodeId {
       this.bytes = new Uint8Array(20);
       
       // Use browser's native crypto API for random values
-      if (typeof window !== 'undefined' && window.crypto && window.crypto.getRandomValues) {
+      if (typeof process === 'undefined' && window.crypto && window.crypto.getRandomValues) {
         window.crypto.getRandomValues(this.bytes);
       } else if (typeof globalThis !== 'undefined' && globalThis.crypto && globalThis.crypto.getRandomValues) {
         globalThis.crypto.getRandomValues(this.bytes);
