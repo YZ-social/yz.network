@@ -110,7 +110,7 @@ export class ConnectionManagerFactory {
     } else {
       // All other combinations use WebSocket
       console.log(`🌐 Creating WebSocketConnectionManager for ${localNodeType}→${targetNodeType}`);
-      return new WebSocketConnectionManager(options);
+      return new WebSocketConnectionManager({enableServer: false, ...options});
     }
   }
 
