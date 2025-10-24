@@ -3,7 +3,6 @@
 console.log('🔄 Loading bridge nodes script...');
 
 import { PassiveBridgeNode } from './PassiveBridgeNode.js';
-import { WebSocketManager } from '../network/WebSocketManager.js';
 
 console.log('✅ Imports loaded successfully');
 
@@ -98,22 +97,14 @@ class BridgeNodesManager {
     console.log(`   DHT Connection: ${nodeConfig.host}:${nodeConfig.dhtPort}`);
     
     try {
-      // Create WebSocket connection manager for DHT connections
-      const connectionManager = new WebSocketManager({
-        port: nodeConfig.dhtPort,
-        host: nodeConfig.host,
-        maxConnections: nodeConfig.maxConnections,
-        enableWebRTC: false // Bridge nodes use WebSocket only for now
-      });
-      
+      // PassiveBridgeNode creates its own connection manager via factory
       const bridge = new PassiveBridgeNode({
         bridgePort: nodeConfig.port,
         bridgeHost: nodeConfig.host,
         bridgeAuth: this.config.bridgeAuth,
         maxConnections: nodeConfig.maxConnections,
         dhtOptions: {
-          bootstrapServers: this.config.bootstrapServers,
-          webrtc: connectionManager
+          bootstrapServers: this.config.bootstrapServers
         },
         connectionOptions: {
           maxConnections: nodeConfig.maxConnections

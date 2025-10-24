@@ -269,6 +269,10 @@ export class KademliaDHT extends EventEmitter {
       this.handleWebRTCExpectOffer(message);
     });
 
+    this.bootstrap.on('websocketPeerMetadata', (message) => {
+      this.handleWebSocketPeerMetadata(message);
+    });
+
     this.bootstrap.on('bridgeInvitationRequest', (requestMessage) => {
       this.handleBridgeInvitationRequest(requestMessage);
     });
@@ -1092,6 +1096,48 @@ export class KademliaDHT extends EventEmitter {
     }
   }
 
+  /**
+   * Handle WebSocket peer metadata from bootstrap server
+   * Used for Node.js ↔ Node.js connections where metadata exchange is needed
+   */
+  async handleWebSocketPeerMetadata(message) {
+    const { targetPeer, targetPeerMetadata, fromPeer, fromPeerMetadata, invitationId } = message;
+
+    // This node is the inviter - connect to invitee using WebSocket
+    if (targetPeer && targetPeerMetadata) {
+      console.log(`🌐 Received WebSocket metadata for ${targetPeer.substring(0, 8)}... - initiating connection`);
+      console.log(`   Listening address: ${targetPeerMetadata.listeningAddress}`);
+      console.log(`   Node type: ${targetPeerMetadata.nodeType}`);
+
+      try {
+        // Create peer node with the received metadata
+        const peerNode = this.getOrCreatePeerNode(targetPeer, targetPeerMetadata);
+
+        // Initiate WebSocket connection using Perfect Negotiation
+        if (peerNode && peerNode.connectionManager) {
+          console.log(`🔗 Creating WebSocket connection to ${targetPeer.substring(0, 8)}...`);
+          await peerNode.connectionManager.createConnection(targetPeer, true); // true = initiator
+          console.log(`✅ WebSocket connection initiated to ${targetPeer.substring(0, 8)}...`);
+        } else {
+          console.error(`❌ No connection manager available for ${targetPeer.substring(0, 8)}...`);
+        }
+
+      } catch (error) {
+        console.error(`❌ Failed to connect to ${targetPeer}:`, error);
+      }
+    }
+
+    // This node is the invitee - store inviter metadata for reference
+    if (fromPeer && fromPeerMetadata) {
+      console.log(`📋 Received inviter metadata from ${fromPeer.substring(0, 8)}...`);
+      console.log(`   Listening address: ${fromPeerMetadata.listeningAddress}`);
+      console.log(`   Node type: ${fromPeerMetadata.nodeType}`);
+
+      // Store metadata (connection will be initiated by the inviter)
+      const peerNode = this.getOrCreatePeerNode(fromPeer, fromPeerMetadata);
+      console.log(`⏳ Waiting for WebSocket connection from ${fromPeer.substring(0, 8)}...`);
+    }
+  }
 
   /**
    * CRITICAL: Handle bridge nodes received from bootstrap response
@@ -1483,6 +1529,12 @@ export class KademliaDHT extends EventEmitter {
           break;
         case 'connection_response':
           await this.handleConnectionResponse(peerId, message);
+          break;
+        case 'forward_invitation':
+          await this.handleForwardInvitation(peerId, message);
+          break;
+        case 'create_invitation_for_peer':
+          await this.handleCreateInvitationForPeer(peerId, message);
           break;
         default:
           console.warn(`Unknown message type from ${peerId}: ${message.type}`);
@@ -2882,22 +2934,78 @@ export class KademliaDHT extends EventEmitter {
    * Emergency discovery for new/isolated nodes
    */
   async emergencyPeerDiscovery() {
+    const connectedPeers = this.getConnectedPeers().length;
+    const routingNodes = this.routingTable.getAllNodes().length;
+
+    // CRITICAL: If we have ZERO connections, attempt bootstrap reconnection immediately
+    // This handles sleep/wake scenarios where all connections were lost
+    if (connectedPeers === 0 && routingNodes === 0) {
+      console.log('🆘 ZERO connections detected - attempting bootstrap reconnection');
+
+      if (this.bootstrap) {
+        // Re-enable bootstrap auto-reconnect for recovery
+        this.bootstrap.enableAutoReconnect();
+
+        // Reconnect to bootstrap if not already connected
+        if (!this.bootstrap.isBootstrapConnected()) {
+          console.log('🔄 Reconnecting to bootstrap server for network recovery...');
+          try {
+            await this.bootstrap.connect(this.localNodeId.toString(), {
+              publicKey: this.keyPair?.publicKey,
+              isNative: this.keyPair?.isNative,
+              membershipToken: this._membershipToken, // Include membership token for reconnection
+              ...this.bootstrapMetadata
+            });
+            console.log('✅ Bootstrap reconnection successful - waiting for peer discovery');
+
+            // Give bootstrap time to coordinate reconnection
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
+            // After bootstrap reconnection, request peers
+            if (this._membershipToken) {
+              console.log('🔍 Requesting peer list from bootstrap with membership token');
+              // Bootstrap should now help us reconnect to the DHT network
+            }
+          } catch (error) {
+            console.error('❌ Failed to reconnect to bootstrap:', error);
+          }
+        } else {
+          console.log('✅ Already connected to bootstrap - requesting peer coordination');
+        }
+      } else {
+        console.warn('⚠️ No bootstrap client available for reconnection');
+      }
+
+      // Don't throttle when we have zero connections - we need to recover ASAP
+      // Skip the normal throttling logic and continue with discovery
+    }
+
     // Throttle emergency discovery to prevent excessive find_node requests
+    // BUT: Allow more frequent attempts when we have very few connections
     if (!this.lastEmergencyDiscovery) {
       this.lastEmergencyDiscovery = 0;
     }
 
     const now = Date.now();
     const timeSinceLastEmergency = now - this.lastEmergencyDiscovery;
-    const emergencyInterval = 10 * 60 * 1000; // 10 minutes between emergency discoveries (increased from 5 minutes)
 
-    if (timeSinceLastEmergency < emergencyInterval) {
+    // Adaptive throttling: shorter interval for fewer peers
+    let emergencyInterval;
+    if (connectedPeers === 0) {
+      emergencyInterval = 30 * 1000; // 30 seconds when completely disconnected
+    } else if (connectedPeers < 2) {
+      emergencyInterval = 2 * 60 * 1000; // 2 minutes with 1 peer
+    } else {
+      emergencyInterval = 10 * 60 * 1000; // 10 minutes with 2+ peers
+    }
+
+    if (timeSinceLastEmergency < emergencyInterval && connectedPeers > 0) {
       console.log(`🚫 Throttling emergency discovery (${Math.round((emergencyInterval - timeSinceLastEmergency) / 1000)}s remaining)`);
       return;
     }
 
     this.lastEmergencyDiscovery = now;
-    console.log(`🚨 Emergency peer discovery mode`);
+    console.log(`🚨 Emergency peer discovery mode (${connectedPeers} connected, ${routingNodes} routing)`);
 
     // Use direct peer discovery first (more efficient)
     await this.discoverPeersViaDHT();
@@ -3256,20 +3364,33 @@ export class KademliaDHT extends EventEmitter {
    * This is called periodically during adaptive refresh
    */
   async connectToUnconnectedRoutingNodes() {
-    // Throttle: Only run this once every 2 minutes to prevent excessive connection attempts
+    // Adaptive throttling based on network size
     if (!this.lastBackgroundConnectionAttempt) {
       this.lastBackgroundConnectionAttempt = 0;
     }
-    
+
     const now = Date.now();
     const timeSinceLastAttempt = now - this.lastBackgroundConnectionAttempt;
-    const minInterval = 2 * 60 * 1000; // 2 minutes
-    
+
+    // Adaptive interval: smaller networks = faster connection attempts
+    // Small networks (<10 peers): 10 seconds - fast mesh formation
+    // Medium networks (10-50 peers): 30 seconds - balanced
+    // Large networks (>50 peers): 2 minutes - conservative to avoid overhead
+    const routingTableSize = this.routingTable.getAllNodes().length;
+    let minInterval;
+    if (routingTableSize < 10) {
+      minInterval = 10 * 1000; // 10 seconds for small networks
+    } else if (routingTableSize < 50) {
+      minInterval = 30 * 1000; // 30 seconds for medium networks
+    } else {
+      minInterval = 2 * 60 * 1000; // 2 minutes for large networks
+    }
+
     if (timeSinceLastAttempt < minInterval) {
-      console.log(`🚫 Throttling background connection attempts (${Math.round((minInterval - timeSinceLastAttempt) / 1000)}s remaining)`);
+      console.log(`🚫 Throttling background connection attempts (${Math.round((minInterval - timeSinceLastAttempt) / 1000)}s remaining, network size: ${routingTableSize})`);
       return;
     }
-    
+
     this.lastBackgroundConnectionAttempt = now;
 
     const allNodes = this.routingTable.getAllNodes();
@@ -3909,7 +4030,7 @@ export class KademliaDHT extends EventEmitter {
    */
   async routeWebRTCMessage(targetPeer, message) {
     console.log(`🚀 Routing WebRTC message to ${targetPeer}: ${message.type}`);
-    
+
     try {
       // Try to send directly if we have a connection to the target
       if (this.isPeerConnected(targetPeer)) {
@@ -3920,24 +4041,35 @@ export class KademliaDHT extends EventEmitter {
 
       // Find best next hop using DHT routing - convert hex string to DHTNodeId properly
       const targetNodeId = DHTNodeId.fromString(targetPeer);
-      const closestNodes = this.routingTable.findClosestNodes(targetNodeId, this.options.alpha);
-      
-      if (closestNodes.length === 0) {
-        console.warn(`No route found to forward WebRTC message to ${targetPeer}`);
-        return;
-      }
 
-      // Send to the closest connected peer
+      // First try: Use closest nodes (optimal routing)
+      const closestNodes = this.routingTable.findClosestNodes(targetNodeId, this.options.alpha);
+
       for (const node of closestNodes) {
         const nextHop = node.id.toString();
         if (this.isPeerConnected(nextHop)) {
           await this.sendMessage(nextHop, message);
-          console.log(`✅ Routed WebRTC message via ${nextHop} to ${targetPeer}`);
+          console.log(`✅ Routed WebRTC message via ${nextHop} (closest) to ${targetPeer}`);
           return;
         }
       }
 
-      console.warn(`No connected route found to forward WebRTC message to ${targetPeer}`);
+      // Second try (small network fallback): Try ALL routing table nodes
+      // In small networks, any connected peer might be able to reach the target
+      console.log(`🔍 No route via closest nodes - trying all routing table entries (small network mode)`);
+      const allNodes = this.routingTable.getAllNodes();
+
+      for (const node of allNodes) {
+        const nextHop = node.id.toString();
+        if (this.isPeerConnected(nextHop) && nextHop !== targetPeer) {
+          await this.sendMessage(nextHop, message);
+          console.log(`✅ Routed WebRTC message via ${nextHop} (fallback) to ${targetPeer}`);
+          return;
+        }
+      }
+
+      console.warn(`❌ No connected route found to forward WebRTC message to ${targetPeer}`);
+      console.warn(`   Routing table size: ${allNodes.length}, Connected peers: ${this.getConnectedPeers().length}`);
     } catch (error) {
       console.error(`Failed to route WebRTC message to ${targetPeer}:`, error);
     }
@@ -4173,6 +4305,111 @@ export class KademliaDHT extends EventEmitter {
       console.log(`   Capabilities: ${message.capabilities?.join(', ') || 'unknown'}`);
     } else {
       console.error(`❌ WebSocket connection failed with ${fromPeer}: ${message.error}`);
+    }
+  }
+
+  /**
+   * Handle forwarded invitation from bridge node
+   * This method allows a DHT peer to act as a helper for onboarding new peers
+   * Connection-agnostic implementation reuses existing invitation system
+   */
+  async handleForwardInvitation(peerId, message) {
+    const { targetPeerId, invitationToken, fromBridge } = message;
+
+    console.log(`📨 Received forwarded invitation from ${fromBridge ? 'bridge' : peerId.substring(0,8)}`);
+    console.log(`   Target: ${targetPeerId.substring(0, 8)}`);
+    console.log(`   Inviter: ${invitationToken.inviter.substring(0, 8)} (bridge node)`);
+
+    try {
+      // Ensure we're connected to bootstrap (temporary reconnect if needed)
+      // This reuses the existing invitation coordination infrastructure
+      await this.ensureBootstrapConnectionForInvitation();
+
+      // Send invitation using EXISTING method (connection-agnostic!)
+      // bootstrap.sendInvitation() handles all connection types through ConnectionManager
+      const result = await this.bootstrap.sendInvitation(
+        targetPeerId,
+        invitationToken,
+        30000  // 30 second timeout
+      );
+
+      if (result.success) {
+        console.log(`✅ Successfully forwarded invitation to ${targetPeerId.substring(0, 8)}`);
+        console.log(`   New peer will coordinate connection through bootstrap server`);
+        console.log(`   Using existing invitation system (connection-agnostic)`);
+      } else {
+        console.warn(`❌ Failed to forward invitation: ${result.error}`);
+        console.warn(`   This may be due to target peer being offline or bootstrap coordination issues`);
+      }
+
+    } catch (error) {
+      console.error(`❌ Error forwarding invitation:`, error);
+      console.error(`   Target peer: ${targetPeerId.substring(0, 8)}`);
+      console.error(`   This peer will retry bootstrap connection temporarily`);
+    }
+  }
+
+  /**
+   * Handle request from bridge to create invitation for new peer
+   * Bridge delegates invitation creation to this full DHT member
+   */
+  async handleCreateInvitationForPeer(peerId, message) {
+    const { targetPeer, targetNodeId, targetNodeMetadata, fromBridge, requestId } = message;
+
+    // Check if this message is intended for us to process
+    // If targetPeer is specified and it's not us, this is just a routed message - don't process
+    if (targetPeer && targetPeer !== this.localNodeId.toString()) {
+      console.log(`📨 Forwarding create_invitation_for_peer (intended for ${targetPeer.substring(0,8)}, not us)`);
+      return; // Let DHT routing handle forwarding
+    }
+
+    console.log(`📨 Received create_invitation_for_peer from bridge ${fromBridge.substring(0,8)}`);
+    console.log(`   Target new peer: ${targetNodeId.substring(0, 8)}`);
+    console.log(`   Request ID: ${requestId}`);
+    console.log(`   This node will process the invitation creation`);
+
+    try {
+      // Track this peer as pending invitation to ensure bootstrap signaling is used
+      if (!this.pendingInvitations) {
+        this.pendingInvitations = new Set();
+      }
+      this.pendingInvitations.add(targetNodeId);
+      console.log(`📋 Added ${targetNodeId.substring(0, 8)} to pending invitations for bootstrap signaling`);
+
+      // Create invitation token for the target node
+      // Note: The invitation token will have THIS node as inviter, but that's for crypto signature
+      // The actual "responsible party" is the bridge node (fromBridge)
+      const expiryMs = 30 * 60 * 1000; // 30 minutes
+      const invitationToken = await this.createInvitationToken(targetNodeId, expiryMs);
+
+      console.log(`✅ Created invitation token for ${targetNodeId.substring(0, 8)}`);
+      console.log(`   Token inviter (crypto): ${invitationToken.inviter.substring(0, 8)} (this node)`);
+      console.log(`   Responsible bridge: ${fromBridge.substring(0, 8)}`);
+
+      // Ensure we're connected to bootstrap (temporary reconnect if needed)
+      await this.ensureBootstrapConnectionForInvitation();
+
+      // Send invitation using EXISTING method (connection-agnostic!)
+      // bootstrap.sendInvitation() handles all connection types through ConnectionManager
+      const result = await this.bootstrap.sendInvitation(
+        targetNodeId,
+        invitationToken,
+        30000  // 30 second timeout
+      );
+
+      if (result.success) {
+        console.log(`✅ Successfully sent invitation to ${targetNodeId.substring(0, 8)}`);
+        console.log(`   New peer will coordinate connection through bootstrap server`);
+        console.log(`   Using existing invitation system (connection-agnostic)`);
+      } else {
+        console.warn(`❌ Failed to send invitation: ${result.error}`);
+        console.warn(`   This may be due to target peer being offline or bootstrap coordination issues`);
+      }
+
+    } catch (error) {
+      console.error(`❌ Error creating/sending invitation:`, error);
+      console.error(`   Target peer: ${targetNodeId.substring(0, 8)}`);
+      console.error(`   Request ID: ${requestId}`);
     }
   }
 

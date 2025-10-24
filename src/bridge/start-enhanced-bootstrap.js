@@ -18,6 +18,7 @@ const DEFAULT_CONFIG = {
   host: process.env.BOOTSTRAP_HOST || '0.0.0.0',
   maxPeers: parseInt(process.env.MAX_PEERS) || 1000,
   createNewDHT: process.argv.includes('-createNewDHT') || process.argv.includes('--create-new-dht'),
+  openNetwork: process.argv.includes('-openNetwork') || process.argv.includes('--open-network'),
   bridgeAuth: process.env.BRIDGE_AUTH || 'default-bridge-auth-key',
   bridgeNodes: [
     'localhost:8083',  // Primary bridge node
@@ -42,6 +43,7 @@ class EnhancedBootstrapManager {
     console.log(`🌐 Public Address: ${this.config.host}:${this.config.port}`);
     console.log(`🌉 Bridge Nodes: ${this.config.bridgeNodes.join(', ')}`);
     console.log(`🆕 Create New DHT: ${this.config.createNewDHT ? 'YES (Genesis Mode)' : 'NO (Standard Mode)'}`);
+    console.log(`🔓 Open Network: ${this.config.openNetwork ? 'YES (No invitations required)' : 'NO (Invitations required)'}`);
     console.log(`👥 Max Peers: ${this.config.maxPeers}`);
     
     if (this.config.bridgeAuth === 'default-bridge-auth-key') {
@@ -70,11 +72,24 @@ class EnhancedBootstrapManager {
         console.log('🌟 GENESIS MODE: First connecting peer will become genesis');
         console.log('   - Genesis peer automatically connects to bridge node');
         console.log('   - Genesis status removed, peer gets DHT membership');
-        console.log('   - Genesis peer can then invite others to join');
+        if (this.config.openNetwork) {
+          console.log('   - Open network: All new peers auto-connect to bridge');
+          console.log('   - No invitations required - open access for all');
+        } else {
+          console.log('   - Genesis peer can invite others to join');
+          console.log('   - Invitation tokens required for new peers');
+        }
       } else {
-        console.log('🔄 STANDARD MODE: All peers need invitation tokens');
-        console.log('   - Disconnected peers can reconnect with membership tokens');
-        console.log('   - New peers need invitations from existing DHT members');
+        if (this.config.openNetwork) {
+          console.log('🔓 OPEN NETWORK MODE: No invitations required');
+          console.log('   - All new peers auto-connect to bridge nodes');
+          console.log('   - Bridge nodes auto-generate membership tokens');
+          console.log('   - Full DHT participation without invitation step');
+        } else {
+          console.log('🔄 STANDARD MODE: All peers need invitation tokens');
+          console.log('   - Disconnected peers can reconnect with membership tokens');
+          console.log('   - New peers need invitations from existing DHT members');
+        }
       }
       
       console.log('====================================');
@@ -170,6 +185,7 @@ Usage:
 
 Options:
   -createNewDHT, --create-new-dht    Enable genesis peer mode (create new DHT)
+  -openNetwork, --open-network       Enable open network mode (no invitations required)
   --help                             Show this help message
 
 Environment Variables:
@@ -183,14 +199,20 @@ Startup Order:
   2. Second: npm run bridge-bootstrap # Start public bootstrap server
   
 Examples:
-  # Create new DHT network (genesis mode)
+  # Create new DHT network (genesis mode, invitation required)
   node start-enhanced-bootstrap.js -createNewDHT
-  
-  # Connect to existing DHT network  
+
+  # Create new open DHT network (genesis mode, no invitations)
+  node start-enhanced-bootstrap.js -createNewDHT -openNetwork
+
+  # Connect to existing DHT network (invitation required)
   node start-enhanced-bootstrap.js
-  
+
+  # Connect to existing open DHT network (no invitations)
+  node start-enhanced-bootstrap.js -openNetwork
+
   # Custom configuration
-  BOOTSTRAP_PORT=9000 BRIDGE_AUTH=secret node start-enhanced-bootstrap.js
+  BOOTSTRAP_PORT=9000 BRIDGE_AUTH=secret node start-enhanced-bootstrap.js -openNetwork
 `);
 }
 

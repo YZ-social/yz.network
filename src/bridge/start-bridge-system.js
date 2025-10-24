@@ -2,7 +2,6 @@
 
 import { PassiveBridgeNode } from './PassiveBridgeNode.js';
 import { EnhancedBootstrapServer } from './EnhancedBootstrapServer.js';
-import { WebSocketManager } from '../network/WebSocketManager.js';
 
 /**
  * Bridge System Startup Script
@@ -20,7 +19,8 @@ const DEFAULT_CONFIG = {
     port: parseInt(process.env.BOOTSTRAP_PORT) || 8080,
     host: process.env.BOOTSTRAP_HOST || '0.0.0.0',
     maxPeers: parseInt(process.env.MAX_PEERS) || 1000,
-    createNewDHT: process.argv.includes('-createNewDHT') || process.argv.includes('--create-new-dht')
+    createNewDHT: process.argv.includes('-createNewDHT') || process.argv.includes('--create-new-dht'),
+    openNetwork: process.argv.includes('-openNetwork') || process.argv.includes('--open-network')
   },
   
   // Bridge node configuration
@@ -73,6 +73,7 @@ class BridgeSystemManager {
       console.log(`🔗 Public Bootstrap: ${this.config.bootstrap.host}:${this.config.bootstrap.port}`);
       console.log(`🌉 Bridge Nodes: ${this.bridges.length} running`);
       console.log(`🆕 Create New DHT: ${this.config.bootstrap.createNewDHT ? 'ENABLED' : 'DISABLED'}`);
+      console.log(`🔓 Open Network: ${this.config.bootstrap.openNetwork ? 'ENABLED (no invitations)' : 'DISABLED (invitations required)'}`);
       console.log('=====================================');
       
       // Setup graceful shutdown
@@ -93,22 +94,15 @@ class BridgeSystemManager {
       
       try {
         console.log(`🌉 Starting bridge node ${i + 1} on port ${bridgeConfig.port}...`);
-        
-        // Create WebSocket connection manager for the bridge
-        const connectionManager = new WebSocketManager({
-          port: bridgeConfig.port + 1000, // Use different port for DHT connections
-          maxConnections: bridgeConfig.maxConnections,
-          enableWebRTC: false // Bridge nodes use WebSocket only for now
-        });
-        
+
+        // PassiveBridgeNode creates its own connection manager via factory
         const bridge = new PassiveBridgeNode({
           bridgePort: bridgeConfig.port,
           bridgeHost: bridgeConfig.host,
           bridgeAuth: this.config.bridgeAuth,
           maxConnections: bridgeConfig.maxConnections,
           dhtOptions: {
-            bootstrapServers: bridgeConfig.bootstrapServers,
-            webrtc: connectionManager
+            bootstrapServers: bridgeConfig.bootstrapServers
           },
           connectionOptions: {
             maxConnections: bridgeConfig.maxConnections
@@ -229,6 +223,7 @@ Usage:
 
 Options:
   -createNewDHT, --create-new-dht    Enable genesis peer creation mode
+  -openNetwork, --open-network       Enable open network mode (no invitations required)
   --help                             Show this help message
 
 Environment Variables:
@@ -240,14 +235,17 @@ Environment Variables:
   BRIDGE_AUTH=your-key             Bridge authentication key
 
 Examples:
-  # Start regular bootstrap server
+  # Start regular bootstrap server (invitations required)
   node start-bridge-system.js
-  
-  # Start with genesis mode (first network setup)  
+
+  # Start with genesis mode (first network setup)
   node start-bridge-system.js -createNewDHT
-  
+
+  # Start with open network mode (no invitations required)
+  node start-bridge-system.js -createNewDHT -openNetwork
+
   # Custom configuration
-  BOOTSTRAP_PORT=9000 BRIDGE_PORT_1=9083 node start-bridge-system.js
+  BOOTSTRAP_PORT=9000 BRIDGE_PORT_1=9083 node start-bridge-system.js -openNetwork
 `);
 }
 

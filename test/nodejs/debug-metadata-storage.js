@@ -30,26 +30,26 @@ async function debugMetadataStorage() {
     // Wait for discovery and check if metadata was stored
     await new Promise(resolve => setTimeout(resolve, 3000));
 
-    console.log('\n📝 Step 3: Check if metadata was stored in WebSocketManager');
-    
+    console.log('\n📝 Step 3: Check if metadata was stored in ConnectionManager');
+
     // Check client1's knowledge of client2
-    if (client1.websocketManager && client1.websocketManager.peerMetadata) {
+    if (client1.connectionManager && client1.connectionManager.peerMetadata) {
       console.log('Client 1 peer metadata storage:');
-      for (const [peerId, metadata] of client1.websocketManager.peerMetadata.entries()) {
+      for (const [peerId, metadata] of client1.connectionManager.peerMetadata.entries()) {
         console.log(`  ${peerId.substring(0, 8)}...: ${JSON.stringify(metadata)}`);
       }
     } else {
-      console.log('❌ Client 1 has no peerMetadata map in WebSocketManager');
+      console.log('❌ Client 1 has no peerMetadata map in ConnectionManager');
     }
 
-    // Check client2's knowledge of client1  
-    if (client2.websocketManager && client2.websocketManager.peerMetadata) {
+    // Check client2's knowledge of client1
+    if (client2.connectionManager && client2.connectionManager.peerMetadata) {
       console.log('Client 2 peer metadata storage:');
-      for (const [peerId, metadata] of client2.websocketManager.peerMetadata.entries()) {
+      for (const [peerId, metadata] of client2.connectionManager.peerMetadata.entries()) {
         console.log(`  ${peerId.substring(0, 8)}...: ${JSON.stringify(metadata)}`);
       }
     } else {
-      console.log('❌ Client 2 has no peerMetadata map in WebSocketManager');
+      console.log('❌ Client 2 has no peerMetadata map in ConnectionManager');
     }
 
     // Check DHT nodes in routing table

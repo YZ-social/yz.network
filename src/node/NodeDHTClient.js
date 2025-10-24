@@ -14,7 +14,7 @@ import WebSocket from 'ws';
 
 // DHT imports
 import { DHTClient } from '../core/DHTClient.js';
-import { WebSocketManager } from '../network/WebSocketManager.js';
+import { ConnectionManagerFactory } from '../network/ConnectionManagerFactory.js';
 import { DHTNodeId } from '../core/DHTNodeId.js';
 import { InvitationToken } from '../core/InvitationToken.js';
 import { KademliaDHT } from '../dht/KademliaDHT.js';
@@ -76,9 +76,9 @@ export class NodeDHTClient extends DHTClient {
       port: options.port || 0, // 0 = random available port
       ...options
     });
-    
+
     // Node.js specific properties
-    this.websocketManager = null;
+    this.connectionManager = null;
   }
 
   /**
@@ -118,7 +118,7 @@ export class NodeDHTClient extends DHTClient {
   getBootstrapMetadata() {
     return {
       nodeType: 'nodejs',
-      listeningAddress: this.websocketManager?.listeningAddress,
+      listeningAddress: this.connectionManager?.getServerAddress?.(),
       capabilities: ['websocket', 'relay'],
       canRelay: true,
       canAcceptConnections: true,
@@ -186,14 +186,32 @@ export class NodeDHTClient extends DHTClient {
     // Setup crypto first
     await this.setupCrypto();
 
-    // Create WebSocket manager
-    this.websocketManager = new WebSocketManager({
-      port: this.options.port,
-      maxConnections: 50,
-      timeout: 30000
+    // Create WebSocket connection manager using factory
+    // NodeDHTClient is a Node.js server that accepts connections from both browsers and other Node.js clients
+    this.connectionManager = ConnectionManagerFactory.createForConnection('nodejs', 'browser', {
+      port: this.options.port || 0,
+      host: 'localhost',
+      maxConnections: this.options.maxConnections || 50,
+      timeout: this.options.timeout || 30000,
+      enableServer: true,
+      localNodeType: 'nodejs',
+      targetNodeType: 'browser'
     });
 
-    await this.websocketManager.initialize(this.nodeId.toString());
+    // Set the local node ID on the connection manager
+    this.connectionManager.localNodeId = this.nodeId.toString();
+
+    // Wait for server to start and get actual address
+    await new Promise((resolve) => {
+      if (this.connectionManager.server) {
+        resolve();
+      } else {
+        this.connectionManager.once('serverStarted', resolve);
+      }
+    });
+
+    // Small delay to ensure server.address() is available
+    await new Promise(resolve => setTimeout(resolve, 100));
 
     // Create bootstrap client
     this.bootstrap = new BootstrapClient({
@@ -205,10 +223,10 @@ export class NodeDHTClient extends DHTClient {
     const keyInfo = await InvitationToken.generateKeyPair();
     console.log('🔐 Generated cryptographic key pair for invitation tokens');
 
-    // Create DHT with WebSocket manager
+    // Create DHT with WebSocket connection manager
     this.dht = new KademliaDHT({
       nodeId: this.nodeId,
-      webrtc: this.websocketManager, // WebSocketManager implements same interface
+      serverConnectionManager: this.connectionManager, // CRITICAL: Node.js servers pass as serverConnectionManager so DHT reuses it for all peers
       bootstrap: this.bootstrap,
       k: this.options.k,
       alpha: this.options.alpha,
@@ -222,29 +240,29 @@ export class NodeDHTClient extends DHTClient {
     this.dht.nodeType = 'nodejs';
     this.dht.nodeCapabilities = new Set(['websocket', 'relay']);
     this.dht.canRelay = true; // Node.js nodes can relay between protocols
-    this.dht.listeningAddress = this.websocketManager.listeningAddress;
+    this.dht.listeningAddress = this.connectionManager.getServerAddress();
 
     // Prepare bootstrap metadata with WebSocket information
     this.dht.bootstrapMetadata = {
       nodeType: 'nodejs',
-      listeningAddress: this.websocketManager.listeningAddress,
+      listeningAddress: this.connectionManager.getServerAddress(),
       capabilities: ['websocket', 'relay'],
       canRelay: true
     };
-    
+
     console.log('📡 Prepared WebSocket coordination metadata for bootstrap registration');
-    console.log(`   Listening Address: ${this.websocketManager.listeningAddress}`);
+    console.log(`   Listening Address: ${this.connectionManager.getServerAddress()}`);
 
     // Start the DHT
     await this.dht.start();
 
     this.isStarted = true;
     console.log('✅ Node.js DHT client started successfully');
-    console.log(`📡 Listening for connections on: ${this.websocketManager.listeningAddress}`);
+    console.log(`📡 Listening for connections on: ${this.connectionManager.getServerAddress()}`);
 
     return {
       nodeId: this.nodeId.toString(),
-      listeningAddress: this.websocketManager.listeningAddress,
+      listeningAddress: this.connectionManager.getServerAddress(),
       nodeType: 'nodejs'
     };
   }
@@ -261,14 +279,15 @@ export class NodeDHTClient extends DHTClient {
       console.log(`👋 Disconnected from peer: ${peerId.substring(0, 8)}...`);
     });
 
-    this.websocketManager.on('message', ({ peerId, message }) => {
+    // ConnectionManager emits 'data' events with message payload
+    this.connectionManager.on('data', ({ peerId, data }) => {
       // Handle DHT overlay connection requests
-      if (message.type === 'dht_connection_request') {
-        this.handleDHTConnectionRequest(peerId, message);
+      if (data.type === 'dht_connection_request') {
+        this.handleDHTConnectionRequest(peerId, data);
       } else {
         // Route all other messages to DHT for processing
-        console.log(`📨 Routing DHT message from ${peerId.substring(0, 8)}...: ${message.type}`);
-        this.dht.enqueueMessage(peerId, message);
+        console.log(`📨 Routing DHT message from ${peerId.substring(0, 8)}...: ${data.type}`);
+        this.dht.enqueueMessage(peerId, data);
       }
     });
   }
@@ -278,19 +297,19 @@ export class NodeDHTClient extends DHTClient {
    */
   async handleDHTConnectionRequest(fromPeerId, message) {
     console.log(`📞 DHT connection request from browser: ${fromPeerId.substring(0, 8)}...`);
-    
+
     try {
       // Browser is requesting to connect to our WebSocket server
       // We don't need to do anything - just acknowledge
-      await this.websocketManager.sendMessage(fromPeerId, {
+      await this.connectionManager.sendMessage(fromPeerId, {
         type: 'dht_connection_response',
         success: true,
-        listeningAddress: this.websocketManager.listeningAddress,
+        listeningAddress: this.connectionManager.getServerAddress(),
         nodeId: this.nodeId.toString(),
         nodeType: 'nodejs',
         capabilities: ['websocket', 'relay']
       });
-      
+
       console.log(`✅ DHT connection request acknowledged for ${fromPeerId.substring(0, 8)}...`);
     } catch (error) {
       console.error(`❌ Error handling DHT connection request: ${error.message}`);
@@ -307,7 +326,7 @@ export class NodeDHTClient extends DHTClient {
       // Send connection request via DHT overlay using new protocol
       await this.dht.sendWebSocketConnectionRequest(browserNodeId, {
         nodeType: 'nodejs',
-        listeningAddress: this.websocketManager.listeningAddress,
+        listeningAddress: this.connectionManager.getServerAddress(),
         capabilities: ['websocket', 'relay'],
         canRelay: true
       });
@@ -354,21 +373,24 @@ export class NodeDHTClient extends DHTClient {
    * Get connected peers
    */
   getConnectedPeers() {
-    if (!this.websocketManager) return [];
-    return this.websocketManager.getConnectedPeers();
+    if (!this.connectionManager) return [];
+    return this.connectionManager.getConnectedPeers();
   }
 
   /**
    * Get DHT statistics
    */
   getStats() {
-    if (!this.dht || !this.websocketManager) return null;
+    if (!this.dht || !this.connectionManager) return null;
 
     return {
       nodeId: this.nodeId.toString(),
       nodeType: 'nodejs',
-      listeningAddress: this.websocketManager.listeningAddress,
-      connections: this.websocketManager.getStats(),
+      listeningAddress: this.connectionManager.getServerAddress(),
+      connections: {
+        active: this.connectionManager.connections.size,
+        maxConnections: this.connectionManager.options.maxConnections
+      },
       dht: {
         routingTableSize: this.dht.routingTable?.getAllNodes()?.length || 0,
         connectedPeers: this.getConnectedPeers().length
@@ -390,8 +412,8 @@ export class NodeDHTClient extends DHTClient {
       await this.dht.stop();
     }
 
-    if (this.websocketManager) {
-      this.websocketManager.destroy();
+    if (this.connectionManager) {
+      this.connectionManager.destroy();
     }
 
     if (this.bootstrap) {

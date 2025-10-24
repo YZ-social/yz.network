@@ -114,58 +114,26 @@ export class ConnectionManagerFactory {
     // Transport selection logic:
     // Browser → Browser: WebRTC (peer-to-peer)
     // Browser → Node.js: WebSocket (Node.js is server)
-    // Node.js → Browser: WebSocket (Node.js is server) 
+    // Node.js → Browser: WebSocket (Node.js is server)
     // Node.js → Node.js: WebSocket
     // Future: Add LoRa, Bluetooth, etc.
-    
+
     if (localNodeType === 'browser' && targetNodeType === 'browser') {
       console.log('🚀 Creating WebRTCConnectionManager for Browser↔Browser');
-      return new WebRTCConnectionManager(options);
+      return new WebRTCConnectionManager({
+        localNodeType,
+        targetNodeType,
+        ...options
+      });
     } else {
       // All other combinations use WebSocket
       console.log(`🌐 Creating WebSocketConnectionManager for ${localNodeType}→${targetNodeType}`);
-      return new WebSocketConnectionManager({enableServer: false, ...options});
-    }
-  }
-
-  /**
-   * Create connection manager for the current environment
-   * @param {Object} options - Configuration options
-   * @returns {ConnectionManager} Appropriate connection manager instance
-   */
-  static createForEnvironment(options = {}) {
-    const nodeType = ConnectionManagerFactory.detectNodeType();
-
-    if (nodeType === 'nodejs') {
-      // Node.js environment - use WebSocket manager for server capabilities
-      console.log('🌐 Creating WebSocketConnectionManager for Node.js environment');
-      return new WebSocketConnectionManager(options);
-    } else {
-      // Browser environment - use WebRTC manager for P2P capabilities
-      console.log('🚀 Creating WebRTCConnectionManager for browser environment');
-      return new WebRTCConnectionManager(options);
-    }
-  }
-
-  /**
-   * Create connection manager for specific peer type
-   * @param {string} peerType - 'nodejs', 'browser', etc.
-   * @param {Object} options - Configuration options
-   * @returns {ConnectionManager} Appropriate connection manager instance
-   */
-  static createForPeerType(peerType, options = {}) {
-    switch (peerType) {
-      case 'nodejs':
-        console.log('🌐 Creating WebSocketConnectionManager for Node.js peer');
-        return new WebSocketConnectionManager(options);
-      
-      case 'browser':
-        console.log('🚀 Creating WebRTCConnectionManager for browser peer');
-        return new WebRTCConnectionManager(options);
-        
-      default:
-        console.warn(`Unknown peer type: ${peerType}, defaulting to environment-based selection`);
-        return ConnectionManagerFactory.createForEnvironment(options);
+      return new WebSocketConnectionManager({
+        enableServer: false,
+        localNodeType,
+        targetNodeType,
+        ...options
+      });
     }
   }
 

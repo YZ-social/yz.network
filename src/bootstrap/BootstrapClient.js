@@ -218,6 +218,10 @@ export class BootstrapClient extends EventEmitter {
           this.emit('webrtcExpectOffer', message);
           break;
 
+        case 'websocket_peer_metadata':
+          this.emit('websocketPeerMetadata', message);
+          break;
+
         case 'bridge_invitation_request':
           this.emit('bridgeInvitationRequest', message);
           break;
@@ -308,7 +312,8 @@ export class BootstrapClient extends EventEmitter {
       const response = await this.sendRequest({
         type: 'get_peers_or_genesis',
         maxPeers,
-        nodeId: this.localNodeId
+        nodeId: this.localNodeId,
+        metadata: this.metadata || {}
       });
       
       return {

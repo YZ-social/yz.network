@@ -37,6 +37,7 @@ export class WebRTCConnectionManager extends ConnectionManager {
     this.offerCollisions = new Map(); // peerId -> collision detection state for Perfect Negotiation
     this.handshakeCompleted = new Map(); // peerId -> boolean (prevent duplicate metadata updates)
     this.processingSignals = new Map(); // peerId -> boolean (prevent concurrent signal processing)
+    this.candidateTypes = new Map(); // peerId -> { host, srflx, relay } counts for diagnostics
 
     // Keep-alive system for browser tab visibility
     this.keepAliveIntervals = new Map(); // peerId -> intervalId
@@ -262,6 +263,18 @@ export class WebRTCConnectionManager extends ConnectionManager {
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         console.log(`🧊 ICE candidate for ${peerId.substring(0, 8)}...: ${event.candidate.type} (${event.candidate.protocol}:${event.candidate.address}:${event.candidate.port})`);
+        console.log(`   📋 Full candidate string: ${event.candidate.candidate}`);
+
+        // Track candidate types for diagnostics
+        if (!this.candidateTypes) this.candidateTypes = new Map();
+        if (!this.candidateTypes.has(peerId)) {
+          this.candidateTypes.set(peerId, { host: 0, srflx: 0, relay: 0 });
+        }
+        const types = this.candidateTypes.get(peerId);
+        if (event.candidate.type === 'host') types.host++;
+        else if (event.candidate.type === 'srflx') types.srflx++;
+        else if (event.candidate.type === 'relay') types.relay++;
+
         // Send ICE candidate through appropriate signaling channel
         this.sendSignal(peerId, {
           type: 'candidate',
@@ -272,7 +285,15 @@ export class WebRTCConnectionManager extends ConnectionManager {
           console.warn(`Failed to send ICE candidate for ${peerId}:`, error);
         });
       } else {
-        console.log(`🏁 ICE gathering complete for ${peerId.substring(0, 8)}...`);
+        const types = this.candidateTypes?.get(peerId) || { host: 0, srflx: 0, relay: 0 };
+        console.log(`🏁 ICE gathering complete for ${peerId.substring(0, 8)}... - Generated: ${types.host} host, ${types.srflx} srflx, ${types.relay} relay candidates`);
+
+        // CRITICAL DIAGNOSTIC: Warn if no host candidates generated
+        if (types.host === 0) {
+          console.warn(`⚠️ WARNING: No host candidates generated for ${peerId.substring(0, 8)}!`);
+          console.warn(`   This may cause connection failures for same-network peers.`);
+          console.warn(`   Possible causes: browser privacy settings, mDNS disabled, or network configuration.`);
+        }
       }
     };
 
@@ -471,14 +492,14 @@ export class WebRTCConnectionManager extends ConnectionManager {
     this.processingSignals.set(peerId, true);
 
     let pc = this.connections.get(peerId);
-    
+
     // Perfect Negotiation Pattern: Determine who is polite/impolite based on node IDs
     const isPolite = this.localNodeId && this.localNodeId < peerId;
     const makingOffer = pc && pc.signalingState === 'have-local-offer';
     const ignoreOffer = !isPolite && signal.type === 'offer' && makingOffer;
-    
+
     console.log(`🤝 Perfect Negotiation - Role: ${isPolite ? 'POLITE' : 'IMPOLITE'} (${this.localNodeId} vs ${peerId})`);
-    
+
     // Perfect Negotiation: Handle collision resolution
     if (ignoreOffer) {
       console.log(`💪 Perfect Negotiation - Being impolite, ignoring offer from ${peerId.substring(0, 8)}... (we have precedence)`);
@@ -486,9 +507,24 @@ export class WebRTCConnectionManager extends ConnectionManager {
       return;
     }
 
-    if (!pc) {
+    // Perfect Negotiation: Handle glare condition - both sides sent offers simultaneously
+    // If we're the polite peer and have an existing connection attempt, close it and restart
+    if (!pc || (isPolite && signal.type === 'offer' && makingOffer)) {
       // Create new incoming connection for offers
       if (signal.type === 'offer') {
+
+        // GLARE HANDLING: If polite peer with existing connection, close old one first
+        if (pc && isPolite) {
+          console.log(`🤝 Perfect Negotiation - Glare detected! Polite peer ${this.localNodeId.substring(0, 8)} closing existing connection attempt to ${peerId.substring(0, 8)}`);
+          // Close existing connection WITHOUT emitting disconnect event (we're about to reconnect)
+          const oldPC = this.connections.get(peerId);
+          if (oldPC) {
+            if (oldPC.timeout) clearTimeout(oldPC.timeout);
+            oldPC.close();
+          }
+          this.cleanupConnection(peerId);
+          pc = null; // Clear pc reference so we create new one below
+        }
         console.log(`📥 Creating incoming connection for ${peerId.substring(0, 8)}...`);
         try {
           // Create connection synchronously for immediate offer processing

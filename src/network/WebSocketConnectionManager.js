@@ -1,30 +1,35 @@
 import { ConnectionManager } from './ConnectionManager.js';
 
-// WebSocket will be determined at runtime
-// This belts-and-suspenders test shouldn't need the first part (checking window),
-// but it leaving it out fails some browser tests (connection, storage, routing, discovery, & reconnect).
-// As written here it works. I do not know why. Maybe webpack isn't configured correctly?
-const isNodeJS = typeof window === 'undefined' && typeof process !== 'undefined';
-
 /**
  * WebSocket-based connection manager for Node.js peers
  * Extends ConnectionManager with WebSocket transport implementation
+ *
+ * ARCHITECTURE NOTE: Node type detection is performed by ConnectionManagerFactory.
+ * This class receives localNodeType and targetNodeType via options and uses them
+ * to determine connection behavior without re-detecting the environment.
  */
 export class WebSocketConnectionManager extends ConnectionManager {
   constructor(options = {}) {
     super(options);
-    
+
+    // Store node types from factory (if provided)
+    // These come from ConnectionManagerFactory.createForConnection()
+    this.localNodeType = options.localNodeType || null;
+    this.targetNodeType = options.targetNodeType || null;
+
     // Initialize WebSocket class for this environment
     this.WebSocket = null;
     this.WebSocketServer = null;
     this.webSocketInitialized = false;
-    
-    // Determine if we should enable server based on environment
-    
+
+    // Determine if we should enable server based on local node type
+    // Only Node.js nodes can create WebSocket servers
+    const shouldEnableServer = this.localNodeType === 'nodejs' && (options.enableServer !== false);
+
     this.wsOptions = {
       port: options.port || 8083,
       host: options.host || 'localhost',
-      enableServer: isNodeJS && (options.enableServer !== false), // Only enable server in Node.js
+      enableServer: shouldEnableServer,
       ...options
     };
 
@@ -46,11 +51,16 @@ export class WebSocketConnectionManager extends ConnectionManager {
 
   /**
    * Initialize WebSocket classes based on environment
+   * Uses this.localNodeType set by factory instead of runtime detection
    */
   async initializeWebSocketClasses() {
-    console.log(`🔍 Initializing WebSocket classes for ${isNodeJS ? 'Node.js' : 'browser'} environment`);
-    
-    if (isNodeJS) {
+    if (!this.localNodeType) {
+      throw new Error('WebSocketConnectionManager requires localNodeType to be set by factory');
+    }
+
+    console.log(`🔍 Initializing WebSocket classes for ${this.localNodeType} environment`);
+
+    if (this.localNodeType === 'nodejs') {
       // Node.js environment - use ws library
       try {
         const ws = await import('ws');
@@ -108,9 +118,11 @@ export class WebSocketConnectionManager extends ConnectionManager {
     }
 
     try {
+      // Explicitly use IPv4 to avoid dual-stack binding issues
+      const host = this.wsOptions.host === 'localhost' ? '127.0.0.1' : this.wsOptions.host;
       this.server = new this.WebSocketServer({
         port: this.wsOptions.port,
-        host: this.wsOptions.host
+        host: host
       });
 
       this.server.on('connection', (ws, request) => {
@@ -174,42 +186,31 @@ export class WebSocketConnectionManager extends ConnectionManager {
           // DHT peer connecting
           clearTimeout(handshakeTimeout);
           ws.off('message', messageHandler);
-          
+
           const peerId = message.peerId;
           console.log(`✅ DHT peer connected: ${peerId.substring(0, 8)}...`);
-          
-          // Get this node's metadata (especially isBridgeNode flag)
+
+          // Store peer metadata from handshake
+          if (message.metadata) {
+            console.log(`📋 Received peer metadata from ${peerId.substring(0, 8)}:`, message.metadata);
+            this.setPeerMetadata(peerId, message.metadata);
+          }
+
+          // Get this node's metadata (especially isBridgeNode flag and listeningAddress)
           const myMetadata = this.getPeerMetadata(this.localNodeId);
-          
-          // Send confirmation with bridge metadata
+
+          // Send confirmation with our metadata
           ws.send(JSON.stringify({
             type: 'dht_peer_connected',
             bridgeNodeId: this.localNodeId,
             success: true,
             timestamp: Date.now(),
-            metadata: myMetadata  // Include bridge node metadata
+            metadata: myMetadata  // Include our node metadata
           }));
 
           // Set up the connection
           this.setupConnection(peerId, ws, false); // false = not initiator
-          
-        } else if (message.type === 'handshake' && message.peerId) {
-          // Regular handshake
-          clearTimeout(handshakeTimeout);
-          ws.off('message', messageHandler);
-          
-          const peerId = message.peerId;
-          console.log(`🤝 Peer handshake: ${peerId.substring(0, 8)}...`);
-          
-          // Send handshake response
-          ws.send(JSON.stringify({
-            type: 'handshake_response',
-            success: true,
-            timestamp: Date.now()
-          }));
 
-          this.setupConnection(peerId, ws, false);
-          
         } else {
           console.warn('Invalid handshake message:', message.type);
           ws.close(1000, 'Invalid handshake');
@@ -237,12 +238,46 @@ export class WebSocketConnectionManager extends ConnectionManager {
       throw new Error('WebSocketConnectionManager is destroyed');
     }
 
-    if (this.connections.has(peerId)) {
-      throw new Error(`Connection to ${peerId} already exists`);
-    }
-
     if (this.connections.size >= this.options.maxConnections) {
       throw new Error('Maximum connections reached');
+    }
+
+    // Perfect Negotiation Pattern for WebSocket (similar to WebRTC)
+    // When both peers try to connect simultaneously, use node ID comparison
+    const existingConnection = this.connections.get(peerId);
+    if (existingConnection) {
+      // Glare condition detected - both peers trying to connect
+      const localNodeId = this.localNodeId || '';
+      const isPolite = localNodeId.localeCompare(peerId) < 0;
+
+      console.log(`🤝 WebSocket glare detected with ${peerId.substring(0, 8)}... - we are ${isPolite ? 'POLITE' : 'IMPOLITE'} peer (${localNodeId.substring(0, 8)}... vs ${peerId.substring(0, 8)}...)`);
+
+      if (isPolite) {
+        // Polite peer: close our outgoing attempt and wait for incoming connection
+        console.log(`🤝 Polite peer ${localNodeId.substring(0, 8)}... closing outgoing connection to accept incoming from ${peerId.substring(0, 8)}...`);
+
+        // Close existing connection
+        if (existingConnection.close) {
+          existingConnection.close(1000, 'Perfect Negotiation - polite peer yielding');
+        }
+        this.connections.delete(peerId);
+        this.connectionStates.delete(peerId);
+
+        // Wait a moment for the other side's connection to arrive
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        // Check if incoming connection was established
+        if (this.connections.has(peerId)) {
+          console.log(`✅ Polite peer accepted incoming connection from ${peerId.substring(0, 8)}...`);
+          return this.connections.get(peerId);
+        }
+        // If no incoming connection, continue with our outgoing attempt below
+        console.log(`⚠️ No incoming connection received, continuing with outgoing attempt`);
+      } else {
+        // Impolite peer: ignore this attempt and keep our existing connection
+        console.log(`🤝 Impolite peer ${localNodeId.substring(0, 8)}... ignoring new outgoing attempt, keeping existing connection`);
+        return existingConnection;
+      }
     }
 
     // Wait for WebSocket initialization
@@ -254,15 +289,19 @@ export class WebSocketConnectionManager extends ConnectionManager {
     // Get WebSocket address from peer metadata
     const metadata = this.getPeerMetadata(peerId);
     const wsAddress = metadata?.listeningAddress;
-    const localNodeType = isNodeJS ? 'nodejs' : 'browser';
-    const targetNodeType = metadata?.nodeType || 'browser';
-    
+
+    // Use node types from factory (set in constructor)
+    // targetNodeType can be overridden by peer metadata if more specific info available
+    const localNodeType = this.localNodeType;
+    const targetNodeType = metadata?.nodeType || this.targetNodeType || 'browser';
+
     console.log(`🔗 WebSocket connection: ${localNodeType} → ${targetNodeType}`);
-    
+
     // Handle different connection scenarios
     if (!wsAddress) {
       if (localNodeType === 'nodejs' && targetNodeType === 'browser') {
         // Node.js → Browser: Use DHT reverse signaling
+        // Browser cannot create WebSocket server, so Node.js asks browser to connect back
         console.log(`🔄 Node.js→Browser connection - requesting browser to connect back via DHT signaling`);
         return this.requestBrowserConnection(peerId, initiator);
       } else {
@@ -284,13 +323,15 @@ export class WebSocketConnectionManager extends ConnectionManager {
           clearTimeout(connectionTimeout);
           console.log(`✅ WebSocket connection established to ${peerId.substring(0, 8)}...`);
 
-          // Send handshake to identify ourselves
+          // Send handshake to identify ourselves with metadata
+          const myMetadata = this.getPeerMetadata(this.localNodeId);
           const handshakeMessage = {
             type: 'dht_peer_hello',
-            peerId: this.localNodeId
+            peerId: this.localNodeId,
+            metadata: myMetadata  // Include client metadata (listeningAddress, nodeType, etc.)
           };
-          
-          console.log(`🤝 Sending handshake to bridge: localNodeId=${this.localNodeId}, message:`, handshakeMessage);
+
+          console.log(`🤝 Sending handshake to peer: localNodeId=${this.localNodeId}, metadata:`, myMetadata);
           ws.send(JSON.stringify(handshakeMessage));
 
           // Wait for handshake response
@@ -303,27 +344,24 @@ export class WebSocketConnectionManager extends ConnectionManager {
             try {
               const dataString = typeof data === 'string' ? data : data.toString();
               const message = JSON.parse(dataString);
-              
-              if ((message.type === 'handshake_response' && message.success) ||
-                  (message.type === 'dht_peer_connected' && message.bridgeNodeId)) {
+
+              if (message.type === 'dht_peer_connected' && message.bridgeNodeId) {
                 clearTimeout(handshakeTimeout);
                 ws.onmessage = null;
-                
-                if (message.type === 'dht_peer_connected') {
-                  console.log(`✅ Successfully connected to bridge node ${message.bridgeNodeId.substring(0, 8)}`);
-                  
-                  // CRITICAL: Store bridge metadata if provided
-                  if (message.metadata) {
-                    console.log(`📋 Received bridge metadata:`, message.metadata);
-                    this.setPeerMetadata(peerId, message.metadata);
-                  }
+
+                // Store peer metadata from handshake
+                if (message.metadata) {
+                  console.log(`📋 Received peer metadata from ${message.bridgeNodeId.substring(0, 8)}:`, message.metadata);
+                  this.setPeerMetadata(peerId, message.metadata);
                 }
-                
+
+                console.log(`✅ Successfully connected to peer ${message.bridgeNodeId.substring(0, 8)}`);
+
                 this.setupConnection(peerId, ws, initiator);
                 resolve();
-                
+
               } else {
-                console.warn('WebSocket handshake failed:', message);
+                console.warn('WebSocket handshake failed - expected dht_peer_connected:', message.type);
                 ws.close();
                 reject(new Error('WebSocket handshake failed'));
               }
@@ -440,8 +478,8 @@ export class WebSocketConnectionManager extends ConnectionManager {
     console.log(`📋 WebSocket connection setup complete for ${peerId.substring(0, 8)}...`);
 
     // Handle messages using correct API for environment
-    
-    if (isNodeJS) {
+    // Node.js ws library uses .on() events, browser WebSocket uses .onmessage properties
+    if (this.localNodeType === 'nodejs') {
       // Node.js WebSocket (ws library) - uses .on() event listeners
       ws.on('message', (data) => {
         try {
@@ -569,7 +607,10 @@ export class WebSocketConnectionManager extends ConnectionManager {
    */
   getServerAddress() {
     if (!this.server) return null;
-    return `ws://${this.wsOptions.host}:${this.wsOptions.port}`;
+
+    // Get actual port from server (handles port 0 case where OS assigns random port)
+    const actualPort = this.server.address?.()?.port || this.wsOptions.port;
+    return `ws://${this.wsOptions.host}:${actualPort}`;
   }
 
   /**

@@ -17,6 +17,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
       maxPeers: options.maxPeers || 1000,
       peerTimeout: options.peerTimeout || 5 * 60 * 1000, // 5 minutes
       createNewDHT: options.createNewDHT || false,
+      openNetwork: options.openNetwork || false, // Open network mode - no invitations required
       bridgeNodes: options.bridgeNodes || [
         'localhost:8083',  // Primary bridge node
         'localhost:8084',  // Backup bridge node
@@ -37,6 +38,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
     this.pendingReconnections = new Map(); // requestId -> { ws, resolve, reject, timeout }
     this.pendingGenesisRequests = new Map(); // nodeId -> { ws, message, timestamp }
     this.pendingInvitations = new Map(); // invitationId -> { inviterNodeId, inviteeNodeId, inviterWs, inviteeWs, status, timestamp }
+    this.pendingBridgeQueries = new Map(); // requestId -> { ws, nodeId, metadata, clientMessage, resolve, reject, timeout }
     
     // Server state
     this.isStarted = false;
@@ -76,6 +78,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
     console.log(`🔗 Public server: ${this.options.host}:${this.options.port}`);
     console.log(`🌉 Bridge nodes: ${this.options.bridgeNodes.length} configured`);
     console.log(`🆕 Create new DHT mode: ${this.options.createNewDHT ? 'ENABLED' : 'DISABLED'}`);
+    console.log(`🌐 Open network mode: ${this.options.openNetwork ? 'ENABLED (no invitations required)' : 'DISABLED (invitations required)'}`);
     console.log(`👥 Max peers: ${this.options.maxPeers}`);
   }
 
@@ -279,6 +282,8 @@ export class EnhancedBootstrapServer extends EventEmitter {
         this.handleForwardSignal(ws, message);
       } else if (message.type === 'invitation_accepted') {
         this.handleInvitationAccepted(ws, message);
+      } else if (message.type === 'announce_independent') {
+        this.handleAnnounceIndependent(ws, message);
       } else {
         console.warn('Unknown message type from client:', message.type);
       }
@@ -314,29 +319,29 @@ export class EnhancedBootstrapServer extends EventEmitter {
       // In genesis mode, first connecting peer becomes genesis
       if (this.options.createNewDHT && this.connectedClients.size === 1) {
         console.log(`🌟 Genesis mode: Designating ${nodeId?.substring(0, 8)}... as genesis peer`);
-        
+
         // Update peer record to mark as genesis
         const peer = this.peers.get(nodeId);
         if (peer) {
           peer.isGenesisPeer = true;
         }
-        
+
         // DON'T send immediate response - wait for bridge connection to complete
         // The response will be sent in handleGenesisConnectionResult()
-        
+
         // After genesis peer is set up, connect to bridge nodes and establish genesis-bridge connection
         setTimeout(async () => {
           try {
             console.log(`🌉 Genesis peer designated, now connecting to bridge nodes...`);
-            
+
             // Connect to bridge nodes first
             await this.connectToBridgeNodes();
-            
+
             console.log(`🔍 Bridge connections status: ${this.bridgeConnections.size} connected`);
             for (const [addr, ws] of this.bridgeConnections) {
               console.log(`   ${addr}: ${ws.readyState === 1 ? 'OPEN' : 'NOT_OPEN'}`);
             }
-            
+
             // Then connect genesis to bridge
             await this.connectGenesisToBridge(ws, nodeId, message.metadata || {}, message);
           } catch (error) {
@@ -344,10 +349,46 @@ export class EnhancedBootstrapServer extends EventEmitter {
             // Continue without bridge connection - genesis can still invite peers manually
           }
         }, 2000); // Give genesis peer time to complete setup
-        
+
         return;
       }
-      
+
+      // Open network mode - use random peer onboarding for scalability
+      if (this.options.openNetwork && this.connectedClients.size > 1) {
+        console.log(`🌐 Open network mode: Finding random onboarding peer for ${nodeId?.substring(0, 8)}...`);
+
+        // DON'T send immediate response - wait for bridge to find helper peer
+        // The response will be sent in handleOnboardingPeerResult()
+
+        // Query bridge for random peer selection
+        setTimeout(async () => {
+          try {
+            console.log(`🎲 Querying bridge for random onboarding peer (connection-agnostic)...`);
+
+            // Ensure bridge nodes are connected
+            if (this.bridgeConnections.size === 0) {
+              await this.connectToBridgeNodes();
+            }
+
+            console.log(`🔍 Bridge connections status: ${this.bridgeConnections.size} connected`);
+
+            // Get random peer from bridge (bridge finds peer via DHT, sends invitation via DHT)
+            await this.getOnboardingPeerFromBridge(ws, nodeId, message.metadata || {}, message);
+          } catch (error) {
+            console.error(`❌ Failed to get onboarding peer from bridge: ${error.message}`);
+            // Send error response
+            ws.send(JSON.stringify({
+              type: 'response',
+              requestId: message.requestId,
+              success: false,
+              error: `Random peer onboarding failed: ${error.message}`
+            }));
+          }
+        }, 500); // Small delay to ensure peer registration is complete
+
+        return;
+      }
+
       // Standard mode - return existing peers or empty list
       const availablePeers = Array.from(this.connectedClients.values())
         .filter(client => client.nodeId !== nodeId)
@@ -356,9 +397,9 @@ export class EnhancedBootstrapServer extends EventEmitter {
           nodeId: client.nodeId,
           metadata: client.metadata || {}
         }));
-      
+
       console.log(`📤 Sending ${availablePeers.length} available peers to ${nodeId?.substring(0, 8)}...`);
-      
+
       // Send standard BootstrapClient-compatible response
       ws.send(JSON.stringify({
         type: 'response',
@@ -451,26 +492,30 @@ export class EnhancedBootstrapServer extends EventEmitter {
       
       // Get inviter peer information
       const inviterClient = this.connectedClients.get(inviterNodeId);
-      
+
       // Check if this is a browser-to-browser invitation requiring WebRTC coordination
       const inviterIsBrowser = inviterClient?.metadata?.nodeType === 'browser';
       const targetIsBrowser = targetClient?.metadata?.nodeType === 'browser';
-      
+
+      // Create pending invitation for ALL connection types (WebRTC and WebSocket)
+      // This enables handleInvitationAccepted to coordinate connections properly
+      const invitationId = `${inviterNodeId}_${targetPeerId}_${Date.now()}`;
+      this.pendingInvitations.set(invitationId, {
+        inviterNodeId: inviterNodeId,
+        inviteeNodeId: targetPeerId,
+        inviterWs: ws,
+        inviteeWs: targetClient.ws,
+        status: 'invitation_sent',
+        timestamp: Date.now()
+      });
+
+      const coordinationType = (inviterIsBrowser && targetIsBrowser) ? 'WebRTC' : 'WebSocket';
+      console.log(`📋 Created pending invitation tracking: ${invitationId} (${coordinationType})`);
+
       if (inviterIsBrowser && targetIsBrowser) {
-        console.log(`🚀 Browser-to-browser invitation detected - setting up WebRTC coordination tracking`);
-        
-        // Create pending invitation for WebRTC coordination
-        const invitationId = `${inviterNodeId}_${targetPeerId}_${Date.now()}`;
-        this.pendingInvitations.set(invitationId, {
-          inviterNodeId: inviterNodeId,
-          inviteeNodeId: targetPeerId,
-          inviterWs: ws,
-          inviteeWs: targetClient.ws,
-          status: 'invitation_sent',
-          timestamp: Date.now()
-        });
-        
-        console.log(`📋 Created pending invitation tracking: ${invitationId}`);
+        console.log(`🚀 Browser-to-browser invitation detected - will use WebRTC coordination`);
+      } else {
+        console.log(`🌐 Node.js connection detected - will use WebSocket metadata exchange`);
       }
       
       // Forward invitation to target peer
@@ -621,11 +666,21 @@ export class EnhancedBootstrapServer extends EventEmitter {
       type: 'new'
     });
 
-    // Update connectedClients metadata if the client is already registered
+    // Add/update client in connectedClients with metadata
     if (this.connectedClients.has(nodeId)) {
+      // Client already exists - update metadata
       const client = this.connectedClients.get(nodeId);
       client.metadata = metadata || {};
       console.log(`📋 Updated metadata for connected client ${nodeId.substring(0, 8)}...:`, metadata);
+    } else {
+      // Client doesn't exist yet - add them with metadata
+      this.connectedClients.set(nodeId, {
+        ws,
+        nodeId,
+        metadata: metadata || {},
+        timestamp: Date.now()
+      });
+      console.log(`📋 Added new client ${nodeId.substring(0, 8)}... to connected clients with metadata:`, metadata);
     }
 
     console.log(`📋 Registered new peer: ${nodeId.substring(0, 8)}...`);
@@ -723,6 +778,124 @@ export class EnhancedBootstrapServer extends EventEmitter {
       // Close connection
       ws.close(1000, 'Genesis connection failed');
       this.peers.delete(nodeId);
+    }
+  }
+
+  /**
+   * Get onboarding peer from bridge (random peer selection for scalability)
+   * Connection-agnostic approach - reuses existing invitation system
+   */
+  async getOnboardingPeerFromBridge(ws, nodeId, metadata, clientMessage) {
+    try {
+      console.log(`🎲 Requesting random onboarding peer from bridge for ${nodeId.substring(0, 8)}...`);
+
+      // Get available bridge node
+      const bridgeNode = this.getAvailableBridgeNode();
+      if (!bridgeNode) {
+        throw new Error('No bridge nodes available for onboarding peer query');
+      }
+
+      const requestId = `onboarding_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+      // Create promise for bridge response
+      const queryPromise = new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          this.pendingBridgeQueries.delete(requestId);
+          reject(new Error('Onboarding peer query timeout'));
+        }, this.options.bridgeTimeout);
+
+        this.pendingBridgeQueries.set(requestId, {
+          ws,
+          nodeId,
+          metadata,
+          clientMessage,
+          resolve,
+          reject,
+          timeout
+        });
+      });
+
+      // Send query to bridge
+      bridgeNode.send(JSON.stringify({
+        type: 'get_onboarding_peer',
+        newNodeId: nodeId,
+        newNodeMetadata: metadata,
+        requestId,
+        timestamp: Date.now()
+      }));
+
+      console.log(`📤 Sent onboarding peer query to bridge for ${nodeId.substring(0, 8)}, requestId=${requestId}`);
+
+      // Wait for bridge response
+      await queryPromise;
+
+    } catch (error) {
+      console.error(`❌ Failed to get onboarding peer from bridge:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Handle onboarding peer result from bridge
+   * Bridge found random peer and sent invitation via DHT
+   */
+  async handleOnboardingPeerResult(response) {
+    const { requestId, success, result, error } = response;
+
+    const pending = this.pendingBridgeQueries.get(requestId);
+    if (!pending) {
+      console.warn(`Received onboarding result for unknown request: ${requestId}`);
+      return;
+    }
+
+    // Clear timeout and remove from pending
+    clearTimeout(pending.timeout);
+    this.pendingBridgeQueries.delete(requestId);
+
+    if (success && result) {
+      console.log(`✅ Bridge found onboarding peer ${result.helperPeerId.substring(0, 8)} for ${pending.nodeId.substring(0, 8)}`);
+      console.log(`   Status: ${result.status}`);
+      console.log(`   Bridge sent invitation to helper peer via DHT (connection-agnostic)`);
+
+      // Update peer status
+      const peer = this.peers.get(pending.nodeId);
+      if (peer) {
+        peer.hasDHTMembership = true;
+      }
+
+      // Send membership token to new peer
+      // Helper peer will coordinate connection through existing invitation system
+      pending.ws.send(JSON.stringify({
+        type: 'response',
+        requestId: pending.clientMessage.requestId,
+        success: true,
+        data: {
+          peers: [], // No direct peers - helper will coordinate through bootstrap
+          isGenesis: false,
+          membershipToken: result.membershipToken,
+          onboardingHelper: result.helperPeerId,
+          status: 'helper_coordinating',
+          message: 'Random DHT peer will help you join the network (invitation sent via DHT)'
+        }
+      }));
+
+      pending.resolve();
+    } else {
+      console.warn(`❌ Bridge failed to find onboarding peer for ${pending.nodeId.substring(0, 8)}: ${error}`);
+
+      // Send failure response
+      pending.ws.send(JSON.stringify({
+        type: 'response',
+        requestId: pending.clientMessage.requestId,
+        success: false,
+        error: `Onboarding failed: ${error}`
+      }));
+
+      // Close connection
+      pending.ws.close(1000, 'Onboarding failed');
+      this.peers.delete(pending.nodeId);
+
+      pending.reject(new Error(error));
     }
   }
 
@@ -867,6 +1040,8 @@ export class EnhancedBootstrapServer extends EventEmitter {
       this.handleReconnectionResult(response);
     } else if (response.type === 'genesis_connection_result') {
       this.handleGenesisConnectionResult(response);
+    } else if (response.type === 'onboarding_peer_result') {
+      this.handleOnboardingPeerResult(response);
     } else if (response.type === 'bridge_invitation_accepted') {
       this.handleBridgeInvitationAccepted(response);
     } else if (response.type === 'bridge_invitation_failed') {
@@ -1441,7 +1616,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
       return;
     }
 
-    console.log(`🤝 Found matching invitation: ${invitationId} - initiating WebRTC coordination`);
+    console.log(`🤝 Found matching invitation: ${invitationId} - initiating connection coordination`);
 
     // Update invitation status
     matchingInvitation.status = 'invitation_accepted';
@@ -1451,35 +1626,82 @@ export class EnhancedBootstrapServer extends EventEmitter {
     const inviterClient = this.connectedClients.get(matchingInvitation.inviterNodeId);
     const inviteeClient = this.connectedClients.get(matchingInvitation.inviteeNodeId);
 
-    if (!inviterClient || !inviteeClient || 
+    if (!inviterClient || !inviteeClient ||
         inviterClient.ws.readyState !== 1 || inviteeClient.ws.readyState !== 1) {
-      console.error(`❌ Cannot coordinate WebRTC - one or both peers are offline`);
+      console.error(`❌ Cannot coordinate connection - one or both peers are offline`);
       this.pendingInvitations.delete(invitationId);
       return;
     }
 
-    // Start WebRTC coordination - tell inviter to send offer
-    inviterClient.ws.send(JSON.stringify({
-      type: 'webrtc_start_offer',
-      targetPeer: matchingInvitation.inviteeNodeId,
-      invitationId: invitationId,
-      message: 'Send WebRTC offer to establish connection with invited peer'
-    }));
+    // Determine connection type based on node types
+    const inviterNodeType = inviterClient.metadata?.nodeType || 'browser';
+    const inviteeNodeType = inviteeClient.metadata?.nodeType || 'browser';
 
-    // Tell invitee to expect offer
-    inviteeClient.ws.send(JSON.stringify({
-      type: 'webrtc_expect_offer',
-      fromPeer: matchingInvitation.inviterNodeId,
-      invitationId: invitationId,
-      message: 'Expect WebRTC offer from inviting peer'
-    }));
+    console.log(`🔍 Connection coordination: ${inviterNodeType} → ${inviteeNodeType}`);
 
-    console.log(`🚀 WebRTC coordination initiated between ${matchingInvitation.inviterNodeId.substring(0,8)}... and ${matchingInvitation.inviteeNodeId.substring(0,8)}...`);
-    
+    if (inviterNodeType === 'browser' && inviteeNodeType === 'browser') {
+      // Browser-to-browser: Use WebRTC coordination
+      console.log(`🚀 Using WebRTC coordination for browser-to-browser connection`);
+
+      inviterClient.ws.send(JSON.stringify({
+        type: 'webrtc_start_offer',
+        targetPeer: matchingInvitation.inviteeNodeId,
+        invitationId: invitationId,
+        message: 'Send WebRTC offer to establish connection with invited peer'
+      }));
+
+      inviteeClient.ws.send(JSON.stringify({
+        type: 'webrtc_expect_offer',
+        fromPeer: matchingInvitation.inviterNodeId,
+        invitationId: invitationId,
+        message: 'Expect WebRTC offer from inviting peer'
+      }));
+
+    } else {
+      // Node.js involved: Send metadata for WebSocket connection
+      console.log(`🌐 Using WebSocket coordination for Node.js connection`);
+
+      // Debug: Log metadata being sent
+      console.log(`🔍 Invitee metadata being sent:`, JSON.stringify(inviteeClient.metadata, null, 2));
+      console.log(`🔍 Inviter metadata being sent:`, JSON.stringify(inviterClient.metadata, null, 2));
+
+      // Send invitee's metadata to inviter so inviter can connect via WebSocket
+      inviterClient.ws.send(JSON.stringify({
+        type: 'websocket_peer_metadata',
+        targetPeer: matchingInvitation.inviteeNodeId,
+        targetPeerMetadata: inviteeClient.metadata,
+        invitationId: invitationId,
+        message: 'Connect to invited peer using WebSocket (metadata provided)'
+      }));
+
+      // Send inviter's metadata to invitee (for bidirectional awareness)
+      inviteeClient.ws.send(JSON.stringify({
+        type: 'websocket_peer_metadata',
+        fromPeer: matchingInvitation.inviterNodeId,
+        fromPeerMetadata: inviterClient.metadata,
+        invitationId: invitationId,
+        message: 'Inviter peer metadata (connection will be initiated by inviter)'
+      }));
+    }
+
+    console.log(`🚀 Connection coordination initiated between ${matchingInvitation.inviterNodeId.substring(0,8)}... and ${matchingInvitation.inviteeNodeId.substring(0,8)}...`);
+
     // Clean up the pending invitation after a delay
     setTimeout(() => {
       this.pendingInvitations.delete(invitationId);
       console.log(`🧹 Cleaned up pending invitation: ${invitationId}`);
     }, 60000); // 1 minute cleanup delay
+  }
+
+  /**
+   * Handle announce_independent message from client
+   * Client is announcing they no longer need bootstrap server for DHT operations
+   */
+  handleAnnounceIndependent(ws, message) {
+    const { nodeId } = message;
+    console.log(`🔓 Node ${nodeId.substring(0, 8)}... announced independence from bootstrap server`);
+
+    // Optional: Could track this state if needed for monitoring
+    // For now, just acknowledge the message silently (no warning)
   }
 }

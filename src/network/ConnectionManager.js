@@ -186,6 +186,8 @@ export class ConnectionManager extends EventEmitter {
         case 'webrtc_offer':
         case 'webrtc_answer':
         case 'webrtc_ice':
+        case 'create_invitation_for_peer':
+        case 'forward_invitation':
           // Emit to DHT for handling
           this.emit('dhtMessage', { peerId, message });
           break;
