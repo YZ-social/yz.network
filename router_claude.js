@@ -161,6 +161,24 @@ async function testDHTOperations() {
       return value === 'Hello from Node 2';
     });
 
+    //Test 4.5: HRS read all
+    console.log('\nTest 4.5: HRS store each and read all...');
+    await runTest("HRS store each and read all", async () => {
+      for (let n in nodes) {
+	const key = 'key' + n;
+	const value = 'value' + n;
+	await nodes[n].store(key, value);
+	await delay(3e3);
+	let m = 0;
+	for (let node of nodes) {
+	  const retrieved = await node.get(key);
+	  const ok = retrieved === value;
+	  if (!ok) throw new Error(`store@ ${n} retrieve@ ${m++} got >${retrieved}<.`);
+	}
+      }
+      return true;
+    });
+
     // Test 5: Check network topology
     console.log('\nTest 5: Checking network topology...');
     const topologyData = await runTest('Network topology check', async () => {
