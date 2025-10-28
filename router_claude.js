@@ -107,6 +107,7 @@ async function testDHTOperations() {
     const startTime = Date.now();
     try {
       const result = await testFn();
+      if (!result) throw new Error('test returned false');
       const duration = Date.now() - startTime;
       testResults.tests.push({ name, status: 'PASS', duration, result });
       return result;
@@ -185,7 +186,7 @@ let isCleaningUp = false;
 async function cleanup() {
   if (isCleaningUp) {
     console.log('⚠️ Cleanup already in progress, please wait...');
-    return;
+    return false;
   }
 
   isCleaningUp = true;
@@ -239,7 +240,7 @@ async function cleanup() {
   console.log(`✅ Cleanup complete in ${cleanupDuration}ms\n`);
 
   // Display test results summary
-  displayTestResults();
+  return displayTestResults();
 }
 
 function displayTestResults() {
@@ -264,8 +265,10 @@ function displayTestResults() {
   console.log(`🧪 Tests: ${passed}/${total} passed, ${failed} failed`);
   console.log();
 
+  let success = true; // If any fail, flip it false.
   if (testResults.tests.length > 0) {
     testResults.tests.forEach((test, idx) => {
+      success &&= test.status;
       const icon = test.status === 'PASS' ? '✅' : '❌';
       const duration = test.duration ? `(${test.duration}ms)` : '';
       console.log(`   ${icon} ${test.name} ${duration}`);
@@ -274,6 +277,7 @@ function displayTestResults() {
       }
     });
     console.log();
+    return success;
   }
 
   // Network topology (if available)
@@ -320,8 +324,8 @@ async function main() {
     await testDHTOperations();
 
     console.log('✅ Test script completed successfully!');
-    console.log('Press Ctrl+C to exit and cleanup...');
-
+    //console.log('Press Ctrl+C to exit and cleanup...');
+    process.exit(await cleanup() ? 0 : 1);  // Report and exit.
   } catch (error) {
     console.error('\n❌ Test script failed:', error);
     await cleanup();
