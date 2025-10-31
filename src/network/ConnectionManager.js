@@ -7,7 +7,7 @@ import { EventEmitter } from 'events';
 export class ConnectionManager extends EventEmitter {
   constructor(options = {}) {
     super();
-    
+
     this.options = {
       maxConnections: options.maxConnections || 50,
       timeout: options.timeout || 45000, // Increased from 30s to 45s for better WebRTC reliability
@@ -18,12 +18,12 @@ export class ConnectionManager extends EventEmitter {
     this.connections = new Map(); // peerId -> connection object
     this.connectionStates = new Map(); // peerId -> connection state
     this.peerMetadata = new Map(); // peerId -> metadata
-    
+
     // Message handling
     this.pendingRequests = new Map(); // requestId -> { resolve, reject, timeout }
     this.messageQueues = new Map(); // peerId -> Array<message>
     this.messageProcessingFlags = new Map(); // peerId -> boolean
-    
+
     this.isDestroyed = false;
     this.localNodeId = null;
   }
@@ -36,7 +36,7 @@ export class ConnectionManager extends EventEmitter {
       console.warn('ConnectionManager already initialized');
       return;
     }
-    
+
     this.localNodeId = localNodeId;
     console.log(`🔗 ${this.constructor.name} initialized with node ID: ${localNodeId}`);
     this.emit('initialized', { localNodeId });
@@ -58,7 +58,7 @@ export class ConnectionManager extends EventEmitter {
 
   /**
    * Send raw message to peer (transport-specific)
-   * @param {string} peerId - Target peer ID  
+   * @param {string} peerId - Target peer ID
    * @param {Object} message - Message to send
    * @returns {Promise<void>}
    */
@@ -158,7 +158,7 @@ export class ConnectionManager extends EventEmitter {
         const pendingRequest = this.pendingRequests.get(message.requestId);
         clearTimeout(pendingRequest.timeout);
         this.pendingRequests.delete(message.requestId);
-        
+
         if (message.type.endsWith('_response')) {
           pendingRequest.resolve(message);
         } else {
@@ -204,7 +204,7 @@ export class ConnectionManager extends EventEmitter {
 
       // Also emit 'data' event for compatibility with existing DHT and OverlayNetwork code
       this.emit('data', { peerId, data: message });
-      
+
     } catch (error) {
       console.error(`Error handling message from ${peerId}:`, error);
     }
@@ -244,7 +244,7 @@ export class ConnectionManager extends EventEmitter {
         type: 'ping',
         timestamp: Date.now()
       }, 5000);
-      
+
       const rtt = Date.now() - response.originalTimestamp;
       return { success: true, rtt };
     } catch (error) {

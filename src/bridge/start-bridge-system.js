@@ -5,7 +5,7 @@ import { EnhancedBootstrapServer } from './EnhancedBootstrapServer.js';
 
 /**
  * Bridge System Startup Script
- * 
+ *
  * Starts both the passive bridge node(s) and enhanced bootstrap server
  * with proper configuration and error handling.
  */
@@ -13,7 +13,7 @@ import { EnhancedBootstrapServer } from './EnhancedBootstrapServer.js';
 const DEFAULT_CONFIG = {
   // Bridge configuration
   bridgeAuth: process.env.BRIDGE_AUTH || 'your-secure-bridge-auth-key-here',
-  
+
   // Bootstrap server configuration
   bootstrap: {
     port: parseInt(process.env.BOOTSTRAP_PORT) || 8080,
@@ -22,7 +22,7 @@ const DEFAULT_CONFIG = {
     createNewDHT: process.argv.includes('-createNewDHT') || process.argv.includes('--create-new-dht'),
     openNetwork: process.argv.includes('-openNetwork') || process.argv.includes('--open-network')
   },
-  
+
   // Bridge node configuration
   bridges: [
     {
@@ -33,7 +33,7 @@ const DEFAULT_CONFIG = {
     },
     {
       port: parseInt(process.env.BRIDGE_PORT_2) || 8084,
-      host: 'localhost', 
+      host: 'localhost',
       maxConnections: 20,
       bootstrapServers: ['ws://localhost:8080']
     }
@@ -55,19 +55,19 @@ class BridgeSystemManager {
 
     console.log('🌉 Starting YZSocialC Bridge System');
     console.log('=====================================');
-    
+
     try {
       // Start bridge nodes first
       await this.startBridgeNodes();
-      
+
       // Wait a moment for bridges to initialize
       await this.delay(2000);
-      
+
       // Start bootstrap server
       await this.startBootstrapServer();
-      
+
       this.isRunning = true;
-      
+
       console.log('=====================================');
       console.log('✅ Bridge System Started Successfully');
       console.log(`🔗 Public Bootstrap: ${this.config.bootstrap.host}:${this.config.bootstrap.port}`);
@@ -75,10 +75,10 @@ class BridgeSystemManager {
       console.log(`🆕 Create New DHT: ${this.config.bootstrap.createNewDHT ? 'ENABLED' : 'DISABLED'}`);
       console.log(`🔓 Open Network: ${this.config.bootstrap.openNetwork ? 'ENABLED (no invitations)' : 'DISABLED (invitations required)'}`);
       console.log('=====================================');
-      
+
       // Setup graceful shutdown
       this.setupGracefulShutdown();
-      
+
     } catch (error) {
       console.error('❌ Failed to start bridge system:', error);
       await this.stop();
@@ -88,10 +88,10 @@ class BridgeSystemManager {
 
   async startBridgeNodes() {
     console.log(`🌉 Starting ${this.config.bridges.length} bridge nodes...`);
-    
+
     for (let i = 0; i < this.config.bridges.length; i++) {
       const bridgeConfig = this.config.bridges[i];
-      
+
       try {
         console.log(`🌉 Starting bridge node ${i + 1} on port ${bridgeConfig.port}...`);
 
@@ -108,12 +108,12 @@ class BridgeSystemManager {
             maxConnections: bridgeConfig.maxConnections
           }
         });
-        
+
         await bridge.start();
         this.bridges.push(bridge);
-        
+
         console.log(`✅ Bridge node ${i + 1} started successfully`);
-        
+
       } catch (error) {
         console.error(`❌ Failed to start bridge node ${i + 1}:`, error);
         throw error;
@@ -123,15 +123,15 @@ class BridgeSystemManager {
 
   async startBootstrapServer() {
     console.log('🚀 Starting enhanced bootstrap server...');
-    
+
     const bridgeAddresses = this.config.bridges.map(b => `${b.host}:${b.port}`);
-    
+
     this.bootstrapServer = new EnhancedBootstrapServer({
       ...this.config.bootstrap,
       bridgeNodes: bridgeAddresses,
       bridgeAuth: this.config.bridgeAuth
     });
-    
+
     await this.bootstrapServer.start();
     console.log('✅ Enhanced bootstrap server started successfully');
   }
@@ -142,7 +142,7 @@ class BridgeSystemManager {
     }
 
     console.log('🛑 Stopping Bridge System...');
-    
+
     // Stop bootstrap server
     if (this.bootstrapServer) {
       try {
@@ -153,7 +153,7 @@ class BridgeSystemManager {
       }
       this.bootstrapServer = null;
     }
-    
+
     // Stop bridge nodes
     for (let i = 0; i < this.bridges.length; i++) {
       try {
@@ -164,7 +164,7 @@ class BridgeSystemManager {
       }
     }
     this.bridges = [];
-    
+
     this.isRunning = false;
     console.log('🌉 Bridge System stopped');
   }
@@ -184,12 +184,12 @@ class BridgeSystemManager {
 
     process.on('SIGINT', () => shutdown('SIGINT'));
     process.on('SIGTERM', () => shutdown('SIGTERM'));
-    
+
     process.on('uncaughtException', (error) => {
       console.error('🚨 Uncaught Exception:', error);
       shutdown('uncaughtException');
     });
-    
+
     process.on('unhandledRejection', (reason, promise) => {
       console.error('🚨 Unhandled Rejection at:', promise, 'reason:', reason);
       shutdown('unhandledRejection');
@@ -229,7 +229,7 @@ Options:
 Environment Variables:
   BOOTSTRAP_PORT=8080               Bootstrap server port
   BOOTSTRAP_HOST=0.0.0.0           Bootstrap server host
-  BRIDGE_PORT_1=8083               First bridge node port  
+  BRIDGE_PORT_1=8083               First bridge node port
   BRIDGE_PORT_2=8084               Second bridge node port
   MAX_PEERS=1000                   Maximum connected peers
   BRIDGE_AUTH=your-key             Bridge authentication key
@@ -263,16 +263,16 @@ async function main() {
   }
 
   const manager = new BridgeSystemManager(DEFAULT_CONFIG);
-  
+
   // Status monitoring endpoint (optional)
   if (process.argv.includes('--status')) {
     setInterval(() => {
       console.log('📊 System Status:', JSON.stringify(manager.getStatus(), null, 2));
     }, 30000); // Every 30 seconds
   }
-  
+
   await manager.start();
-  
+
   // Keep the process alive
   setInterval(() => {
     // Heartbeat - could add health checks here

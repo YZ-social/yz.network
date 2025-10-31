@@ -69,5 +69,6 @@ module.exports = {
       Buffer: ['buffer', 'Buffer'],
       process: 'process/browser'
     })
-  ]
+  ],
+  devtool: 'eval-cheap-module-source-map'
 };

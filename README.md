@@ -25,9 +25,6 @@ npm install
 # Start bridge nodes server
 npm run bridge-nodes
 
-# Start bootstrap server
-npm run bridge-bootstrap:genesis
-
 # In a different terminal, start bootstrap server
 npm run bridge-bootstrap:genesis
 
@@ -40,7 +37,7 @@ Open your browser to the development server URL. The first client becomes the ge
 1. Press the `START DHT` button.
 2. Open another browser to the same url.
 3. In the new browser, press the `START DHT` button, and grab the Node ID at the top of the screen.
-4. In the first browser, paste that Node ID into the box next to the `INIVITE` button, and then press the button.
+4. In the first browser, paste that Node ID into the box next to the `INVITE` button, and then press the button.
 5. Repeat 2-4 as desired.
 6. Run the Debug Tests one at a time. (Not `RUN ALL TESTS`)
 7. Enter a key and value next to the `STORE` button and press the button.
@@ -63,7 +60,7 @@ Open your browser to the development server URL. The first client becomes the ge
    ```javascript
    // Genesis peer invites new client
    YZSocialC.inviteNewClient('target_node_id')
-   
+
    // New client joins with invitation
    YZSocialC.startDHT()
    ```
@@ -311,7 +308,7 @@ node src/bridge/start-enhanced-bootstrap.js -openNetwork
 ## Configuration
 
 - **k = 20**: Kademlia bucket size
-- **alpha = 3**: Lookup parallelism  
+- **alpha = 3**: Lookup parallelism
 - **adaptive refresh**: 15s (new nodes) → 60s (medium) → 10min (established, literature-compliant)
 - **timeout = 30s**: WebRTC connection timeout
 - **max connections = 50**: Concurrent peer limit
@@ -329,6 +326,6 @@ node src/bridge/start-enhanced-bootstrap.js -openNetwork
 
 ## License
 
-Mozilla Public License Version 2.0  
-Copyright 2025 Ron Teitelbaum and YZ.Social  
+Mozilla Public License Version 2.0
+Copyright 2025 Ron Teitelbaum and YZ.Social
 See LICENSE file for full license text.

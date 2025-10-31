@@ -12,7 +12,7 @@ export class DHTNodeId {
     } else {
       // Generate random 160-bit (20 byte) ID
       this.bytes = new Uint8Array(20);
-      
+
       // Use browser's native crypto API for random values
       if (typeof process === 'undefined' && window.crypto && window.crypto.getRandomValues) {
         window.crypto.getRandomValues(this.bytes);
@@ -25,7 +25,7 @@ export class DHTNodeId {
         }
       }
     }
-    
+
     if (this.bytes.length !== 20) {
       throw new Error('DHTNodeId must be exactly 20 bytes (160 bits)');
     }
@@ -38,7 +38,7 @@ export class DHTNodeId {
     const hash = crypto.SHA1(str);
     const bytes = new Uint8Array(20);
     const words = hash.words;
-    
+
     for (let i = 0; i < 5; i++) {
       const word = words[i];
       bytes[i * 4] = (word >>> 24) & 0xff;
@@ -46,7 +46,7 @@ export class DHTNodeId {
       bytes[i * 4 + 2] = (word >>> 8) & 0xff;
       bytes[i * 4 + 3] = word & 0xff;
     }
-    
+
     return new DHTNodeId(bytes);
   }
 
@@ -57,12 +57,12 @@ export class DHTNodeId {
     if (hex.length !== 40) {
       throw new Error('Hex string must be 40 characters (20 bytes)');
     }
-    
+
     const bytes = new Uint8Array(20);
     for (let i = 0; i < 20; i++) {
       bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
     }
-    
+
     return new DHTNodeId(bytes);
   }
 
@@ -105,7 +105,7 @@ export class DHTNodeId {
     if (position < 0 || position >= 160) {
       return 0;
     }
-    
+
     const byteIndex = Math.floor(position / 8);
     const bitIndex = position % 8;
     return (this.bytes[byteIndex] >> (7 - bitIndex)) & 1;
@@ -165,19 +165,19 @@ export class DHTNodeId {
    */
   static generateAtDistance(target, distance) {
     const result = new DHTNodeId();
-    
+
     // Copy target bytes
     for (let i = 0; i < 20; i++) {
       result.bytes[i] = target.bytes[i];
     }
-    
+
     // Flip the bit at the specified distance
     if (distance < 160) {
       const byteIndex = Math.floor(distance / 8);
       const bitIndex = distance % 8;
       result.bytes[byteIndex] ^= (1 << (7 - bitIndex));
     }
-    
+
     // Randomize remaining bits
     for (let i = distance + 1; i < 160; i++) {
       const byteIndex = Math.floor(i / 8);
@@ -188,7 +188,7 @@ export class DHTNodeId {
         result.bytes[byteIndex] &= ~(1 << (7 - bitIndex));
       }
     }
-    
+
     return result;
   }
 }

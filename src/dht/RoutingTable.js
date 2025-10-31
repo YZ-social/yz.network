@@ -11,11 +11,11 @@ export class RoutingTable {
     this.k = k;
     this.buckets = [new KBucket(k, 0, 0)]; // Start with single bucket
     this.totalNodes = 0;
-    
+
     // Event handling for connection managers
     this.onNodeAdded = null; // Callback to notify DHT when nodes are added via connections
     this.eventHandlersSetup = false;
-    
+
     // EMERGENCY: Circuit breaker to completely disable debug logging after threshold
     this._debugLoggingDisabled = false;
     this._debugLogCount = 0;
@@ -38,7 +38,7 @@ export class RoutingTable {
     // CRITICAL VALIDATION: Only add nodes that appear to be legitimate peer node IDs
     // Phantom peer detection: reject IDs that look like storage keys or random hashes
     const nodeIdStr = node.id.toString();
-    
+
     // Basic validation - node IDs should be reasonably distributed, not sequential or patterned
     // This is a heuristic check for phantom peers that might be storage key hashes
     if (this.isLikelyPhantomPeer(nodeIdStr)) {
@@ -141,22 +141,22 @@ export class RoutingTable {
     // EMERGENCY: Circuit breaker to prevent memory crashes from debug logging
     // Reuse nodeIdStr from above to avoid duplicate declaration
     const nodePrefix = nodeIdStr.substring(0, 8);
-    
+
     if (!this._debugLoggingDisabled && this._debugLogCount < this._maxDebugLogs) {
       if (!this._debugLogged) {
         this._debugLogged = new Set();
       }
-      
+
       // Only log once per unique node prefix AND only for specific debug cases
-      const shouldDebugLog = !this._debugLogged.has(nodePrefix) && 
+      const shouldDebugLog = !this._debugLogged.has(nodePrefix) &&
                             (nodeIdStr.includes('8b7f7fb8') || nodeIdStr.includes('88bcbfa2'));
-      
+
       if (shouldDebugLog) {
         console.log(`🔧 ROUTING TABLE DEBUG - getNode for ${nodePrefix}: bucket=${bucketIndex}, found=${!!foundNode}`);
-        
+
         this._debugLogged.add(nodePrefix);
         this._debugLogCount++;
-        
+
         // Circuit breaker: disable all debug logging after threshold
         if (this._debugLogCount >= this._maxDebugLogs) {
           this._debugLoggingDisabled = true;
@@ -164,33 +164,33 @@ export class RoutingTable {
         }
       }
     }
-    
+
     // CRITICAL FIX: If not found in expected bucket, search all buckets
     // This handles bucket calculation issues, ID conversion problems, and bucket splits
     if (!foundNode) {
       const nodeIdStr = id.toString();
-      
+
       // EMERGENCY: Disable most fallback search logging to prevent memory crashes
       if (!this._fallbackSearchLogged) {
         this._fallbackSearchLogged = new Set();
       }
-      
+
       const nodePrefix = nodeIdStr.substring(0, 8);
       const shouldLog = !this._fallbackSearchLogged.has(nodePrefix) && this._fallbackSearchLogged.size < 5;
-      
+
       if (shouldLog) {
         console.warn(`🔍 Fallback search for ${nodePrefix} (bucket ${bucketIndex})`);
         this._fallbackSearchLogged.add(nodePrefix);
       }
-      
+
       // Silent fallback search across ALL buckets
       for (let i = 0; i < this.buckets.length; i++) {
         const bucket = this.buckets[i];
         const nodes = bucket.getNodes();
-        
+
         for (const node of nodes) {
           const nodeStr = node.id.toString();
-          
+
           // Try both string comparison and equals() method
           if (nodeStr === nodeIdStr || node.id.equals(id)) {
             if (shouldLog) {
@@ -200,15 +200,15 @@ export class RoutingTable {
             break;
           }
         }
-        
+
         if (foundNode) break;
       }
-      
+
       if (!foundNode && shouldLog) {
         console.error(`🚨 ${nodePrefix} not found in any bucket`);
       }
     }
-    
+
     return foundNode;
   }
 
@@ -226,18 +226,18 @@ export class RoutingTable {
   isLikelyPhantomPeer(nodeIdStr) {
     // DISABLED: The previous phantom peer detection was incorrectly flagging
     // legitimate connected peers that had been successfully communicating for 5+ minutes
-    // 
+    //
     // Real connected peers that maintain long-term connections should NOT be considered phantom
     // Only actual phantom peers (like storage key hashes) should be rejected
     //
     // TODO: Implement proper phantom peer detection that:
     // 1. Checks if the peer ID comes from a legitimate connection manager
-    // 2. Validates against known invitation tokens 
+    // 2. Validates against known invitation tokens
     // 3. Does NOT reject peers based on connection duration
     // 4. Uses pattern analysis of node IDs to detect storage keys vs real peer IDs
-    
+
     console.log(`🔍 Routing table evaluating peer: ${nodeIdStr} (phantom detection disabled)`);
-    
+
     // Always allow peers for now - phantom detection needs proper redesign
     return false;
   }
@@ -340,10 +340,10 @@ export class RoutingTable {
    */
   canSplitBucket(bucketIndex, _nodeId) {
     const bucket = this.buckets[bucketIndex];
-    
+
     // Can only split if bucket is full and it's the bucket that contains our local node
     if (!bucket.isFull()) return false;
-    
+
     // Check if this bucket contains our local node's range
     const localBucketIndex = this.getBucketIndex(this.localNodeId);
     return bucketIndex === localBucketIndex && bucket.depth < 159;
@@ -355,10 +355,10 @@ export class RoutingTable {
   splitBucket(bucketIndex) {
     const bucket = this.buckets[bucketIndex];
     const { leftBucket, rightBucket } = bucket.split();
-    
+
     // Replace the old bucket with the two new buckets
     this.buckets.splice(bucketIndex, 1, leftBucket, rightBucket);
-    
+
     // Update total node count (should remain the same)
     this.totalNodes = this.buckets.reduce((sum, b) => sum + b.size(), 0);
   }
@@ -368,12 +368,12 @@ export class RoutingTable {
    */
   removeStaleNodes(maxAge = 15 * 60 * 1000) {
     let totalRemoved = 0;
-    
+
     for (const bucket of this.buckets) {
       const removed = bucket.removeStaleNodes(maxAge);
       totalRemoved += removed;
     }
-    
+
     this.totalNodes -= totalRemoved;
     return totalRemoved;
   }
@@ -383,7 +383,7 @@ export class RoutingTable {
    */
   getNodesToPing(pingInterval = 5 * 60 * 1000) {
     const nodesToPing = [];
-    
+
     for (const bucket of this.buckets) {
       for (const node of bucket.getNodes()) {
         if (node.needsPing(pingInterval)) {
@@ -391,7 +391,7 @@ export class RoutingTable {
         }
       }
     }
-    
+
     return nodesToPing;
   }
 
@@ -400,8 +400,8 @@ export class RoutingTable {
    */
   getBucketForRefresh() {
     if (this.buckets.length === 0) return null;
-    
-    return this.buckets.reduce((oldest, current) => 
+
+    return this.buckets.reduce((oldest, current) =>
       current.lastUpdated < oldest.lastUpdated ? current : oldest
     );
   }
@@ -412,7 +412,7 @@ export class RoutingTable {
   getStats() {
     const bucketStats = this.buckets.map((bucket, _index) => bucket.getStats());
     const allNodes = this.getAllNodes();
-    
+
     return {
       totalNodes: this.totalNodes,
       totalBuckets: this.buckets.length,
@@ -432,16 +432,16 @@ export class RoutingTable {
   validate() {
     const issues = [];
     let calculatedTotal = 0;
-    
+
     for (let i = 0; i < this.buckets.length; i++) {
       const bucket = this.buckets[i];
       calculatedTotal += bucket.size();
-      
+
       // Check bucket depth consistency
       if (i > 0 && bucket.depth <= this.buckets[i-1].depth) {
         issues.push(`Bucket ${i} depth inconsistency`);
       }
-      
+
       // Check for duplicate nodes within bucket
       const nodeIds = new Set();
       for (const node of bucket.getNodes()) {
@@ -451,12 +451,12 @@ export class RoutingTable {
         nodeIds.add(node.id.toString());
       }
     }
-    
+
     // Check total node count
     if (calculatedTotal !== this.totalNodes) {
       issues.push(`Total node count mismatch: ${calculatedTotal} vs ${this.totalNodes}`);
     }
-    
+
     return {
       valid: issues.length === 0,
       issues: issues
@@ -473,18 +473,18 @@ export class RoutingTable {
     if (this.eventHandlersSetup) {
       return;
     }
-    
+
     console.log('🔧 RoutingTable setting up connection event handlers');
-    
+
     // Store callback to notify DHT when nodes are added
     this.onNodeAdded = nodeAddedCallback;
-    
+
     // Create shared event handler - same for all connection managers
     this.peerConnectedHandler = ({ peerId, connection, manager, initiator }) => {
       console.log(`🔗 RoutingTable received peerConnected: ${peerId.substring(0, 8)}... (via ${manager.constructor.name})`);
       this.handlePeerConnected(peerId, connection, manager);
     };
-    
+
     // Set up the same handler on all connection managers
     for (const manager of connectionManagers) {
       if (manager && manager.localNodeId) {
@@ -492,11 +492,11 @@ export class RoutingTable {
         manager.on('peerConnected', this.peerConnectedHandler);
       }
     }
-    
+
     this.eventHandlersSetup = true;
     console.log('✅ RoutingTable connection event handlers configured');
   }
-  
+
   /**
    * Handle peerConnected event by creating and configuring DHTNode
    */
@@ -506,32 +506,32 @@ export class RoutingTable {
       console.log(`🔄 Node ${peerId.substring(0, 8)}... already exists in routing table`);
       return;
     }
-    
+
     console.log(`📋 RoutingTable creating DHTNode for ${peerId.substring(0, 8)}...`);
-    
+
     // Create new DHTNode
     const node = new DHTNode(peerId, peerId);
-    
+
     // Set up the node's connection and manager
     node.setupConnection(manager, connection);
-    
+
     // Transfer metadata from connection manager to node
     if (manager && manager.getPeerMetadata) {
       console.log(`📋 DEBUG: Getting metadata from ${manager.constructor.name} for ${peerId.substring(0, 8)}`);
       const peerMetadata = manager.getPeerMetadata(peerId);
       console.log(`📋 DEBUG: Manager metadata result:`, peerMetadata);
-      
+
       // CRITICAL: Also check the main DHT connection manager for metadata
       // The bridge metadata might be stored there instead of the specific transport manager
       let combinedMetadata = peerMetadata || {};
-      
+
       // Try to get DHT connection manager metadata from the DHT instance
       // Access through the nodeAdded callback context
       if (this.onNodeAdded) {
         // The onNodeAdded callback should have access to DHT context
         // Let's try a different approach - use ConnectionManagerFactory to get metadata
         try {
-          const ConnectionManagerFactory = globalThis.ConnectionManagerFactory || 
+          const ConnectionManagerFactory = globalThis.ConnectionManagerFactory ||
                                            (typeof require !== 'undefined' ? require('../network/ConnectionManagerFactory.js').ConnectionManagerFactory : null);
           if (ConnectionManagerFactory && ConnectionManagerFactory.getPeerMetadata) {
             const factoryMetadata = ConnectionManagerFactory.getPeerMetadata(peerId);
@@ -544,7 +544,7 @@ export class RoutingTable {
           console.log(`📋 DEBUG: Could not access ConnectionManagerFactory:`, error.message);
         }
       }
-      
+
       if (Object.keys(combinedMetadata).length > 0) {
         console.log(`📋 Transferring combined metadata to DHTNode ${peerId.substring(0, 8)}:`, combinedMetadata);
         // Copy each metadata property to the node
@@ -559,26 +559,26 @@ export class RoutingTable {
         console.log(`⚠️ No metadata found for ${peerId.substring(0, 8)} in either manager`);
       }
     }
-    
+
     // Set up callbacks for the node to communicate back to DHT
     if (this.onNodeAdded) {
       node.setMessageCallback((peerId, data) => {
         this.onNodeAdded('message', { peerId, data });
       });
-      
+
       node.setDisconnectionCallback((peerId) => {
         console.log(`🔌 RoutingTable handling disconnection of ${peerId.substring(0, 8)}...`);
         this.removeNode(peerId);
         this.onNodeAdded('disconnect', { peerId });
       });
     }
-    
+
     // Add node to routing table
     const addResult = this.addNode(node);
-    
+
     if (addResult) {
       console.log(`✅ RoutingTable added ${peerId.substring(0, 8)}... (total: ${this.totalNodes})`);
-      
+
       // Notify DHT that a new node was added
       if (this.onNodeAdded) {
         this.onNodeAdded('nodeAdded', { peerId, node });

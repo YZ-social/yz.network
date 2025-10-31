@@ -4,7 +4,7 @@ import { DHTNodeId } from '../core/DHTNodeId.js';
 
 /**
  * Passive Bridge Node - DHT Observer for Reconnection Services
- * 
+ *
  * This node connects to the DHT network but does not participate in DHT operations.
  * It only observes network activity and peer announcements to facilitate reconnections.
  */
@@ -19,7 +19,7 @@ export class PassiveBridgeNode extends DHTClient {
       enableConnections: true,
       ...options
     });
-    
+
     // Bridge-specific options
     this.bridgeAuth = options.bridgeAuth || 'default-bridge-auth-key';
     this.bridgePort = options.bridgePort || 8083;
@@ -34,22 +34,22 @@ export class PassiveBridgeNode extends DHTClient {
       enableServer: true,
       ...options.connectionOptions
     });
-    
-    
+
+
     // Network state monitoring
     this.connectedPeers = new Map();        // peerId -> connectionInfo
     this.peerAnnouncements = new Map();     // peerId -> announcementData
     this.networkFingerprint = null;
     this.lastFingerprintUpdate = 0;
     this.fingerprintUpdateInterval = null;
-    
+
     // Bootstrap communication (now using peer IDs instead of WebSocket objects)
     this.authorizedBootstrap = new Set();
-    
+
     // DHT peer connections
     this.dhtPeerConnections = new Map();    // peerId -> WebSocket
     this.isStarted = false;
-    
+
     // Note: DHT event handlers will be set up after DHT is created in start() method
   }
 
@@ -140,12 +140,12 @@ export class PassiveBridgeNode extends DHTClient {
     this.connectionManager.on('peerDisconnected', (data) => {
       this.handleConnectionDisconnected(data.peerId, data.reason);
     });
-    
+
     // Handle messages through connection manager
     this.connectionManager.on('message', (data) => {
       this.handleConnectionMessage(data.peerId, data.message);
     });
-    
+
     // Handle DHT messages through connection manager
     this.connectionManager.on('dhtMessage', (data) => {
       // Ensure peer is in routing table with server connection manager before processing message
@@ -162,14 +162,14 @@ export class PassiveBridgeNode extends DHTClient {
 
     // Call superclass start to create DHT
     await super.start();
-    
+
     // Now set up event handlers after DHT is created
     this.setupDHTEventHandlers();
     this.setupConnectionManagerEventHandlers();
 
     // Initialize connection manager with bridge node ID
     this.connectionManager.initialize(this.dht.localNodeId.toString());
-    
+
     // CRITICAL: Wait for WebSocket initialization and server startup that was started in constructor
     console.log('⏳ Waiting for WebSocket initialization to complete...');
     await this.connectionManager.waitForWebSocketInitialization();
@@ -177,15 +177,15 @@ export class PassiveBridgeNode extends DHTClient {
 
     // WebSocket server is already started automatically by initializeWebSocketClasses()
     console.log(`🌐 WebSocket server ready at ${this.connectionManager.getServerAddress()}`);
-    
+
     // Wait a moment for server to fully initialize, then get address
     const serverAddress = this.connectionManager.getServerAddress() || `ws://${this.bridgeHost}:${this.bridgePort}`;
-    
+
     // CRITICAL: Mark this node as a bridge node in metadata
     // This metadata will be shared when other peers discover this node through k-bucket maintenance
     const bridgeAuthToken = 'bridge_auth_' + (this.options.bridgeAuth || 'default-bridge-auth-key');
     const bridgeSignature = await this.generateBridgeSignature(bridgeAuthToken);
-    
+
     this.connectionManager.setPeerMetadata(this.dht.localNodeId.toString(), {
       isBridgeNode: true,
       nodeType: 'bridge',
@@ -198,10 +198,10 @@ export class PassiveBridgeNode extends DHTClient {
       bridgeStartTime: Date.now()
     });
     console.log(`🌉 Bridge node ${this.dht.localNodeId.toString().substring(0, 8)}... marked as bridge node with metadata`);
-    
+
     // Start periodic network fingerprint updates
     this.startFingerprintMonitoring();
-    
+
     this.isStarted = true;
     console.log(`🌉 Passive bridge node started on ${this.options.bridgeHost}:${this.options.bridgePort}`);
     console.log(`📡 DHT Node ID: ${this.dht.localNodeId.toString()}`);
@@ -218,7 +218,7 @@ export class PassiveBridgeNode extends DHTClient {
     }
 
     console.log(`🔗 Bridge node connecting to DHT network via ${peerAddresses.length} peer(s)`);
-    
+
     try {
       // Connect to provided DHT peers directly
       for (const peerAddress of peerAddresses) {
@@ -229,7 +229,7 @@ export class PassiveBridgeNode extends DHTClient {
           console.warn(`⚠️ Failed to connect to DHT peer ${peerAddress.peerId.substring(0, 8)}...:`, error.message);
         }
       }
-      
+
       const connectedPeers = this.dht.getConnectedPeers()?.length || 0;
       if (connectedPeers > 0) {
         console.log(`🌐 Bridge node successfully joined DHT network (${connectedPeers} connections)`);
@@ -237,7 +237,7 @@ export class PassiveBridgeNode extends DHTClient {
       } else {
         console.warn(`⚠️ Bridge node failed to establish any DHT connections`);
       }
-      
+
     } catch (error) {
       console.error('❌ Error connecting bridge to DHT network:', error);
     }
@@ -252,7 +252,7 @@ export class PassiveBridgeNode extends DHTClient {
       nodeType: peerAddress.nodeType || 'unknown',
       listeningAddress: peerAddress.websocketAddress
     });
-    
+
     await peerNode.connectionManager.createConnection(peerAddress.peerId, true);
   }
 
@@ -296,17 +296,17 @@ export class PassiveBridgeNode extends DHTClient {
    */
   handlePeerConnected(peerId) {
     console.log(`🔍 Bridge observing peer connection: ${peerId.substring(0, 8)}...`);
-    
+
     this.connectedPeers.set(peerId, {
       connectedAt: Date.now(),
       lastSeen: Date.now(),
       messageCount: 0,
       isActive: true
     });
-    
+
     // Update network fingerprint when topology changes
     this.scheduleNetworkFingerprintUpdate();
-    
+
     this.emit('peerConnected', peerId);
   }
 
@@ -315,14 +315,14 @@ export class PassiveBridgeNode extends DHTClient {
    */
   handlePeerDisconnected(peerId) {
     console.log(`🔍 Bridge observing peer disconnection: ${peerId.substring(0, 8)}...`);
-    
+
     if (this.connectedPeers.has(peerId)) {
       this.connectedPeers.get(peerId).isActive = false;
     }
-    
+
     this.peerAnnouncements.delete(peerId);
     this.scheduleNetworkFingerprintUpdate();
-    
+
     this.emit('peerDisconnected', peerId);
   }
 
@@ -343,14 +343,14 @@ export class PassiveBridgeNode extends DHTClient {
    */
   handlePeerAnnouncement(peerId, announcement) {
     console.log(`📢 Bridge received peer announcement from ${peerId.substring(0, 8)}...`);
-    
+
     this.peerAnnouncements.set(peerId, {
       ...announcement,
       receivedAt: Date.now(),
       validatedAt: null,
       isValid: false
     });
-    
+
     // Validate announcement authenticity
     this.validatePeerAnnouncement(peerId, announcement);
   }
@@ -369,12 +369,12 @@ export class PassiveBridgeNode extends DHTClient {
       // Verify signature if present
       if (announcement.signature && announcement.membershipToken) {
         const isValid = await this.verifyAnnouncementSignature(announcement);
-        
+
         const announcementRecord = this.peerAnnouncements.get(peerId);
         if (announcementRecord) {
           announcementRecord.validatedAt = Date.now();
           announcementRecord.isValid = isValid;
-          
+
           if (isValid) {
             console.log(`✅ Validated peer announcement from ${peerId.substring(0, 8)}`);
           } else {
@@ -433,13 +433,13 @@ export class PassiveBridgeNode extends DHTClient {
 
       const encoder = new TextEncoder();
       const data = encoder.encode(JSON.stringify(fingerprintData));
-      
+
       // Use Node.js crypto for server environment
       const crypto = await import('crypto');
       const hash = crypto.createHash('sha256').update(data).digest('hex');
-      
+
       return hash;
-      
+
     } catch (error) {
       console.error('Error calculating network fingerprint:', error);
       return null;
@@ -493,13 +493,13 @@ export class PassiveBridgeNode extends DHTClient {
    */
   async handleGenesisConnection(bootstrapPeerId, request) {
     const { nodeId, metadata, requestId } = request;
-    
+
     console.log(`🌟 Processing genesis connection request for ${nodeId.substring(0, 8)}...`);
-    
+
     try {
       // Accept genesis peer as first DHT connection automatically
       // This will be the bridge node's first DHT peer connection
-      
+
       // Create a basic membership token for the genesis peer
       // In a real implementation, this would use proper crypto
       const membershipToken = {
@@ -512,7 +512,7 @@ export class PassiveBridgeNode extends DHTClient {
 
       // The bridge node will establish DHT connection with genesis peer
       // This happens through normal DHT connection process, bridge just observes
-      
+
       this.sendGenesisConnectionResult(bootstrapPeerId, nodeId, requestId, true, 'Genesis peer accepted as first DHT connection', {
         bridgeNodeId: this.dht.localNodeId.toString(),
         membershipToken,
@@ -659,9 +659,9 @@ export class PassiveBridgeNode extends DHTClient {
    */
   async handleReconnectionValidation(bootstrapPeerId, request) {
     const { nodeId, membershipToken, requestId } = request;
-    
+
     console.log(`🔍 Validating reconnection request for ${nodeId.substring(0, 8)}...`);
-    
+
     try {
       // 1. Validate membership token (passive - no DHT queries)
       const isValidToken = await this.validateMembershipTokenPassive(membershipToken);
@@ -703,7 +703,7 @@ export class PassiveBridgeNode extends DHTClient {
       if (!membershipToken || !membershipToken.nodeId || !membershipToken.signature) {
         return false;
       }
-      
+
       // For now, assume valid structure means valid token
       // Real implementation would verify signature against known public keys
       return true;
@@ -725,7 +725,7 @@ export class PassiveBridgeNode extends DHTClient {
     if (activePeers < 2) {
       return { isHealthy: false, reason: 'Insufficient active peers', activePeers, recentActivity, validAnnouncements };
     }
-    
+
     if (recentActivity < 1) {
       return { isHealthy: false, reason: 'No recent network activity', activePeers, recentActivity, validAnnouncements };
     }
@@ -740,7 +740,7 @@ export class PassiveBridgeNode extends DHTClient {
     // Find most active, recently seen peer with valid announcement
     const candidates = Array.from(this.connectedPeers.entries())
       .filter(([peerId, info]) => {
-        const hasValidAnnouncement = this.peerAnnouncements.has(peerId) && 
+        const hasValidAnnouncement = this.peerAnnouncements.has(peerId) &&
                                    this.peerAnnouncements.get(peerId).isValid;
         const isRecentlyActive = (Date.now() - info.lastSeen) < 60000; // 1 minute
         return info.isActive && isRecentlyActive;
@@ -765,7 +765,7 @@ export class PassiveBridgeNode extends DHTClient {
     };
 
     await this.connectionManager.sendMessage(bootstrapPeerId, response);
-    
+
     console.log(`📤 Sent reconnection result for ${nodeId.substring(0, 8)}: ${success ? 'SUCCESS' : 'FAILED'} - ${reason}`);
   }
 
@@ -823,10 +823,10 @@ export class PassiveBridgeNode extends DHTClient {
    */
   handleIncomingConnection(peerId, connection) {
     console.log(`🔗 Incoming connection from ${peerId.substring(0, 8)}... via connection manager`);
-    
+
     // Store DHT peer connection
     this.dhtPeerConnections.set(peerId, connection);
-    
+
     // Add to connected peers tracking
     this.connectedPeers.set(peerId, {
       connectedAt: Date.now(),
@@ -836,7 +836,7 @@ export class PassiveBridgeNode extends DHTClient {
       connectionType: 'websocket',
       source: 'connection_manager'
     });
-    
+
     // Only set up DHT connection for actual DHT peers, not bootstrap servers
     if (!peerId.startsWith('bootstrap_')) {
       try {
@@ -844,25 +844,25 @@ export class PassiveBridgeNode extends DHTClient {
           connectionType: 'websocket',
           isBridgeConnected: true
         });
-        
+
         console.log(`🔗 DHT peer ${peerId.substring(0, 8)}... integrated with bridge DHT`);
-        
+
         // Emit peer connected event for DHT
         this.dht.emit('peerConnected', peerId);
-        
+
       } catch (error) {
         console.error(`❌ Failed to set up DHT connection for ${peerId}:`, error);
       }
     } else {
       console.log(`🔗 Bootstrap server connection established: ${peerId}`);
     }
-    
+
     // Update network fingerprint
     this.scheduleNetworkFingerprintUpdate();
-    
+
     console.log(`✅ DHT peer ${peerId.substring(0, 8)}... successfully connected to bridge`);
   }
-  
+
   /**
    * Handle messages from connected peers through connection manager
    */
@@ -872,23 +872,23 @@ export class PassiveBridgeNode extends DHTClient {
       this.handleBootstrapAuth(peerId, message);
       return;
     }
-    
+
     // Check if this is a bootstrap server peer
     if (peerId.startsWith('bootstrap_')) {
       this.handleBootstrapMessage(peerId, message);
       return;
     }
-    
+
     // Update peer activity for DHT peers
     this.updatePeerActivity(peerId, message);
-    
+
     // Forward DHT messages to the DHT instance
     if (this.dht && message.type) {
       console.log(`📨 Forwarding DHT message ${message.type} from ${peerId?.substring(0, 8)}... to DHT handler`);
       this.dht.handlePeerMessage(peerId, message);
     }
   }
-  
+
   /**
    * Handle bootstrap authentication through connection manager
    */
@@ -897,13 +897,13 @@ export class PassiveBridgeNode extends DHTClient {
     if (message.auth_token === this.options.bridgeAuth) {
       this.authorizedBootstrap.add(peerId);
       console.log(`✅ Added ${peerId} to authorized bootstrap servers`);
-      
+
       // Send auth success through connection manager
-      await this.connectionManager.sendMessage(peerId, { 
+      await this.connectionManager.sendMessage(peerId, {
         type: 'auth_success',
         bridgeNodeId: this.dht.localNodeId.toString()
       });
-      
+
       console.log('✅ Bootstrap server authenticated with bridge');
     } else {
       // Close connection through connection manager
@@ -911,7 +911,7 @@ export class PassiveBridgeNode extends DHTClient {
       console.warn('❌ Bootstrap server authentication failed');
     }
   }
-  
+
   /**
    * Handle messages from authenticated bootstrap server
    */
@@ -942,31 +942,31 @@ export class PassiveBridgeNode extends DHTClient {
       await this.sendErrorResponse(peerId, 'Invalid request format');
     }
   }
-  
-  
+
+
   /**
    * Handle connection disconnection through connection manager
    */
   handleConnectionDisconnected(peerId, reason) {
     console.log(`🔌 Peer ${peerId.substring(0, 8)}... disconnected from bridge: ${reason}`);
-    
+
     // Handle bootstrap disconnection
     if (peerId.startsWith('bootstrap_')) {
       this.authorizedBootstrap.delete(peerId);
       console.log('🔌 Bootstrap server disconnected from bridge');
       return;
     }
-    
+
     // Handle DHT peer disconnection
     this.dhtPeerConnections.delete(peerId);
-    
+
     if (this.connectedPeers.has(peerId)) {
       this.connectedPeers.get(peerId).isActive = false;
     }
-    
+
     // Emit peer disconnected event for DHT
     this.dht.emit('peerDisconnected', peerId);
-    
+
     // Update network fingerprint
     this.scheduleNetworkFingerprintUpdate();
   }
@@ -976,35 +976,35 @@ export class PassiveBridgeNode extends DHTClient {
    */
   async handleBridgeInvitation(bootstrapPeerId, invitation) {
     const { targetPeerId, fromPeer, invitationToken, websocketCoordination } = invitation;
-    
+
     console.log(`🎫 Bridge node received invitation from ${fromPeer?.substring(0, 8)}... for ${targetPeerId?.substring(0, 8)}...`);
-    
+
     try {
       // Verify this invitation is for this bridge node
       if (targetPeerId !== this.dht.localNodeId.toString()) {
         console.warn(`⚠️ Invitation is for ${targetPeerId?.substring(0, 8)}..., but we are ${this.dht.localNodeId.toString().substring(0, 8)}...`);
         return;
       }
-      
+
       // Process the invitation using DHT's invitation handler
       const invitationMessage = {
         fromPeer,
         invitationToken,
         websocketCoordination
       };
-      
+
       console.log(`📨 Processing invitation through DHT handler...`);
       const result = await this.dht.handleInvitationReceived(invitationMessage);
-      
+
       if (result) {
         console.log(`✅ Bridge node successfully accepted invitation from ${fromPeer?.substring(0, 8)}...`);
-        
+
         // Notify bootstrap server of successful invitation acceptance with bridge server address
         const bridgeAddress = this.connectionManager.getServerAddress();
-        
+
         console.log(`🔗 Bridge node invitation accepted - genesis peer will connect to our WebSocket server`);
         console.log(`📋 Connection will be established when genesis peer connects to our server at ${bridgeAddress}`);
-        
+
         await this.connectionManager.sendMessage(bootstrapPeerId, {
           type: 'bridge_invitation_accepted',
           bridgeNodeId: this.dht.localNodeId.toString(),
@@ -1012,16 +1012,16 @@ export class PassiveBridgeNode extends DHTClient {
           bridgeServerAddress: bridgeAddress,
           timestamp: Date.now()
         });
-        
+
         // Start observing the new DHT connection
         this.emit('invitationAccepted', {
           fromPeer,
           bridgeNodeId: this.dht.localNodeId.toString()
         });
-        
+
       } else {
         console.warn(`❌ Bridge node failed to accept invitation from ${fromPeer?.substring(0, 8)}...`);
-        
+
         // Notify bootstrap server of failed invitation
         await this.connectionManager.sendMessage(bootstrapPeerId, {
           type: 'bridge_invitation_failed',
@@ -1031,10 +1031,10 @@ export class PassiveBridgeNode extends DHTClient {
           timestamp: Date.now()
         });
       }
-      
+
     } catch (error) {
       console.error('Error handling bridge invitation:', error);
-      
+
       // Notify bootstrap server of error
       await this.connectionManager.sendMessage(bootstrapPeerId, {
         type: 'bridge_invitation_failed',
