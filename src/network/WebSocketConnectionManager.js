@@ -88,11 +88,11 @@ export class WebSocketConnectionManager extends ConnectionManager {
    */
   async waitForWebSocketInitialization(maxWait = 5000) {
     const startTime = Date.now();
-    
+
     while (!this.webSocketInitialized && (Date.now() - startTime) < maxWait) {
       await new Promise(resolve => setTimeout(resolve, 50));
     }
-    
+
     if (!this.webSocketInitialized) {
       throw new Error('WebSocket initialization timeout');
     }
@@ -108,7 +108,7 @@ export class WebSocketConnectionManager extends ConnectionManager {
     }
 
     console.log(`🔍 Server start check: webSocketInitialized=${this.webSocketInitialized}, WebSocketServer=${!!this.WebSocketServer}`);
-    
+
     if (!this.webSocketInitialized || !this.WebSocketServer) {
       console.error('WebSocket classes not initialized yet');
       console.error(`   webSocketInitialized: ${this.webSocketInitialized}`);
@@ -135,9 +135,9 @@ export class WebSocketConnectionManager extends ConnectionManager {
       });
 
       console.log(`🌐 WebSocket server listening on ${this.wsOptions.host}:${this.wsOptions.port}`);
-      this.emit('serverStarted', { 
-        host: this.wsOptions.host, 
-        port: this.wsOptions.port 
+      this.emit('serverStarted', {
+        host: this.wsOptions.host,
+        port: this.wsOptions.port
       });
 
     } catch (error) {
@@ -164,24 +164,24 @@ export class WebSocketConnectionManager extends ConnectionManager {
         const dataString = typeof data === 'string' ? data : data.toString();
         console.log(`🔍 Received handshake data (type: ${typeof data}): ${dataString}`);
         const message = JSON.parse(dataString);
-        
+
         if (message.type === 'bootstrap_auth') {
           // Bootstrap server connecting - use a special peer ID for bootstrap
           clearTimeout(handshakeTimeout);
           ws.off('message', messageHandler);
-          
+
           const bootstrapPeerId = 'bootstrap_' + Date.now();
           console.log(`🔗 Bootstrap server connected: ${bootstrapPeerId}`);
-          
+
           // Set up the connection with bootstrap identifier
           this.setupConnection(bootstrapPeerId, ws, false);
-          
+
           // Forward the auth message to the connection handler after setup
           // Use setTimeout to ensure connection setup is complete
           setTimeout(() => {
             this.handleMessage(bootstrapPeerId, message);
           }, 10);
-          
+
         } else if (message.type === 'dht_peer_hello' && message.peerId) {
           // DHT peer connecting
           clearTimeout(handshakeTimeout);
@@ -215,7 +215,7 @@ export class WebSocketConnectionManager extends ConnectionManager {
           console.warn('Invalid handshake message:', message.type);
           ws.close(1000, 'Invalid handshake');
         }
-        
+
       } catch (error) {
         console.error('Error parsing handshake message:', error);
         ws.close(1000, 'Invalid handshake format');
@@ -398,14 +398,14 @@ export class WebSocketConnectionManager extends ConnectionManager {
    */
   async requestBrowserConnection(peerId, initiator) {
     console.log(`📤 Requesting browser ${peerId.substring(0, 8)}... to connect back via DHT signaling`);
-    
+
     try {
       // Get our listening address for the browser to connect to
       const listeningAddress = this.getListeningAddress();
       if (!listeningAddress) {
         throw new Error('No listening address available for reverse connection');
       }
-      
+
       // Send generic connection request via DHT messaging
       if (this.dhtSignalingCallback) {
         await this.dhtSignalingCallback('sendConnectionRequest', peerId, {
@@ -416,13 +416,13 @@ export class WebSocketConnectionManager extends ConnectionManager {
           canRelay: true,
           requestId: `conn_req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
         });
-        
+
         console.log(`📤 Sent WebSocket connection request to browser ${peerId.substring(0, 8)}...`);
-        
+
         // Wait for the browser to connect back (with timeout)
         const connectionWaitTime = 15000; // 15 seconds
         const startTime = Date.now();
-        
+
         return new Promise((resolve, reject) => {
           const checkConnection = () => {
             if (this.connections.has(peerId)) {
@@ -436,15 +436,15 @@ export class WebSocketConnectionManager extends ConnectionManager {
               setTimeout(checkConnection, 1000);
             }
           };
-          
+
           // Start checking
           setTimeout(checkConnection, 1000);
         });
-        
+
       } else {
         throw new Error('DHT signaling callback not available');
       }
-      
+
     } catch (error) {
       console.error(`❌ Failed to request browser connection from ${peerId}:`, error);
       throw error;
@@ -530,7 +530,7 @@ export class WebSocketConnectionManager extends ConnectionManager {
    */
   async sendRawMessage(peerId, message) {
     const ws = this.connections.get(peerId);
-    
+
     if (!ws || ws.readyState !== this.WebSocket.OPEN) {
       throw new Error(`No open WebSocket connection to peer ${peerId}`);
     }
@@ -551,12 +551,12 @@ export class WebSocketConnectionManager extends ConnectionManager {
   isConnected(peerId) {
     const ws = this.connections.get(peerId);
     if (!ws) return false;
-    
+
     // Handle case where WebSocket classes aren't initialized yet
     if (!this.webSocketInitialized || !this.WebSocket) {
       return false;
     }
-    
+
     return ws.readyState === this.WebSocket.OPEN;
   }
 
@@ -565,7 +565,7 @@ export class WebSocketConnectionManager extends ConnectionManager {
    */
   destroyConnection(peerId, reason = 'manual') {
     console.log(`🔌 Destroying WebSocket connection to ${peerId} (${reason})`);
-    
+
     const ws = this.connections.get(peerId);
     if (ws) {
       ws.close(1000, reason);
@@ -619,16 +619,16 @@ export class WebSocketConnectionManager extends ConnectionManager {
    */
   async handleInvitationReceived(inviterPeerId, invitationMessage) {
     console.log(`🔗 WebSocket manager handling invitation from ${inviterPeerId.substring(0, 8)}...`);
-    
+
     // For WebSocket connections, ensure our server is ready
     if (!this.server) {
       console.log(`🚀 Starting WebSocket server for invitation`);
       this.startServer();
     }
-    
+
     console.log(`📡 WebSocket server ready at ${this.getServerAddress()}`);
     console.log(`🔗 Waiting for inviter to connect to our WebSocket server`);
-    
+
     return {
       success: true,
       listeningAddress: this.getServerAddress()

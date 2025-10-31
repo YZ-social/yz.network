@@ -3,14 +3,14 @@ import { WebSocket, WebSocketServer } from 'ws';
 
 /**
  * Enhanced Bootstrap Server with Bridge Integration
- * 
+ *
  * Provides WebRTC signaling for new peers and reconnection services through bridge nodes.
  * Public-facing server that routes reconnection requests to internal bridge nodes.
  */
 export class EnhancedBootstrapServer extends EventEmitter {
   constructor(options = {}) {
     super();
-    
+
     this.options = {
       port: options.port || 8080,
       host: options.host || '0.0.0.0',
@@ -31,7 +31,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
     this.peers = new Map(); // nodeId -> { ws, lastSeen, metadata, isGenesisPeer, type }
     this.connectedClients = new Map(); // nodeId -> { ws, nodeId, metadata, timestamp }
     this.server = null;
-    
+
     // Bridge node management
     this.bridgeConnections = new Map(); // bridgeAddr -> WebSocket
     this.bridgeReconnectTimers = new Map(); // bridgeAddr -> timer
@@ -39,7 +39,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
     this.pendingGenesisRequests = new Map(); // nodeId -> { ws, message, timestamp }
     this.pendingInvitations = new Map(); // invitationId -> { inviterNodeId, inviteeNodeId, inviterWs, inviteeWs, status, timestamp }
     this.pendingBridgeQueries = new Map(); // requestId -> { ws, nodeId, metadata, clientMessage, resolve, reject, timeout }
-    
+
     // Server state
     this.isStarted = false;
     this.totalConnections = 0;
@@ -54,26 +54,26 @@ export class EnhancedBootstrapServer extends EventEmitter {
     }
 
     console.log('🚀 Starting Enhanced Bootstrap Server');
-    
+
     // Bridge connections will use raw WebSocket for bootstrap authentication
-    
+
     // Start public bootstrap server
-    this.server = new WebSocketServer({ 
+    this.server = new WebSocketServer({
       port: this.options.port,
-      host: this.options.host 
+      host: this.options.host
     });
-    
+
     this.server.on('connection', (ws, req) => {
       this.handleClientConnection(ws, req);
     });
 
     // Bridge nodes will be connected on-demand when genesis peer arrives
-    
+
     // Start maintenance tasks
     this.startMaintenanceTasks();
-    
+
     this.isStarted = true;
-    
+
     console.log(`🌟 Enhanced Bootstrap Server started`);
     console.log(`🔗 Public server: ${this.options.host}:${this.options.port}`);
     console.log(`🌉 Bridge nodes: ${this.options.bridgeNodes.length} configured`);
@@ -127,15 +127,15 @@ export class EnhancedBootstrapServer extends EventEmitter {
    */
   async connectToBridgeNodes() {
     console.log(`🌉 Connecting to ${this.options.bridgeNodes.length} bridge nodes`);
-    
-    const connectionPromises = this.options.bridgeNodes.map(bridgeAddr => 
+
+    const connectionPromises = this.options.bridgeNodes.map(bridgeAddr =>
       this.connectToBridgeNode(bridgeAddr)
     );
 
     // Wait for at least one bridge connection
     const results = await Promise.allSettled(connectionPromises);
     const successfulConnections = results.filter(r => r.status === 'fulfilled').length;
-    
+
     if (successfulConnections === 0) {
       console.warn('⚠️ No bridge nodes connected - reconnection services unavailable');
     } else {
@@ -149,10 +149,10 @@ export class EnhancedBootstrapServer extends EventEmitter {
   async connectToBridgeNode(bridgeAddr) {
     try {
       console.log(`🔗 Connecting to bridge node: ${bridgeAddr}`);
-      
+
       // Use raw WebSocket connection for bootstrap authentication (not DHT protocol)
       const ws = new WebSocket(`ws://${bridgeAddr}`);
-      
+
       return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
           reject(new Error(`Bridge connection timeout: ${bridgeAddr}`));
@@ -169,14 +169,14 @@ export class EnhancedBootstrapServer extends EventEmitter {
 
         ws.onmessage = (event) => {
           const message = JSON.parse(event.data);
-          
+
           if (message.type === 'auth_success') {
             clearTimeout(timeout);
-            
+
             // CRITICAL: Store bridge node ID from auth response
             ws.bridgeNodeId = message.bridgeNodeId;
             console.log(`🔍 Stored bridge node ID: ${message.bridgeNodeId?.substring(0, 8)}...`);
-            
+
             // Set up ongoing message handler for bridge communication
             ws.onmessage = (event) => {
               try {
@@ -207,7 +207,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
         this.bridgeConnections.set(bridgeAddr, ws);
         console.log(`✅ Bridge node connected and authenticated: ${bridgeAddr}`);
       });
-      
+
     } catch (error) {
       console.error(`❌ Failed to connect to bridge node ${bridgeAddr}:`, error);
       this.scheduleBridgeReconnect(bridgeAddr);
@@ -241,9 +241,9 @@ export class EnhancedBootstrapServer extends EventEmitter {
    */
   handleClientConnection(ws) {
     this.totalConnections++;
-    
+
     console.log(`🔗 New client connection (total: ${this.totalConnections})`);
-    
+
     ws.on('message', (data) => {
       try {
         const message = JSON.parse(data);
@@ -253,11 +253,11 @@ export class EnhancedBootstrapServer extends EventEmitter {
         ws.close(1002, 'Invalid JSON');
       }
     });
-    
+
     ws.on('close', () => {
       this.handleClientDisconnection(ws);
     });
-    
+
     ws.on('error', (error) => {
       console.error('Client WebSocket error:', error);
     });
@@ -301,9 +301,9 @@ export class EnhancedBootstrapServer extends EventEmitter {
    */
   async handleGetPeersOrGenesis(ws, message) {
     const { nodeId, maxPeers } = message;
-    
+
     console.log(`📋 Received get_peers_or_genesis request from ${nodeId?.substring(0, 8) || 'unknown'}...`);
-    
+
     try {
       // Add client to connected clients if not already present
       if (nodeId && !this.connectedClients.has(nodeId)) {
@@ -315,7 +315,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
         });
         console.log(`➕ Added client ${nodeId.substring(0, 8)}... to connected clients (total: ${this.connectedClients.size})`);
       }
-      
+
       // In genesis mode, first connecting peer becomes genesis
       if (this.options.createNewDHT && this.connectedClients.size === 1) {
         console.log(`🌟 Genesis mode: Designating ${nodeId?.substring(0, 8)}... as genesis peer`);
@@ -410,10 +410,10 @@ export class EnhancedBootstrapServer extends EventEmitter {
           isGenesis: false
         }
       }));
-      
+
     } catch (error) {
       console.error('Error handling get_peers_or_genesis request:', error);
-      
+
       // Send error response in BootstrapClient format
       ws.send(JSON.stringify({
         type: 'response',
@@ -429,14 +429,14 @@ export class EnhancedBootstrapServer extends EventEmitter {
    */
   async handleSendInvitation(ws, message) {
     const { targetPeerId, invitationToken, inviterNodeId, websocketCoordination } = message;
-    
+
     console.log(`🎫 Invitation request: ${inviterNodeId?.substring(0, 8)}... → ${targetPeerId?.substring(0, 8)}...`);
-    
+
     try {
       // Check if target is a bridge node first
       let targetIsBridge = false;
       let bridgeConnection = null;
-      
+
       // Check if target is a connected bridge node
       for (const [, bridgeWs] of this.bridgeConnections) {
         if (bridgeWs.readyState === WebSocket.OPEN && bridgeWs.bridgeNodeId === targetPeerId) {
@@ -446,11 +446,11 @@ export class EnhancedBootstrapServer extends EventEmitter {
           break;
         }
       }
-      
+
       if (targetIsBridge && bridgeConnection) {
         // Forward invitation to bridge node
         console.log(`🌉 Forwarding invitation to bridge node ${targetPeerId.substring(0, 8)}...`);
-        
+
         bridgeConnection.send(JSON.stringify({
           type: 'invitation_for_bridge',
           targetPeerId: targetPeerId,
@@ -459,7 +459,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
           websocketCoordination,
           message: 'You have been invited to join the DHT network'
         }));
-        
+
         // Send success response to inviter
         ws.send(JSON.stringify({
           type: 'response',
@@ -470,11 +470,11 @@ export class EnhancedBootstrapServer extends EventEmitter {
             targetPeer: targetPeerId
           }
         }));
-        
+
         console.log(`✅ Invitation forwarded to bridge node ${targetPeerId.substring(0, 8)}...`);
         return;
       }
-      
+
       // Find target peer connection (regular client)
       const targetClient = this.connectedClients.get(targetPeerId);
       if (!targetClient) {
@@ -487,9 +487,9 @@ export class EnhancedBootstrapServer extends EventEmitter {
         }));
         return;
       }
-      
+
       console.log(`📤 Forwarding invitation token to ${targetPeerId.substring(0, 8)}...`);
-      
+
       // Get inviter peer information
       const inviterClient = this.connectedClients.get(inviterNodeId);
 
@@ -517,7 +517,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
       } else {
         console.log(`🌐 Node.js connection detected - will use WebSocket metadata exchange`);
       }
-      
+
       // Forward invitation to target peer
       targetClient.ws.send(JSON.stringify({
         type: 'invitation_received',
@@ -526,7 +526,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
         websocketCoordination,
         message: 'You have been invited to join the DHT network'
       }));
-      
+
       // Send success response to inviter
       ws.send(JSON.stringify({
         type: 'response',
@@ -537,12 +537,12 @@ export class EnhancedBootstrapServer extends EventEmitter {
           targetPeer: targetPeerId
         }
       }));
-      
+
       console.log(`✅ Invitation forwarded successfully from ${inviterNodeId?.substring(0, 8)}... to ${targetPeerId.substring(0, 8)}...`);
-      
+
     } catch (error) {
       console.error('Error handling send_invitation:', error);
-      
+
       // Send error response
       ws.send(JSON.stringify({
         type: 'response',
@@ -558,17 +558,17 @@ export class EnhancedBootstrapServer extends EventEmitter {
    */
   async requestGenesisConnectionFromBridge(nodeId, metadata) {
     console.log(`🌟 Requesting genesis connection for ${nodeId.substring(0, 8)}... from bridge nodes`);
-    
+
     try {
       // Select first available bridge node
       const bridgeConnections = Array.from(this.bridgeConnections.values());
       if (bridgeConnections.length === 0) {
         throw new Error('No bridge nodes available for genesis connection');
       }
-      
+
       const bridgeWs = bridgeConnections[0]; // Use first bridge node
       const requestId = Date.now().toString() + Math.random().toString(36).substr(2, 9);
-      
+
       // Send genesis connection request to bridge
       const request = {
         type: 'connect_genesis_peer',
@@ -576,16 +576,16 @@ export class EnhancedBootstrapServer extends EventEmitter {
         metadata: metadata || {},
         requestId
       };
-      
+
       console.log(`📤 Sent genesis connection request to bridge for ${nodeId.substring(0, 8)}...`);
       bridgeWs.send(JSON.stringify(request));
-      
+
       // Set timeout for genesis connection
       const timeout = setTimeout(() => {
         const pending = this.pendingGenesisRequests.get(nodeId);
         if (pending) {
           this.pendingGenesisRequests.delete(nodeId);
-          
+
           // Send timeout response to client
           pending.ws.send(JSON.stringify({
             type: 'response',
@@ -593,25 +593,25 @@ export class EnhancedBootstrapServer extends EventEmitter {
             success: false,
             error: 'Genesis connection timeout'
           }));
-          
+
           console.warn(`⏰ Genesis connection timeout for ${nodeId.substring(0, 8)}`);
         }
       }, 30000); // 30 second timeout
-      
+
       // Update pending request with timeout
       const pending = this.pendingGenesisRequests.get(nodeId);
       if (pending) {
         pending.timeout = timeout;
       }
-      
+
     } catch (error) {
       console.error('Error requesting genesis connection from bridge:', error);
-      
+
       // Send error response to client
       const pending = this.pendingGenesisRequests.get(nodeId);
       if (pending) {
         this.pendingGenesisRequests.delete(nodeId);
-        
+
         pending.ws.send(JSON.stringify({
           type: 'response',
           requestId: pending.clientMessage.requestId,
@@ -627,7 +627,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
    */
   async handleClientRegistration(ws, message) {
     const { nodeId, metadata, membershipToken } = message;
-    
+
     if (!nodeId) {
       ws.close(1002, 'Missing nodeId');
       return;
@@ -706,16 +706,16 @@ export class EnhancedBootstrapServer extends EventEmitter {
       if (bridgeNodes.length === 0) {
         throw new Error('No bridge nodes available for genesis connection');
       }
-      
+
       console.log(`🌉 Connecting genesis peer to ${bridgeNodes.length} bridge nodes for redundancy`);
 
       // Create connection promises for ALL bridge nodes
       const connectionPromises = [];
-      
+
       for (let i = 0; i < bridgeNodes.length; i++) {
         const bridgeNode = bridgeNodes[i];
         const requestId = `genesis_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${i}`;
-        
+
         // Create individual connection promise for this bridge node
         const connectionPromise = new Promise((resolve, reject) => {
           const timeout = setTimeout(() => {
@@ -734,10 +734,10 @@ export class EnhancedBootstrapServer extends EventEmitter {
             isGenesis: true,
             bridgeIndex: i
           });
-          
+
           console.log(`🔍 Stored pending genesis request for ${nodeId.substring(0, 8)} to bridge ${i}, requestId=${requestId}`);
         });
-        
+
         connectionPromises.push(connectionPromise);
 
         // Send genesis connection request to this bridge node
@@ -768,13 +768,13 @@ export class EnhancedBootstrapServer extends EventEmitter {
 
     } catch (error) {
       console.error(`❌ Failed to connect genesis to bridge:`, error);
-      
+
       // Send error response to genesis peer
       ws.send(JSON.stringify({
         type: 'genesis_connection_failed',
         reason: error.message
       }));
-      
+
       // Close connection
       ws.close(1000, 'Genesis connection failed');
       this.peers.delete(nodeId);
@@ -1056,7 +1056,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
    */
   handleReconnectionResult(response) {
     const { nodeId, requestId, success, reason } = response;
-    
+
     const pending = this.pendingReconnections.get(requestId);
     if (!pending) {
       console.warn(`Received result for unknown reconnection request: ${requestId}`);
@@ -1069,7 +1069,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
 
     if (success) {
       console.log(`✅ Bridge validated reconnection for ${nodeId.substring(0, 8)}`);
-      
+
       // Send success response to client
       pending.ws.send(JSON.stringify({
         type: 'reconnection_result',
@@ -1081,22 +1081,22 @@ export class EnhancedBootstrapServer extends EventEmitter {
 
       // Send current peer list for reconnection
       this.sendPeerList(pending.ws, nodeId);
-      
+
       pending.resolve();
     } else {
       console.warn(`❌ Bridge rejected reconnection for ${nodeId.substring(0, 8)}: ${reason}`);
-      
+
       // Send failure response to client
       pending.ws.send(JSON.stringify({
         type: 'reconnection_result',
         success: false,
         reason
       }));
-      
+
       // Close connection and remove peer
       pending.ws.close(1000, 'Reconnection denied');
       this.peers.delete(nodeId);
-      
+
       pending.reject(new Error(reason));
     }
   }
@@ -1106,14 +1106,14 @@ export class EnhancedBootstrapServer extends EventEmitter {
    */
   async handleGenesisConnectionResult(response) {
     const { nodeId, requestId, success, reason } = response;
-    
+
     console.log(`🔍 Looking for pending genesis request: nodeId=${nodeId?.substring(0, 8)}, requestId=${requestId}`);
     console.log(`🔍 Pending genesis requests:`, Array.from(this.pendingGenesisRequests.keys()));
-    
+
     // Find pending request by iterating through all entries since we need to match the correct one
     let pending = null;
     let pendingKey = null;
-    
+
     for (const [key, pendingRequest] of this.pendingGenesisRequests.entries()) {
       if (pendingRequest.nodeId === nodeId && pendingRequest.requestId === requestId) {
         pending = pendingRequest;
@@ -1122,7 +1122,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
         break;
       }
     }
-    
+
     if (!pending) {
       console.warn(`Received genesis result for unknown request: nodeId=${nodeId?.substring(0, 8)}, requestId=${requestId}`);
       return;
@@ -1134,14 +1134,14 @@ export class EnhancedBootstrapServer extends EventEmitter {
 
     if (success) {
       console.log(`✅ Genesis peer ${nodeId.substring(0, 8)} connected to bridge - genesis status removed`);
-      
+
       // Update peer status - no longer genesis, now has valid DHT membership
       const peer = this.peers.get(nodeId);
       if (peer) {
         peer.isGenesisPeer = false; // Genesis status removed by bridge connection
         peer.hasDHTMembership = true;
       }
-      
+
       // Send BootstrapClient-compatible response for get_peers_or_genesis request
       let bridgeMetadata;
       try {
@@ -1151,7 +1151,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
         console.error(`❌ Failed to generate bridge metadata:`, error);
         bridgeMetadata = [];
       }
-      
+
       const responseData = {
         type: 'response',
         requestId: pending.clientMessage.requestId,
@@ -1181,22 +1181,22 @@ export class EnhancedBootstrapServer extends EventEmitter {
           message: 'Connected to bridge node - you now have DHT membership and should invite the bridge node'
         }
       };
-      
+
       console.log(`📤 Sending genesis response to ${nodeId.substring(0, 8)} with ${bridgeMetadata.length} bridge nodes`);
       console.log(`🔍 WebSocket state: ${pending.ws.readyState} (1=OPEN)`);
-      
+
       try {
         pending.ws.send(JSON.stringify(responseData));
         console.log(`✅ Genesis response sent successfully to ${nodeId.substring(0, 8)}`);
       } catch (error) {
         console.error(`❌ Failed to send genesis response to ${nodeId.substring(0, 8)}:`, error);
       }
-      
+
       // Resolve the connection promise
       pending.resolve();
     } else {
       console.warn(`❌ Bridge rejected genesis connection for ${nodeId.substring(0, 8)}: ${reason}`);
-      
+
       // Send BootstrapClient-compatible error response
       pending.ws.send(JSON.stringify({
         type: 'response',
@@ -1204,11 +1204,11 @@ export class EnhancedBootstrapServer extends EventEmitter {
         success: false,
         error: reason
       }));
-      
+
       // Close connection and remove peer
       pending.ws.close(1000, 'Genesis connection failed');
       this.peers.delete(nodeId);
-      
+
       // Reject the connection promise
       pending.reject(new Error(reason));
     }
@@ -1219,22 +1219,22 @@ export class EnhancedBootstrapServer extends EventEmitter {
    */
   handleBridgeInvitationAccepted(response) {
     const { bridgeNodeId, inviterNodeId, bridgeServerAddress, timestamp } = response;
-    
+
     console.log(`✅ Bridge node ${bridgeNodeId?.substring(0, 8)}... accepted invitation from ${inviterNodeId?.substring(0, 8)}...`);
     console.log(`🔗 Bridge server address: ${bridgeServerAddress}`);
-    
+
     // Update bridge node status if tracking
     const bridgeWs = this.getBridgeNodeByNodeId(bridgeNodeId);
     if (bridgeWs) {
       // Bridge node is now part of DHT network
       console.log(`🌉 Bridge node ${bridgeNodeId?.substring(0, 8)}... is now connected to DHT network`);
     }
-    
+
     // Instruct genesis peer to connect to bridge node's WebSocket server
     const genesisPeer = this.peers.get(inviterNodeId);
     if (genesisPeer && genesisPeer.ws && genesisPeer.ws.readyState === 1 && bridgeServerAddress) {
       console.log(`🔗 Instructing genesis peer ${inviterNodeId?.substring(0, 8)}... to connect to bridge at ${bridgeServerAddress}`);
-      
+
       genesisPeer.ws.send(JSON.stringify({
         type: 'connect_to_bridge',
         bridgeNodeId: bridgeNodeId,
@@ -1244,7 +1244,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
     } else {
       console.warn(`⚠️ Could not find genesis peer ${inviterNodeId?.substring(0, 8)}... to send bridge connection instruction`);
     }
-    
+
     // Optionally notify the inviter that bridge connection was successful
     const inviterPeer = this.peers.get(inviterNodeId);
     if (inviterPeer && inviterPeer.ws.readyState === WebSocket.OPEN) {
@@ -1262,9 +1262,9 @@ export class EnhancedBootstrapServer extends EventEmitter {
    */
   handleBridgeInvitationFailed(response) {
     const { bridgeNodeId, inviterNodeId, reason, timestamp } = response;
-    
+
     console.warn(`❌ Bridge node ${bridgeNodeId?.substring(0, 8)}... failed to accept invitation from ${inviterNodeId?.substring(0, 8)}...: ${reason}`);
-    
+
     // Optionally notify the inviter that bridge connection failed
     const inviterPeer = this.peers.get(inviterNodeId);
     if (inviterPeer && inviterPeer.ws.readyState === WebSocket.OPEN) {
@@ -1296,7 +1296,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
   sendPeerList(ws, requestingNodeId) {
     const peers = Array.from(this.peers.entries())
       .filter(([nodeId, peer]) => {
-        return nodeId !== requestingNodeId && 
+        return nodeId !== requestingNodeId &&
                peer.ws.readyState === WebSocket.OPEN &&
                (Date.now() - peer.lastSeen) < this.options.peerTimeout;
       })
@@ -1321,7 +1321,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
    */
   handleSignaling(ws, message) {
     const { fromPeer, toPeer, signal } = message;
-    
+
     const targetPeer = this.peers.get(toPeer);
     if (!targetPeer || targetPeer.ws.readyState !== WebSocket.OPEN) {
       ws.send(JSON.stringify({
@@ -1347,7 +1347,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
    */
   handleJoinPeer(ws, message) {
     const { fromPeer, targetPeer } = message;
-    
+
     const target = this.peers.get(targetPeer);
     if (!target || target.ws.readyState !== WebSocket.OPEN) {
       ws.send(JSON.stringify({
@@ -1372,7 +1372,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
    */
   handleForwardSignal(ws, message) {
     const { fromPeer, toPeer, signal } = message;
-    
+
     if (!fromPeer || !toPeer || !signal) {
       console.warn('Invalid forward_signal message - missing required fields');
       ws.send(JSON.stringify({
@@ -1381,7 +1381,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
       }));
       return;
     }
-    
+
     const targetPeer = this.peers.get(toPeer);
     if (!targetPeer || targetPeer.ws.readyState !== WebSocket.OPEN) {
       console.warn(`Cannot forward signal - target peer ${toPeer.substring(0, 8)} not available`);
@@ -1447,9 +1447,9 @@ export class EnhancedBootstrapServer extends EventEmitter {
   cleanupStalePeers() {
     const now = Date.now();
     const stalePeers = [];
-    
+
     for (const [nodeId, peer] of this.peers) {
-      if (peer.ws.readyState !== WebSocket.OPEN || 
+      if (peer.ws.readyState !== WebSocket.OPEN ||
           (now - peer.lastSeen) > this.options.peerTimeout) {
         stalePeers.push(nodeId);
       }
@@ -1474,19 +1474,19 @@ export class EnhancedBootstrapServer extends EventEmitter {
   logStatus() {
     const bridgeCount = Array.from(this.bridgeConnections.values())
       .filter(ws => ws.readyState === WebSocket.OPEN).length;
-    
+
     const peerTypes = {
       new: 0,
       reconnecting: 0,
       genesis: 0
     };
-    
+
     for (const peer of this.peers.values()) {
       if (peer.isGenesisPeer) peerTypes.genesis++;
       else if (peer.type === 'reconnecting') peerTypes.reconnecting++;
       else peerTypes.new++;
     }
-    
+
     console.log(`📊 Server Status - Peers: ${this.peers.size}/${this.options.maxPeers} | Bridge: ${bridgeCount}/${this.options.bridgeNodes.length} | New: ${peerTypes.new} | Reconnecting: ${peerTypes.reconnecting} | Genesis: ${peerTypes.genesis}`);
   }
 
@@ -1495,7 +1495,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
    */
   async askGenesisToInviteBridgeNodes(genesisNodeId) {
     console.log(`🌉 Asking genesis peer ${genesisNodeId.substring(0, 8)}... to invite bridge nodes`);
-    
+
     // Get all connected bridge nodes with their actual IDs
     const bridgeNodeIds = [];
     for (const [, ws] of this.bridgeConnections) {
@@ -1504,12 +1504,12 @@ export class EnhancedBootstrapServer extends EventEmitter {
         console.log(`🔍 Found connected bridge node: ${ws.bridgeNodeId.substring(0, 8)}...`);
       }
     }
-    
+
     if (bridgeNodeIds.length === 0) {
       console.warn(`⚠️ No bridge node IDs available - bridges may not be authenticated yet`);
       return;
     }
-    
+
     // Ask genesis to invite each bridge node
     for (const bridgeNodeId of bridgeNodeIds) { // Invite ALL bridge nodes for redundancy
       await this.askGenesisToInviteBridge(genesisNodeId, bridgeNodeId);
@@ -1522,14 +1522,14 @@ export class EnhancedBootstrapServer extends EventEmitter {
   async askGenesisToInviteBridge(genesisNodeId, bridgeNodeId) {
     try {
       console.log(`🎫 Asking genesis peer ${genesisNodeId.substring(0, 8)}... to invite bridge node ${bridgeNodeId.substring(0, 8)}...`);
-      
+
       // Find the genesis peer connection
       const genesisClient = this.connectedClients.get(genesisNodeId);
       if (!genesisClient) {
         console.warn(`⚠️ Genesis peer ${genesisNodeId.substring(0, 8)}... not found for bridge invitation request`);
         return;
       }
-      
+
       // Send bridge node information to genesis peer with invitation request
       genesisClient.ws.send(JSON.stringify({
         type: 'bridge_invitation_request',
@@ -1543,9 +1543,9 @@ export class EnhancedBootstrapServer extends EventEmitter {
         },
         message: 'Please invite this bridge node to join the DHT network'
       }));
-      
+
       console.log(`✅ Bridge invitation request sent to genesis peer ${genesisNodeId.substring(0, 8)}...`);
-      
+
     } catch (error) {
       console.error('Error asking genesis to invite bridge:', error);
     }
@@ -1577,7 +1577,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
    */
   handleInvitationAccepted(ws, message) {
     const { fromPeer, toPeer } = message;
-    
+
     // Find the accepting peer's node ID from the WebSocket connection
     let acceptingNodeId = null;
     for (const [nodeId, client] of this.connectedClients.entries()) {
@@ -1586,7 +1586,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
         break;
       }
     }
-    
+
     if (!acceptingNodeId) {
       console.warn(`⚠️ Invitation acceptance from unregistered peer: ${fromPeer?.substring(0, 8)}...`);
       return;

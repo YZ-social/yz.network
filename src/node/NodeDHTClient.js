@@ -1,6 +1,6 @@
 /**
  * Node.js DHT Client - WebSocket-based DHT node for Node.js environments
- * 
+ *
  * This client can join the same DHT network as browser clients, using:
  * - WebSocket connections instead of WebRTC
  * - Same DHT protocol and invitation system
@@ -87,12 +87,12 @@ export class NodeDHTClient extends DHTClient {
   generateNodeId() {
     const guid = randomUUID();
     console.log(`🆔 Generated GUID: ${guid}`);
-    
+
     const guidBytes = new TextEncoder().encode(guid);
     const seedArray = new Uint8Array(20);
     const hash = createHash('sha1').update(guidBytes).digest();
     seedArray.set(hash);
-    
+
     return new DHTNodeId(seedArray);
   }
 
@@ -135,15 +135,15 @@ export class NodeDHTClient extends DHTClient {
       const testArray = new Uint8Array(32);
       window.crypto.getRandomValues(testArray);
       console.log('✅ Verified crypto.getRandomValues is working');
-      
+
       const ed25519Module = await import('@noble/ed25519');
       const ed25519 = ed25519Module.ed25519 || ed25519Module;
-      
+
       // Set up SHA512 hash function for Node.js
       if (ed25519.etc && !ed25519.etc.sha512Sync) {
         ed25519.etc.sha512Sync = (...m) => createHash('sha512').update(Buffer.concat(m)).digest();
       }
-      
+
       // Configure noble ed25519 utils
       if (ed25519.utils) {
         ed25519.utils.randomBytes = (length) => {
@@ -151,7 +151,7 @@ export class NodeDHTClient extends DHTClient {
           return global.window.crypto.getRandomValues(array);
         };
       }
-      
+
       // Set global crypto for the noble library (avoid read-only property)
       if (typeof globalThis !== 'undefined' && !globalThis.crypto) {
         try {
@@ -165,7 +165,7 @@ export class NodeDHTClient extends DHTClient {
           console.log('ℹ️ globalThis.crypto is read-only, using global.window.crypto');
         }
       }
-      
+
       console.log('✅ Configured ed25519 for Node.js');
     } catch (error) {
       console.error('❌ Failed to configure ed25519:', error.message);

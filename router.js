@@ -57,7 +57,7 @@ async function configureNodes({number = 2} = {}) {
     nodes.push(client);
   } while (--number);
 }
-  
+
 
 configureBridges();
 await delay(1e3);

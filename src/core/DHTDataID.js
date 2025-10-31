@@ -9,9 +9,9 @@ export class DHTDataID {
     if (!bytes || bytes.length !== 20) {
       throw new Error('DHTDataID must be constructed with exactly 20 bytes. Use fromString() to create from data.');
     }
-    
+
     this.bytes = new Uint8Array(bytes);
-    
+
     // Mark as data ID (not node ID)
     this._isDataID = true;
   }
@@ -24,7 +24,7 @@ export class DHTDataID {
     const hash = crypto.SHA1(str);
     const bytes = new Uint8Array(20);
     const words = hash.words;
-    
+
     for (let i = 0; i < 5; i++) {
       const word = words[i];
       bytes[i * 4] = (word >>> 24) & 0xff;
@@ -32,7 +32,7 @@ export class DHTDataID {
       bytes[i * 4 + 2] = (word >>> 8) & 0xff;
       bytes[i * 4 + 3] = word & 0xff;
     }
-    
+
     return new DHTDataID(bytes);
   }
 
@@ -43,12 +43,12 @@ export class DHTDataID {
     if (hex.length !== 40) {
       throw new Error('Data ID hex string must be 40 characters (20 bytes)');
     }
-    
+
     const bytes = new Uint8Array(20);
     for (let i = 0; i < 20; i++) {
       bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
     }
-    
+
     return new DHTDataID(bytes);
   }
 
@@ -93,7 +93,7 @@ export class DHTDataID {
     if (position < 0 || position >= 160) {
       return 0;
     }
-    
+
     const byteIndex = Math.floor(position / 8);
     const bitIndex = position % 8;
     return (this.bytes[byteIndex] >> (7 - bitIndex)) & 1;

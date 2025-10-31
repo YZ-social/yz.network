@@ -1,9 +1,9 @@
 /**
  * Browser DHT Client - Hybrid DHT node for browser environments
- * 
+ *
  * This client connects to browser peers via WebRTC and Node.js peers via WebSocket.
  * Uses bootstrap server only for initial peer discovery and invitation exchange.
- * 
+ *
  * Architecture:
  * - Browser-to-Browser: WebRTC DataChannels with keep-alive for inactive tabs
  * - Browser-to-Node.js: WebSocket client connections (Node.js acts as WebSocket server)

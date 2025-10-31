@@ -17,7 +17,7 @@ export class KBucket {
    */
   addNode(node) {
     const existingIndex = this.nodes.findIndex(n => n.id.equals(node.id));
-    
+
     if (existingIndex !== -1) {
       // Node already exists, move to end (most recently seen)
       const existingNode = this.nodes.splice(existingIndex, 1)[0];
@@ -26,7 +26,7 @@ export class KBucket {
       this.lastUpdated = Date.now();
       return true;
     }
-    
+
     if (this.nodes.length < this.k) {
       // Bucket has space, add the node
       node.lastSeen = Date.now();
@@ -34,7 +34,7 @@ export class KBucket {
       this.lastUpdated = Date.now();
       return true;
     }
-    
+
     // Bucket is full
     return false;
   }
@@ -78,8 +78,8 @@ export class KBucket {
    */
   getLeastRecentlySeenNode() {
     if (this.nodes.length === 0) return null;
-    
-    return this.nodes.reduce((oldest, current) => 
+
+    return this.nodes.reduce((oldest, current) =>
       current.lastSeen < oldest.lastSeen ? current : oldest
     );
   }
@@ -119,7 +119,7 @@ export class KBucket {
     const newDepth = this.depth + 1;
     const leftBucket = new KBucket(this.k, this.prefix << 1, newDepth);
     const rightBucket = new KBucket(this.k, (this.prefix << 1) | 1, newDepth);
-    
+
     // Redistribute nodes
     for (const node of this.nodes) {
       const bit = node.id.getBit(this.depth);
@@ -129,10 +129,10 @@ export class KBucket {
         rightBucket.nodes.push(node);
       }
     }
-    
+
     leftBucket.lastUpdated = this.lastUpdated;
     rightBucket.lastUpdated = this.lastUpdated;
-    
+
     return { leftBucket, rightBucket };
   }
 
@@ -143,8 +143,8 @@ export class KBucket {
     // Check if the XOR distance puts this node in our bucket range
     const distance = targetId.xorDistance(nodeId);
     const leadingZeros = distance.leadingZeroBits();
-    
-    return leadingZeros >= this.depth && 
+
+    return leadingZeros >= this.depth &&
            (this.depth === 0 || leadingZeros < this.depth + 1);
   }
 
@@ -154,13 +154,13 @@ export class KBucket {
   removeStaleNodes(maxAge = 15 * 60 * 1000) { // 15 minutes default
     const now = Date.now();
     const originalLength = this.nodes.length;
-    
+
     this.nodes = this.nodes.filter(node => (now - node.lastSeen) < maxAge);
-    
+
     if (this.nodes.length !== originalLength) {
       this.lastUpdated = now;
     }
-    
+
     return originalLength - this.nodes.length; // Number removed
   }
 
@@ -175,11 +175,11 @@ export class KBucket {
       depth: this.depth,
       prefix: this.prefix.toString(2).padStart(this.depth, '0'),
       lastUpdated: this.lastUpdated,
-      avgLastSeen: this.nodes.length > 0 ? 
+      avgLastSeen: this.nodes.length > 0 ?
         this.nodes.reduce((sum, node) => sum + node.lastSeen, 0) / this.nodes.length : 0,
-      oldestNode: this.nodes.length > 0 ? 
+      oldestNode: this.nodes.length > 0 ?
         Math.min(...this.nodes.map(n => n.lastSeen)) : null,
-      newestNode: this.nodes.length > 0 ? 
+      newestNode: this.nodes.length > 0 ?
         Math.max(...this.nodes.map(n => n.lastSeen)) : null
     };
   }

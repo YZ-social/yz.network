@@ -4,12 +4,12 @@ import { EnhancedBootstrapServer } from './EnhancedBootstrapServer.js';
 
 /**
  * Standalone Enhanced Bootstrap Server Startup
- * 
+ *
  * This is the PUBLIC-FACING server that handles:
  * - New peer registrations and invitations
  * - Reconnection requests from disconnected peers
  * - WebRTC signaling between peers
- * 
+ *
  * Must be started AFTER bridge nodes are running.
  */
 
@@ -45,21 +45,21 @@ class EnhancedBootstrapManager {
     console.log(`🆕 Create New DHT: ${this.config.createNewDHT ? 'YES (Genesis Mode)' : 'NO (Standard Mode)'}`);
     console.log(`🔓 Open Network: ${this.config.openNetwork ? 'YES (No invitations required)' : 'NO (Invitations required)'}`);
     console.log(`👥 Max Peers: ${this.config.maxPeers}`);
-    
+
     if (this.config.bridgeAuth === 'default-bridge-auth-key') {
       console.warn('⚠️  WARNING: Using default bridge auth key!');
       console.warn('⚠️  Set BRIDGE_AUTH environment variable for production');
     }
-    
+
     console.log('====================================');
 
     try {
       // Create and start enhanced bootstrap server
       this.server = new EnhancedBootstrapServer(this.config);
       await this.server.start();
-      
+
       this.isRunning = true;
-      
+
       console.log('✅ Enhanced Bootstrap Server Started Successfully');
       console.log(`🔗 Clients can connect to: ws://${this.config.host}:${this.config.port}`);
       console.log('📋 Server Capabilities:');
@@ -67,7 +67,7 @@ class EnhancedBootstrapManager {
       console.log('   - Reconnection services for disconnected peers');
       console.log('   - WebRTC signaling between peers');
       console.log('   - Token-based routing to bridge nodes');
-      
+
       if (this.config.createNewDHT) {
         console.log('🌟 GENESIS MODE: First connecting peer will become genesis');
         console.log('   - Genesis peer automatically connects to bridge node');
@@ -91,15 +91,15 @@ class EnhancedBootstrapManager {
           console.log('   - New peers need invitations from existing DHT members');
         }
       }
-      
+
       console.log('====================================');
-      
+
       // Setup graceful shutdown
       this.setupGracefulShutdown();
-      
+
     } catch (error) {
       console.error('❌ Failed to start Enhanced Bootstrap Server:', error.message);
-      
+
       if (error.message.includes('bridge')) {
         console.error('');
         console.error('💡 Troubleshooting:');
@@ -110,7 +110,7 @@ class EnhancedBootstrapManager {
         console.error('      telnet localhost 8084');
         console.error('   3. Verify BRIDGE_AUTH matches between servers');
       }
-      
+
       await this.stop();
       process.exit(1);
     }
@@ -122,7 +122,7 @@ class EnhancedBootstrapManager {
     }
 
     console.log('🛑 Stopping Enhanced Bootstrap Server...');
-    
+
     if (this.server) {
       try {
         await this.server.stop();
@@ -132,7 +132,7 @@ class EnhancedBootstrapManager {
       }
       this.server = null;
     }
-    
+
     this.isRunning = false;
   }
 
@@ -151,12 +151,12 @@ class EnhancedBootstrapManager {
 
     process.on('SIGINT', () => shutdown('SIGINT'));
     process.on('SIGTERM', () => shutdown('SIGTERM'));
-    
+
     process.on('uncaughtException', (error) => {
       console.error('🚨 Uncaught Exception:', error);
       shutdown('uncaughtException');
     });
-    
+
     process.on('unhandledRejection', (reason, promise) => {
       console.error('🚨 Unhandled Rejection at:', promise, 'reason:', reason);
       shutdown('unhandledRejection');
@@ -190,14 +190,14 @@ Options:
 
 Environment Variables:
   BOOTSTRAP_PORT=8080               Bootstrap server port (public-facing)
-  BOOTSTRAP_HOST=0.0.0.0           Bootstrap server host  
+  BOOTSTRAP_HOST=0.0.0.0           Bootstrap server host
   MAX_PEERS=1000                   Maximum connected peers
   BRIDGE_AUTH=your-key             Bridge authentication key (must match bridge nodes)
 
 Startup Order:
   1. First:  npm run bridge-nodes     # Start internal bridge nodes
   2. Second: npm run bridge-bootstrap # Start public bootstrap server
-  
+
 Examples:
   # Create new DHT network (genesis mode, invitation required)
   node start-enhanced-bootstrap.js -createNewDHT
@@ -224,16 +224,16 @@ async function main() {
   }
 
   const manager = new EnhancedBootstrapManager(DEFAULT_CONFIG);
-  
+
   // Status monitoring (optional)
   if (process.argv.includes('--status')) {
     setInterval(() => {
       console.log('📊 Bootstrap Status:', JSON.stringify(manager.getStatus(), null, 2));
     }, 30000);
   }
-  
+
   await manager.start();
-  
+
   // Keep process alive
   setInterval(() => {
     // Heartbeat - could add health checks here

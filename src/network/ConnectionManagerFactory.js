@@ -57,7 +57,7 @@ export class ConnectionManagerFactory {
   static initializeTransports(options = {}) {
     ConnectionManagerFactory.localNodeType = ConnectionManagerFactory.detectNodeType();
     ConnectionManagerFactory.defaultOptions = options;
-    
+
     console.log(`🏗️ ConnectionManagerFactory initialized for ${ConnectionManagerFactory.localNodeType} environment`);
   }
 
@@ -73,7 +73,7 @@ export class ConnectionManagerFactory {
       console.log(`🔄 Reusing cached connection manager for ${peerId.substring(0, 8)}...`);
       return ConnectionManagerFactory.managerCache.get(peerId);
     }
-    
+
     // Determine target node type from metadata
     let targetNodeType = 'browser'; // default
     if (peerMetadata) {
@@ -81,14 +81,14 @@ export class ConnectionManagerFactory {
         targetNodeType = 'nodejs';
       }
     }
-    
+
     // Create manager on-demand based on connection requirements
     const manager = ConnectionManagerFactory.createForConnection(
       ConnectionManagerFactory.localNodeType,
       targetNodeType,
       ConnectionManagerFactory.defaultOptions
     );
-    
+
     // Apply any existing global metadata to the new manager
     for (const [metaPeerId, metadata] of ConnectionManagerFactory.globalMetadata.entries()) {
       if (manager.setPeerMetadata) {
@@ -99,7 +99,7 @@ export class ConnectionManagerFactory {
     // Cache the manager for future use
     ConnectionManagerFactory.managerCache.set(peerId, manager);
     console.log(`💾 Cached new connection manager for ${peerId.substring(0, 8)}...`);
-    
+
     return manager;
   }
 
@@ -171,7 +171,7 @@ export class ConnectionManagerFactory {
    */
   static setPeerMetadata(peerId, metadata) {
     ConnectionManagerFactory.globalMetadata.set(peerId, metadata);
-    
+
     // Apply metadata to all cached managers
     for (const manager of ConnectionManagerFactory.managerCache.values()) {
       if (manager.setPeerMetadata) {

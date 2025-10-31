@@ -8,7 +8,7 @@ console.log('✅ Imports loaded successfully');
 
 /**
  * Standalone Bridge Nodes Startup
- * 
+ *
  * These are INTERNAL servers that provide reconnection validation services.
  * They observe DHT network traffic but don't participate in DHT operations.
  * Must be started BEFORE the enhanced bootstrap server.
@@ -17,7 +17,7 @@ console.log('✅ Imports loaded successfully');
 const DEFAULT_CONFIG = {
   bridgeAuth: process.env.BRIDGE_AUTH || 'default-bridge-auth-key',
   bootstrapServers: ['ws://localhost:8080'],
-  
+
   nodes: [
     {
       port: parseInt(process.env.BRIDGE_PORT_1) || 8083,
@@ -27,7 +27,7 @@ const DEFAULT_CONFIG = {
     },
     {
       port: parseInt(process.env.BRIDGE_PORT_2) || 8084,
-      host: 'localhost', 
+      host: 'localhost',
       dhtPort: parseInt(process.env.BRIDGE_DHT_PORT_2) || 9084,
       maxConnections: 20
     }
@@ -50,12 +50,12 @@ class BridgeNodesManager {
     console.log('=================================');
     console.log(`🔐 Bridge Auth: ${this.config.bridgeAuth === 'default-bridge-auth-key' ? 'DEFAULT (change for production)' : 'CUSTOM'}`);
     console.log(`🏗️  Nodes to start: ${this.config.nodes.length}`);
-    
+
     if (this.config.bridgeAuth === 'default-bridge-auth-key') {
       console.warn('⚠️  WARNING: Using default bridge auth key!');
       console.warn('⚠️  Set BRIDGE_AUTH environment variable for production');
     }
-    
+
     console.log('=================================');
 
     try {
@@ -64,9 +64,9 @@ class BridgeNodesManager {
         const nodeConfig = this.config.nodes[i];
         await this.startBridgeNode(i + 1, nodeConfig);
       }
-      
+
       this.isRunning = true;
-      
+
       console.log('=================================');
       console.log('✅ All Bridge Nodes Started Successfully');
       console.log(`🌉 ${this.bridges.length} bridge nodes running`);
@@ -80,10 +80,10 @@ class BridgeNodesManager {
       console.log('   npm run bridge-bootstrap        # Standard mode');
       console.log('   npm run bridge-bootstrap:genesis # Genesis mode (new DHT)');
       console.log('=================================');
-      
+
       // Setup graceful shutdown
       this.setupGracefulShutdown();
-      
+
     } catch (error) {
       console.error('❌ Failed to start bridge nodes:', error.message);
       await this.stop();
@@ -95,7 +95,7 @@ class BridgeNodesManager {
     console.log(`🌉 Starting bridge node ${nodeNumber}...`);
     console.log(`   Bridge Service: ${nodeConfig.host}:${nodeConfig.port} (internal only)`);
     console.log(`   DHT Connection: ${nodeConfig.host}:${nodeConfig.dhtPort}`);
-    
+
     try {
       // PassiveBridgeNode creates its own connection manager via factory
       const bridge = new PassiveBridgeNode({
@@ -110,18 +110,18 @@ class BridgeNodesManager {
           maxConnections: nodeConfig.maxConnections
         }
       });
-      
+
       await bridge.start();
       this.bridges.push({
         bridge,
         nodeNumber,
         config: nodeConfig
       });
-      
+
       console.log(`✅ Bridge node ${nodeNumber} started successfully`);
       console.log(`   Status: ${bridge.getStatus().isStarted ? 'RUNNING' : 'ERROR'}`);
       console.log(`   Node ID: ${bridge.dht.localNodeId.toString().substring(0, 16)}...`);
-      
+
     } catch (error) {
       console.error(`❌ Failed to start bridge node ${nodeNumber}:`, error.message);
       throw error;
@@ -134,7 +134,7 @@ class BridgeNodesManager {
     }
 
     console.log('🛑 Stopping Bridge Nodes...');
-    
+
     // Stop all bridge nodes
     for (let i = 0; i < this.bridges.length; i++) {
       const { bridge, nodeNumber } = this.bridges[i];
@@ -145,7 +145,7 @@ class BridgeNodesManager {
         console.error(`Error stopping bridge node ${nodeNumber}:`, error);
       }
     }
-    
+
     this.bridges = [];
     this.isRunning = false;
     console.log('🌉 All bridge nodes stopped');
@@ -166,12 +166,12 @@ class BridgeNodesManager {
 
     process.on('SIGINT', () => shutdown('SIGINT'));
     process.on('SIGTERM', () => shutdown('SIGTERM'));
-    
+
     process.on('uncaughtException', (error) => {
       console.error('🚨 Uncaught Exception:', error);
       shutdown('uncaughtException');
     });
-    
+
     process.on('unhandledRejection', (reason, promise) => {
       console.error('🚨 Unhandled Rejection at:', promise, 'reason:', reason);
       shutdown('unhandledRejection');
@@ -210,7 +210,7 @@ Options:
 Environment Variables:
   BRIDGE_AUTH=your-key              Bridge authentication key
   BRIDGE_PORT_1=8083               First bridge node port (internal)
-  BRIDGE_PORT_2=8084               Second bridge node port (internal)  
+  BRIDGE_PORT_2=8084               Second bridge node port (internal)
   BRIDGE_DHT_PORT_1=9083           First bridge DHT connection port
   BRIDGE_DHT_PORT_2=9084           Second bridge DHT connection port
 
@@ -226,10 +226,10 @@ Startup Order:
 Examples:
   # Start bridge nodes with default configuration
   node start-bridge-nodes.js
-  
+
   # Custom configuration
   BRIDGE_AUTH=secret BRIDGE_PORT_1=9083 node start-bridge-nodes.js
-  
+
   # With status monitoring
   node start-bridge-nodes.js --status
 `);
@@ -243,7 +243,7 @@ async function main() {
   }
 
   const manager = new BridgeNodesManager(DEFAULT_CONFIG);
-  
+
   // Status monitoring (optional)
   if (process.argv.includes('--status')) {
     setInterval(() => {
@@ -254,9 +254,9 @@ async function main() {
       });
     }, 30000);
   }
-  
+
   await manager.start();
-  
+
   // Keep process alive
   setInterval(() => {
     // Heartbeat - could add health checks here

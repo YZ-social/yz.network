@@ -12,7 +12,7 @@ class App {
     console.log(`🏗️ Creating new App instance [${instanceId}]`);
     console.trace('App constructor called from:');
     this.instanceId = instanceId;
-    
+
     this.dht = null;
     this.visualizer = null;
     this.isInitialized = false;
@@ -117,12 +117,12 @@ class App {
       app: this,
       dht: this.dht,
       visualizer: this.visualizer,
-      
+
       // Helper functions
       getStats: () => this.dht ? this.dht.getStats() : null,
       getNodes: () => this.dht ? this.dht.routingTable.getAllNodes() : [],
       getPeers: () => this.dht ? this.dht.routingTable.getAllNodes().filter(node => node.isConnected()).map(node => node.id.toString()) : [],
-      
+
       // Development tools
       async testStore(key = 'test-key', value = 'test-value') {
         if (!this.dht || !this.dht.isStarted) {
@@ -147,7 +147,7 @@ class App {
           return false;
         }
       },
-      
+
       async testGet(key = 'test-key') {
         if (!this.dht || !this.dht.isStarted) {
           console.warn('DHT not started');
@@ -171,18 +171,18 @@ class App {
           return null;
         }
       },
-      
+
       simulateNetwork(peerCount = 5) {
         console.log(`Simulating network with ${peerCount} peers...`);
         // This would create virtual peers for testing
         // Implementation depends on testing requirements
       },
-      
+
       exportLogs() {
         const logs = Array.from(document.querySelectorAll('.log-entry'))
           .map(entry => entry.textContent)
           .join('\n');
-        
+
         const blob = new Blob([logs], { type: 'text/plain' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -209,19 +209,19 @@ class App {
         this.dht.resetEmergencyThrottle();
         return true;
       },
-      
+
       // Debug helpers that work without WebRTC
       addFakePeer(nodeIdStr) {
         if (!this.dht) return false;
         const nodeId = this.dht.localNodeId.constructor.fromString(nodeIdStr || 'fake-peer-' + Math.random().toString(36).substr(2, 9));
-        this.dht.routingTable.addNode(nodeId, { 
+        this.dht.routingTable.addNode(nodeId, {
           lastSeen: Date.now(),
           status: 'fake'
         });
         console.log(`Added fake peer: ${nodeId.toString()}`);
         return nodeId.toString();
       },
-      
+
       testStoreLocal(key = 'test', value = 'hello') {
         if (!this.dht) return false;
         // Store locally without network
@@ -233,7 +233,7 @@ class App {
         console.log(`Stored locally: ${key} = ${value}`);
         return true;
       },
-      
+
       getLocalStorage() {
         if (!this.dht) return {};
         const result = {};
@@ -242,14 +242,14 @@ class App {
         }
         return result;
       },
-      
+
       forceAddPeerToRouting(nodeIdStr) {
         if (!this.dht) return false;
         try {
           // Create a proper DHTNode instance
           const node = new DHTNode(nodeIdStr, 'fake-endpoint');
           this.dht.routingTable.addNode(node);
-          
+
           console.log(`Force added peer to routing table: ${node.id.toString()}`);
           console.log(`Routing table size: ${this.dht.routingTable.getAllNodes().length}`);
           return node.id.toString();
@@ -258,7 +258,7 @@ class App {
           return false;
         }
       },
-      
+
       async testDHTConnection(peerId) {
         if (!this.dht) return false;
         try {
@@ -271,7 +271,7 @@ class App {
           return false;
         }
       },
-      
+
       getBootstrapStatus() {
         if (!this.dht) return null;
         return {
@@ -281,7 +281,7 @@ class App {
           isStarted: this.dht.isStarted
         };
       },
-      
+
       async lookupPeer(peerId) {
         if (!this.dht || !this.dht.bootstrap) return null;
         try {
@@ -293,10 +293,10 @@ class App {
           return null;
         }
       },
-      
+
       async connectToPeer(peerId) {
         if (!this.dht) return false;
-        
+
         // Auto-start DHT if not started
         if (!this.dht.isStarted) {
           console.log('DHT not started, starting automatically...');
@@ -310,7 +310,7 @@ class App {
             return false;
           }
         }
-        
+
         try {
           console.log(`Attempting directed connection to: ${peerId}`);
           const result = await this.dht.connectToPeerDirected(peerId);
@@ -327,12 +327,12 @@ class App {
           console.error('DHT not initialized');
           return false;
         }
-        
+
         if (!this.dht.isStarted) {
           console.error('DHT not started');
           return false;
         }
-        
+
         try {
           console.log(`Inviting new client to join DHT: ${clientId}`);
           const result = await this.dht.inviteNewClient(clientId);
@@ -347,13 +347,13 @@ class App {
           return false;
         }
       },
-      
+
       setBootstrapSignaling(enabled) {
         if (!this.dht) return false;
         this.dht.setBootstrapSignaling(enabled);
         return this.getBootstrapStatus();
       },
-      
+
       copyNodeId() {
         if (!this.dht) return null;
         const nodeId = this.dht.localNodeId.toString();
@@ -375,7 +375,7 @@ class App {
         }
         return nodeId;
       },
-      
+
       // REMOVED: Legacy insecure genesis methods
       initializeGenesisPeer() {
         console.error('🚨 SECURITY: initializeGenesisPeer() disabled for security');
@@ -383,17 +383,17 @@ class App {
         console.error('💡 Use: node src/bootstrap/server.js -createNewDHT');
         return false;
       },
-      
+
       forceConnectToPeer() {
         console.error('🚨 SECURITY: forceConnectToPeer() disabled for security');
         console.error('🔐 Use token-based invitations instead: YZSocialC.inviteNewClient(peerId)');
         return false;
       },
-      
+
       isGenesisPeer() {
         return this.dht ? this.dht.isGenesisPeer : false;
       },
-      
+
       async startDHT() {
         if (!this.dht) {
           console.error('DHT not initialized');
@@ -413,18 +413,18 @@ class App {
           return false;
         }
       },
-      
+
       async testConnectivity() {
         console.log('Testing STUN/TURN server connectivity...');
         const iceServers = [
           { urls: 'stun:stun.l.google.com:19302' },
           { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }
         ];
-        
+
         try {
           const pc = new RTCPeerConnection({ iceServers });
           const candidates = [];
-          
+
           pc.onicecandidate = (event) => {
             if (event.candidate) {
               candidates.push(event.candidate);
@@ -434,12 +434,12 @@ class App {
               pc.close();
             }
           };
-          
+
           // Create a data channel to trigger ICE gathering
           pc.createDataChannel('test');
           const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
-          
+
           console.log('ICE gathering started...');
           return { success: true, message: 'STUN/TURN server connectivity test passed' };
         } catch (error) {
@@ -447,34 +447,34 @@ class App {
           return { success: false, message: `Connectivity test failed: ${error.message}` };
         }
       },
-      
+
       debugRoutingTable() {
         if (!this.dht) return null;
         const routingNodes = this.dht.routingTable.getAllNodes();
         const connectedPeers = this.dht.getConnectedPeers();
-        
+
         console.log('=== Routing Table Debug ===');
         console.log(`Routing table size: ${routingNodes.length}`);
         console.log(`Connected WebRTC peers: ${connectedPeers.length}`);
-        
+
         const routingPeerIds = routingNodes.map(node => node.id.toString());
         const missingConnections = routingPeerIds.filter(id => !connectedPeers.includes(id));
         const extraConnections = connectedPeers.filter(id => !routingPeerIds.includes(id));
-        
+
         if (missingConnections.length > 0) {
           console.log(`⚠️  Peers in routing table but not connected: ${missingConnections.length}`);
           missingConnections.forEach(id => console.log(`  - ${id}`));
         }
-        
+
         if (extraConnections.length > 0) {
           console.log(`⚠️  Connected peers not in routing table: ${extraConnections.length}`);
           extraConnections.forEach(id => console.log(`  - ${id}`));
         }
-        
+
         if (missingConnections.length === 0 && extraConnections.length === 0) {
           console.log('✅ Routing table and WebRTC connections are synchronized');
         }
-        
+
         return {
           routingTableSize: routingNodes.length,
           connectedPeers: connectedPeers.length,
@@ -483,14 +483,14 @@ class App {
           synchronized: missingConnections.length === 0 && extraConnections.length === 0
         };
       },
-      
+
       cleanupRoutingTable() {
         if (!this.dht) return false;
         const cleaned = this.dht.cleanupRoutingTable();
         console.log(`Cleaned up ${cleaned} inconsistent routing table entries`);
         return cleaned;
       },
-      
+
       refreshUI() {
         if (!this.visualizer) {
           console.warn('Visualizer not available');
@@ -499,20 +499,20 @@ class App {
         this.visualizer.forceRefresh();
         return true;
       },
-      
+
       debugConnectionState() {
         if (!this.dht) {
           console.log('DHT not available');
           return null;
         }
-        
+
         const connectionPeers = this.dht ? this.dht.getConnectedPeers() : [];
         const routingNodes = this.dht.routingTable ? this.dht.routingTable.getAllNodes() : [];
         const connectionStats = this.dht ? this.dht.getStats() : {};
-        
+
         // Also get ALL peers (including filtered ones) for debugging
         const allConnectionPeers = this.dht ? this.dht.getConnectedPeers() : [];
-        
+
         console.log('=== Connection State Debug ===');
         console.log(`Our Node ID: ${this.dht.localNodeId.toString()}`);
         console.log(`DHT Started: ${this.dht.isStarted}`);
@@ -521,7 +521,7 @@ class App {
         console.log(`Connected Peers (all): ${allConnectionPeers.length}`);
         console.log(`Routing Table Nodes: ${routingNodes.length}`);
         console.log(`Connection Stats:`, connectionStats);
-        
+
         if (allConnectionPeers.length > connectionPeers.length) {
           console.log('🔍 Filtered out connections:');
           const filtered = allConnectionPeers.filter(peer => !connectionPeers.includes(peer));
@@ -530,32 +530,32 @@ class App {
             console.log(`  - ${peer} (filtered) - Valid DHT peer: ${isValid}`);
           });
         }
-        
+
         if (connectionPeers.length > 0) {
           console.log('✅ Valid DHT Peers:');
           connectionPeers.forEach(peer => console.log(`  - ${peer}`));
         }
-        
+
         if (routingNodes.length > 0) {
           console.log('📋 Routing Table Nodes:');
           routingNodes.forEach(node => console.log(`  - ${node.id.toString()}`));
         }
-        
+
         // Check for mismatches
         const routingPeerIds = routingNodes.map(node => node.id.toString());
         const missingConnections = routingPeerIds.filter(id => !connectionPeers.includes(id));
         const extraConnections = connectionPeers.filter(id => !routingPeerIds.includes(id));
-        
+
         if (missingConnections.length > 0) {
           console.warn('⚠️  Peers in routing table but missing connections:');
           missingConnections.forEach(id => console.warn(`  - ${id}`));
         }
-        
+
         if (extraConnections.length > 0) {
           console.warn('⚠️  Connections not in routing table:');
           extraConnections.forEach(id => console.warn(`  - ${id}`));
         }
-        
+
         return {
           ourNodeId: this.dht.localNodeId.toString(),
           dhtStarted: this.dht.isStarted,
@@ -570,29 +570,29 @@ class App {
           extraConnections
         };
       },
-      
+
       investigatePhantomPeer(suspiciousPeerId = '215b077e48252e46363cb609d803a5403be6a505') {
         if (!this.dht) {
           console.log('DHT not available');
           return null;
         }
-        
+
         console.log(`🕵️ Investigating phantom peer: ${suspiciousPeerId}`);
         console.log(`Our Node ID: ${this.dht.localNodeId.toString()}`);
-        
+
         // Check if it's in connection manager
         const connectionExists = this.dht.isPeerConnected(suspiciousPeerId);
         const isConnected = this.dht.isPeerConnected(suspiciousPeerId);
         const isValidDHTPeer = this.dht.isValidDHTPeer ? this.dht.isValidDHTPeer(suspiciousPeerId) : true;
-        
+
         // Check if it's in routing table
         const routingNode = this.dht.routingTable.getNode(suspiciousPeerId);
-        
+
         console.log(`🔍 Connection exists: ${connectionExists}`);
         console.log(`🔍 Is connected: ${isConnected}`);
         console.log(`🔍 Valid DHT peer: ${isValidDHTPeer}`);
         console.log(`🔍 In routing table: ${!!routingNode}`);
-        
+
         if (connectionExists) {
           // Connection details handled by DHT internally
           console.log(`🔍 Connection state:`, {
@@ -600,7 +600,7 @@ class App {
             type: connection instanceof WebSocket ? 'WebSocket' : 'WebRTC'
           });
         }
-        
+
         if (routingNode) {
           console.log(`🔍 Routing node details:`, {
             id: routingNode.id.toString(),
@@ -608,11 +608,11 @@ class App {
             endpoint: routingNode.endpoint
           });
         }
-        
+
         // Check bootstrap connection state
         const bootstrapStatus = this.dht.bootstrap.getStatus();
         console.log(`🔍 Bootstrap status:`, bootstrapStatus);
-        
+
         return {
           suspiciousPeerId,
           ourNodeId: this.dht.localNodeId.toString(),
@@ -632,27 +632,27 @@ class App {
           bootstrapStatus
         };
       },
-      
+
       forceClearUI() {
         if (!this.visualizer) {
           console.warn('Visualizer not available');
           return false;
         }
-        
+
         console.log('🧹 Force clearing UI peer display');
-        
+
         // Get the peer list element
         const peerListElement = document.getElementById('peer-list');
         if (peerListElement) {
           console.log('📋 Current UI content:', peerListElement.innerHTML);
           peerListElement.innerHTML = '<div class="wasm-placeholder">UI cleared - refresh to update</div>';
           console.log('✅ UI peer display cleared');
-          
+
           // Force immediate refresh
           setTimeout(() => {
             this.visualizer.updatePeerDisplay();
           }, 100);
-          
+
           return true;
         } else {
           console.warn('Peer list element not found');
@@ -679,7 +679,7 @@ class App {
           return false;
         }
       },
-      
+
       async refreshBuckets() {
         if (!this.dht) {
           console.log('DHT not available');
@@ -696,7 +696,7 @@ class App {
           return false;
         }
       },
-      
+
       switchToDHTSignaling() {
         if (!this.dht) {
           console.log('DHT not available');
@@ -707,12 +707,12 @@ class App {
         this.dht.considerDHTSignaling();
         return true;
       },
-      
+
       getSignalingMode() {
         if (!this.dht) {
           return null;
         }
-        
+
         return {
           useBootstrapForSignaling: this.dht.useBootstrapForSignaling,
           bootstrapConnected: this.dht.bootstrap.isBootstrapConnected(),
@@ -722,7 +722,7 @@ class App {
           routingTablePeers: this.dht.routingTable.getAllNodes().map(n => n.id.toString())
         };
       },
-      
+
       syncRoutingTable() {
         if (!this.dht) {
           console.log('DHT not available');
@@ -731,11 +731,11 @@ class App {
 
         const connectedPeers = this.dht.getConnectedPeers();
         const routingTablePeers = this.dht.routingTable.getAllNodes().map(n => n.id.toString());
-        
+
         console.log('🔄 Syncing routing table with connected peers...');
         console.log(`Connected peers: ${connectedPeers.length}`, connectedPeers);
         console.log(`Routing table peers: ${routingTablePeers.length}`, routingTablePeers);
-        
+
         let added = 0;
         for (const peerId of connectedPeers) {
           if (!routingTablePeers.includes(peerId) && this.dht.isValidDHTPeer(peerId)) {
@@ -746,29 +746,29 @@ class App {
             added++;
           }
         }
-        
+
         if (added > 0) {
           console.log(`📊 Added ${added} peers to routing table, checking DHT signaling...`);
           this.dht.considerDHTSignaling();
         } else {
           console.log('📊 Routing table already in sync');
         }
-        
+
         const newRoutingTableSize = this.dht.routingTable.getAllNodes().length;
         console.log(`📊 Final routing table size: ${newRoutingTableSize}`);
-        
+
         return added;
       },
-      
+
       forceAddConnectedPeersToRouting() {
         if (!this.dht) {
           console.log('DHT not available');
           return false;
         }
-        
+
         const connectedPeers = this.dht.getConnectedPeers();
         console.log(`🔄 Force adding ${connectedPeers.length} connected peers to routing table...`);
-        
+
         let added = 0;
         for (const peerId of connectedPeers) {
           if (this.dht.isValidDHTPeer(peerId)) {
@@ -784,35 +784,35 @@ class App {
             console.warn(`Invalid DHT peer: ${peerId}`);
           }
         }
-        
+
         console.log(`📊 Added ${added} peers to routing table`);
         console.log(`📊 Final routing table size: ${this.dht.routingTable.getAllNodes().length}`);
-        
+
         // Force DHT signaling check
         this.dht.considerDHTSignaling();
-        
+
         return added;
       },
-      
+
       debugEventHandlers() {
         if (!this.dht) {
           console.log('DHT not available');
           return false;
         }
-        
+
         console.log('🔍 Debugging event handlers...');
         console.log('DHT available:', !!this.dht);
         console.log('Routing table available:', !!this.dht?.routingTable);
-        
+
         // Test manual peer connected event
         const connectedPeers = this.dht.getConnectedPeers();
         console.log(`Connected peers: ${connectedPeers.length}`, connectedPeers);
-        
+
         // Test manual event emission
         if (connectedPeers.length > 0) {
           console.log(`🧪 Testing manual event emission for ${connectedPeers[0]}`);
           // Event emission handled by connection managers
-          
+
           console.log(`🔄 Also manually triggering handlePeerConnected for ${connectedPeers[0]}`);
           this.dht.handlePeerConnected(connectedPeers[0]);
         } else {
@@ -820,10 +820,10 @@ class App {
           console.log('🧪 Testing event handler with fake peer ID...');
           // Event emission handled by connection managers
         }
-        
+
         return true;
       },
-      
+
       /**
        * Get keep-alive status for all WebRTC connections
        */
@@ -832,39 +832,39 @@ class App {
           console.log('DHT or connection manager not available');
           return null;
         }
-        
+
         const cm = this.dht.connectionManager;
         console.log('💓 Keep-Alive Status Report');
         console.log(`Connection Manager Type: ${cm.constructor.name}`);
-        
+
         // Check if connection manager has getKeepAliveStatus method (WebRTCManager)
         if (cm.getKeepAliveStatus) {
           console.log('📱 Using WebRTCManager keep-alive system');
           return cm.getKeepAliveStatus();
         }
-        
+
         // Fallback for older connection managers
         const connectedPeers = cm.getConnectedPeers();
         const keepAliveStatus = {};
-        
+
         console.log(`Tab visible: ${cm.isTabVisible}`);
-        
+
         // SAFETY CHECK: Ensure keep-alive maps exist
         if (!cm.keepAliveIntervals) {
           console.warn('⚠️ keepAliveIntervals not initialized - connection manager missing keep-alive system');
           console.log('Available properties:', Object.keys(cm));
           return null;
         }
-        
+
         console.log(`Active keep-alive intervals: ${cm.keepAliveIntervals.size}`);
         console.log(`Keep-alive frequency: ${cm.isTabVisible ? cm.keepAliveFrequency : cm.inactiveKeepAliveFrequency}ms`);
-        
+
         for (const peerId of connectedPeers) {
           const hasKeepAlive = cm.keepAliveIntervals.has(peerId);
           const lastPing = cm.lastPingTimes.get(peerId);
           const pendingPings = cm.pingResponses.get(peerId)?.size || 0;
           const connectionType = cm.connectionTypes.get(peerId);
-          
+
           keepAliveStatus[peerId] = {
             hasKeepAlive,
             lastPing: lastPing ? new Date(lastPing).toLocaleTimeString() : 'Never',
@@ -872,17 +872,17 @@ class App {
             connectionType,
             timeSinceLastPing: lastPing ? Date.now() - lastPing : null
           };
-          
+
           console.log(`  ${peerId.substring(0, 8)}... (${connectionType}):`, {
             keepAlive: hasKeepAlive ? '✅' : '❌',
             lastPing: keepAliveStatus[peerId].lastPing,
             pending: pendingPings
           });
         }
-        
+
         return keepAliveStatus;
       },
-      
+
       /**
        * Manually trigger keep-alive ping for testing
        */
@@ -891,15 +891,15 @@ class App {
           console.log('DHT or connection manager not available');
           return false;
         }
-        
+
         const cm = this.dht.connectionManager;
-        
+
         // Check if connection manager has testKeepAlivePing method (WebRTCManager)
         if (cm.testKeepAlivePing) {
           console.log('📱 Using WebRTCManager keep-alive test');
           return cm.testKeepAlivePing(peerId);
         }
-        
+
         // Fallback for older connection managers
         // SAFETY CHECK: Ensure keep-alive system exists
         if (!cm.sendKeepAlivePing) {
@@ -907,23 +907,23 @@ class App {
           console.log(`Connection manager type: ${cm.constructor.name}`);
           return false;
         }
-        
+
         const connectedPeers = cm.getConnectedPeers();
-        
+
         if (!peerId && connectedPeers.length > 0) {
           peerId = connectedPeers[0];
         }
-        
+
         if (!peerId) {
           console.log('No peer to test - no connections available');
           return false;
         }
-        
+
         console.log(`🏓 Manually triggering keep-alive ping to ${peerId.substring(0, 8)}...`);
         cm.sendKeepAlivePing(peerId);
         return true;
       },
-      
+
       /**
        * Check connection health for all peers
        */
@@ -935,16 +935,16 @@ class App {
           console.log('DHT not available');
           return null;
         }
-        
+
         console.log('🔍 DEBUGGING ROUTING TABLE POPULATION');
         console.log('='.repeat(50));
-        
+
         const connectedPeers = this.dht.getConnectedPeers();
         const routingNodes = this.dht.routingTable.getAllNodes();
-        
+
         console.log(`Connected Peers: ${connectedPeers.length}`);
         console.log(`Routing Table Nodes: ${routingNodes.length}`);
-        
+
         console.log('\n📋 ROUTING TABLE DETAILS:');
         if (routingNodes.length === 0) {
           console.log('  No nodes in routing table!');
@@ -954,26 +954,26 @@ class App {
             console.log(`  ${i+1}. ${peerId.substring(0, 8)}... - Connected: ${node.isConnected()}`);
           });
         }
-        
+
         console.log('\n🔗 CONNECTION MANAGER DETAILS:');
         console.log(`Event handlers setup: ${!!this.dht.routingTable.eventHandlersSetup}`);
         console.log(`RoutingTable onNodeAdded: ${!!this.dht.routingTable.onNodeAdded}`);
-        
+
         // Check if we can manually trigger adding connected peers to routing table
         console.log('\n🔄 ATTEMPTING MANUAL ROUTING TABLE SYNC:');
         for (const peerId of connectedPeers) {
           const existsInRouting = routingNodes.some(node => node.id.toString() === peerId);
           console.log(`  ${peerId.substring(0, 8)}... - In routing table: ${existsInRouting}`);
-          
+
           if (!existsInRouting) {
             console.log(`    ⚠️ Missing from routing table!`);
           }
         }
-        
+
         return {
           connectedPeers: connectedPeers.length,
           routingTableNodes: routingNodes.length,
-          missingFromRouting: connectedPeers.filter(peerId => 
+          missingFromRouting: connectedPeers.filter(peerId =>
             !routingNodes.some(node => node.id.toString() === peerId)
           )
         };
@@ -984,33 +984,33 @@ class App {
           console.log('DHT not available');
           return null;
         }
-        
+
         console.log('🩺 Connection Health Check');
-        
+
         // Use the DHT's connection-agnostic methods
         const connectedPeers = this.dht.getConnectedPeers();
         const routingTableNodes = this.dht.routingTable?.getAllNodes() || [];
-        
+
         const healthReport = {
           connectedPeers: connectedPeers.length,
           routingTableSize: routingTableNodes.length,
           connectionDetails: {}
         };
-        
+
         console.log(`Connected Peers: ${connectedPeers.length}, Routing Table: ${routingTableNodes.length}`);
-        
+
         // Check each node's connection status using the new per-node architecture
         for (const node of routingTableNodes) {
           const peerId = node.id.toString();
           const isConnected = node.isConnected();
           const connectionManager = node.connectionManager;
-          
+
           let connectionType = 'unknown';
           let connectionState = 'unknown';
-          
+
           if (connectionManager) {
             connectionType = connectionManager.constructor.name.includes('WebRTC') ? 'webrtc' : 'websocket';
-            
+
             if (node.connection) {
               if (connectionType === 'webrtc' && node.connection.connectionState) {
                 connectionState = node.connection.connectionState;
@@ -1019,7 +1019,7 @@ class App {
               }
             }
           }
-          
+
           healthReport.connectionDetails[peerId] = {
             type: connectionType,
             state: connectionState,
@@ -1027,13 +1027,13 @@ class App {
             hasConnectionManager: !!connectionManager,
             hasConnection: !!node.connection
           };
-          
+
           console.log(`  ${peerId.substring(0, 8)}... (${connectionType}): ${connectionState} ${isConnected ? '✅' : '❌'}`);
         }
-        
+
         return healthReport;
       },
-      
+
       /**
        * Debug WebRTC connection states and transitions
        */
@@ -1042,27 +1042,27 @@ class App {
           console.log('DHT or connection manager not available');
           return null;
         }
-        
+
         const cm = this.dht.connectionManager;
         console.log('🔍 WebRTC Connection State Debug');
-        
+
         if (!cm.connections) {
           console.log('No connections map available');
           return null;
         }
-        
-        const webrtcConnections = Array.from(cm.connections.entries()).filter(([_peerId, _connection]) => 
+
+        const webrtcConnections = Array.from(cm.connections.entries()).filter(([_peerId, _connection]) =>
           cm.connectionTypes?.get(_peerId) === 'webrtc'
         );
-        
+
         console.log(`Found ${webrtcConnections.length} WebRTC connections`);
-        
+
         for (const [peerId, connection] of webrtcConnections) {
           const currentState = connection.connectionState;
           const trackedState = cm.connectionStates?.get(peerId);
           const dataChannel = cm.dataChannels?.get(peerId);
           const hasKeepAlive = cm.keepAliveIntervals?.has(peerId);
-          
+
           console.log(`\n${peerId.substring(0, 8)}...:`);
           console.log(`  Connection state: ${currentState} (tracked: ${trackedState})`);
           console.log(`  ICE connection state: ${connection.iceConnectionState}`);
@@ -1070,7 +1070,7 @@ class App {
           console.log(`  Signaling state: ${connection.signalingState}`);
           console.log(`  Data channel: ${dataChannel ? dataChannel.readyState : 'none'}`);
           console.log(`  Keep-alive active: ${hasKeepAlive ? '✅' : '❌'}`);
-          
+
           // Check for common WebRTC issues
           if (currentState === 'failed') {
             console.warn(`  ❌ Connection failed - ICE: ${connection.iceConnectionState}`);
@@ -1082,7 +1082,7 @@ class App {
             console.warn(`  ⚠️ Data channel not open: ${dataChannel.readyState}`);
           }
         }
-        
+
         return {
           webrtcCount: webrtcConnections.length,
           states: webrtcConnections.map(([peerId, connection]) => ({
@@ -1093,7 +1093,7 @@ class App {
           }))
         };
       },
-      
+
       /**
        * Simulate tab visibility change for testing
        */
@@ -1102,40 +1102,40 @@ class App {
           console.log('DHT or connection manager not available');
           return false;
         }
-        
+
         const cm = this.dht.connectionManager;
-        
+
         // Check if connection manager has simulateTabVisibilityChange method (WebRTCManager)
         if (cm.simulateTabVisibilityChange) {
           console.log('📱 Using WebRTCManager tab visibility simulation');
           return cm.simulateTabVisibilityChange();
         }
-        
+
         // Fallback for older connection managers
         const oldVisible = cm.isTabVisible;
-        
+
         if (visible === null) {
           visible = !oldVisible; // Toggle
         }
-        
+
         console.log(`📱 Simulating tab visibility change: ${oldVisible} → ${visible}`);
         cm.isTabVisible = visible;
-        
+
         if (cm.adjustKeepAliveFrequency) {
           cm.adjustKeepAliveFrequency();
         }
-        
+
         if (visible && !oldVisible) {
           console.log('🔄 Simulating tab became visible - checking connection health...');
           // Check connection health manually instead of calling non-existent method
           const connectedPeers = cm.getConnectedPeers();
           console.log(`📊 Connection check: ${connectedPeers.length} peers connected`);
         }
-        
+
         return true;
       },
-      
-      
+
+
       /**
        * Get rate limiting and traffic statistics
        */
@@ -1144,7 +1144,7 @@ class App {
           console.log('DHT not available');
           return null;
         }
-        
+
         const now = Date.now();
         const stats = {
           findNodeRateLimit: this.dht.findNodeRateLimit.size,
@@ -1155,7 +1155,7 @@ class App {
           peerFailureBackoff: this.dht.peerFailureBackoff.size,
           processedMessages: this.dht.processedMessages.size
         };
-        
+
         console.log('📊 DHT Traffic Statistics:');
         console.log(`Rate limited peers: ${stats.findNodeRateLimit}`);
         console.log(`Last bucket refresh: ${stats.lastBucketRefresh}`);
@@ -1163,10 +1163,10 @@ class App {
         console.log(`Find node min interval: ${stats.findNodeMinInterval}s`);
         console.log(`Failed peers in backoff: ${stats.peerFailureBackoff}`);
         console.log(`Processed messages cache: ${stats.processedMessages}`);
-        
+
         return stats;
       },
-      
+
       /**
        * Manually trigger cleanup of tracking maps
        */
@@ -1175,12 +1175,12 @@ class App {
           console.log('DHT not available');
           return false;
         }
-        
+
         console.log('🧹 Manually triggering tracking maps cleanup...');
         this.dht.cleanupTrackingMaps();
         return true;
       },
-      
+
       /**
        * Get adaptive refresh status and bucket staleness info
        */
@@ -1189,11 +1189,11 @@ class App {
           console.log('DHT not available');
           return null;
         }
-        
+
         const now = Date.now();
         const connectedPeers = this.dht.getConnectedPeers().length;
         const routingNodes = this.dht.routingTable.getAllNodes().length;
-        
+
         const status = {
           currentInterval: this.dht.currentRefreshInterval / 1000,
           aggressiveInterval: this.dht.options.aggressiveRefreshInterval / 1000,
@@ -1203,7 +1203,7 @@ class App {
           bucketActivity: this.dht.bucketLastActivity.size,
           staleBuckets: []
         };
-        
+
         // Check which buckets are stale
         const stalenessThreshold = this.dht.currentRefreshInterval * 2;
         for (const [bucketIndex, lastActivity] of this.dht.bucketLastActivity.entries()) {
@@ -1215,20 +1215,20 @@ class App {
             });
           }
         }
-        
+
         console.log('🔄 Adaptive Refresh Status:');
         console.log(`Current mode: ${status.currentInterval}s interval`);
         console.log(`Peers: ${connectedPeers} connected, ${routingNodes} routing`);
         console.log(`Bucket activity: ${status.bucketActivity} buckets tracked`);
         console.log(`Stale buckets: ${status.staleBuckets.length}`);
-        
+
         if (status.staleBuckets.length > 0) {
           console.log('Stale bucket details:', status.staleBuckets);
         }
-        
+
         return status;
       },
-      
+
       /**
        * Manually trigger background connection process
        */
@@ -1237,17 +1237,17 @@ class App {
           console.log('DHT not available');
           return false;
         }
-        
+
         console.log('🔗 Manually triggering background connection process...');
         await this.dht.connectToUnconnectedRoutingNodes();
-        
+
         const allNodes = this.dht.routingTable.getAllNodes().length;
         const connectedPeers = this.dht.getConnectedPeers().length;
         console.log(`📊 Result: ${connectedPeers} connected of ${allNodes} nodes in routing table`);
-        
+
         return true;
       },
-      
+
       /**
        * Debug WebRTC message routing
        */
@@ -1256,21 +1256,21 @@ class App {
           console.log('DHT not available');
           return null;
         }
-        
+
         const allNodes = this.dht.routingTable.getAllNodes();
         const connectedPeers = this.dht.getConnectedPeers();
-        
+
         console.log('🛣️ WebRTC Message Routing Debug');
         console.log(`Connected peers: ${connectedPeers.length}`);
         console.log(`Routing table nodes: ${allNodes.length}`);
-        
+
         for (const node of allNodes) {
           const peerId = node.id.toString();
           const isConnected = this.dht.isPeerConnected(peerId);
           const distance = node.id.xorDistance(this.dht.localNodeId);
-          
+
           console.log(`  ${peerId.substring(0, 8)}... - Connected: ${isConnected ? '✅' : '❌'} - Distance: ${distance.toString().substring(0, 8)}...`);
-          
+
           if (!isConnected) {
             // Show routing path for unconnected peers
             const closestConnected = allNodes
@@ -1280,7 +1280,7 @@ class App {
                 const distB = b.id.xorDistance(node.id);
                 return distA.compare(distB);
               });
-              
+
             if (closestConnected.length > 0) {
               const nextHop = closestConnected[0].id.toString();
               console.log(`    Route to ${peerId.substring(0, 8)}... would go via ${nextHop.substring(0, 8)}...`);
@@ -1289,14 +1289,14 @@ class App {
             }
           }
         }
-        
+
         return {
           connectedPeers: connectedPeers.length,
           routingTableNodes: allNodes.length,
           unconnectedNodes: allNodes.filter(n => !this.dht.isPeerConnected(n.id.toString())).length
         };
       },
-      
+
       /**
        * Force adaptive refresh recalculation
        */
@@ -1305,12 +1305,12 @@ class App {
           console.log('DHT not available');
           return false;
         }
-        
+
         console.log('🔄 Forcing adaptive refresh recalculation...');
         this.dht.scheduleAdaptiveRefresh();
         return true;
       },
-      
+
       /**
        * Manually trigger stale bucket refresh
        */
@@ -1319,7 +1319,7 @@ class App {
           console.log('DHT not available');
           return false;
         }
-        
+
         console.log('🔄 Manually refreshing stale buckets...');
         this.dht.refreshStaleBuckets();
         return true;
@@ -1337,12 +1337,12 @@ class App {
               console.error('❌ DHT not available');
               return null;
             }
-            
+
             console.log('🔌 TEST: Simulating network disconnection...');
-            
+
             const connectedPeers = window.YZSocialC.dht.getConnectedPeers();
             console.log(`📊 Disconnecting from ${connectedPeers.length} connected peers`);
-            
+
             // Store state for reconnection
             const disconnectionState = {
               timestamp: Date.now(),
@@ -1351,7 +1351,7 @@ class App {
               membershipToken: window.YZSocialC.dht.membershipToken,
               useBootstrapForSignaling: window.YZSocialC.dht.useBootstrapForSignaling
             };
-            
+
             // Disconnect from all peers
             const allNodes = window.YZSocialC.dht.routingTable.getAllNodes();
             for (const node of allNodes) {
@@ -1364,21 +1364,21 @@ class App {
                 console.warn(`Failed to disconnect from ${peerId}:`, error);
               }
             }
-            
+
             // Clear routing table
             const routingNodes = [...allNodes];
             for (const node of routingNodes) {
               window.YZSocialC.dht.routingTable.removeNode(node.id.toString());
             }
-            
+
             // Disconnect from bootstrap
             if (window.YZSocialC.dht.bootstrap && window.YZSocialC.dht.bootstrap.isBootstrapConnected()) {
               window.YZSocialC.dht.bootstrap.disconnect();
             }
-            
+
             console.log('💥 TEST: Complete disconnection achieved');
             console.log('State before disconnection:', disconnectionState);
-            
+
             return disconnectionState;
           },
 
@@ -1390,62 +1390,62 @@ class App {
               console.error('❌ DHT not available');
               return null;
             }
-            
+
             console.log('🔄 TEST: Starting reconnection test...');
-            
+
             // Check if we have membership token
             if (!window.YZSocialC.dht.membershipToken) {
               console.error('❌ No membership token - cannot test reconnection');
               console.log('💡 Run simulateDisconnection() first after joining DHT');
               return null;
             }
-            
+
             console.log('✅ Found membership token, proceeding with reconnection...');
-            
+
             // Force reconnection to bootstrap
             window.YZSocialC.dht.useBootstrapForSignaling = true;
-            
+
             try {
               // Reconnect to bootstrap
               if (window.YZSocialC.dht.bootstrap && typeof window.YZSocialC.dht.bootstrap.connect === 'function') {
                 await window.YZSocialC.dht.bootstrap.connect();
                 console.log('✅ Reconnected to bootstrap server');
               }
-              
+
               // Send reconnection request
               const reconnectionRequest = {
-                type: 'reconnection_request', 
+                type: 'reconnection_request',
                 membershipToken: window.YZSocialC.dht.membershipToken,
                 nodeId: window.YZSocialC.dht.localNodeId.toString(),
                 timestamp: Date.now()
               };
-              
+
               if (window.YZSocialC.dht.bootstrap && typeof window.YZSocialC.dht.bootstrap.sendMessage === 'function') {
                 await window.YZSocialC.dht.bootstrap.sendMessage(reconnectionRequest);
                 console.log('📤 Sent reconnection request with membership token');
               }
-              
+
               // Wait for connections to establish
               return new Promise((resolve) => {
                 let checkCount = 0;
                 const maxChecks = 15; // 30 seconds
-                
+
                 const checkInterval = setInterval(() => {
                   checkCount++;
                   const currentConnections = window.YZSocialC.dht.getConnectedPeers().length;
-                  
+
                   console.log(`🔍 Check ${checkCount}/${maxChecks}: ${currentConnections} connections`);
-                  
+
                   if (currentConnections > 0) {
                     clearInterval(checkInterval);
                     console.log(`✅ Reconnection successful! ${currentConnections} connections established`);
-                    
+
                     // Trigger peer discovery to rebuild routing table
                     setTimeout(() => {
                       window.YZSocialC.triggerPeerDiscovery();
                       window.YZSocialC.refreshBuckets();
                     }, 2000);
-                    
+
                     resolve({ success: true, connections: currentConnections });
                   } else if (checkCount >= maxChecks) {
                     clearInterval(checkInterval);
@@ -1454,7 +1454,7 @@ class App {
                   }
                 }, 2000);
               });
-              
+
             } catch (error) {
               console.error('❌ Reconnection test failed:', error);
               return { success: false, error: error.message };
@@ -1466,13 +1466,13 @@ class App {
            */
           async testBridgeNodes() {
             console.log('🌉 TEST: Testing bridge node connectivity...');
-            
+
             // This would test if bridge nodes are reachable
             // For now, we'll test via bootstrap server
             try {
               const bootstrapConnected = window.YZSocialC.dht.bootstrap && window.YZSocialC.dht.bootstrap.isBootstrapConnected();
               console.log(`Bootstrap connection: ${bootstrapConnected ? '✅' : '❌'}`);
-              
+
               if (bootstrapConnected) {
                 // Test bridge node communication
                 const testMessage = {
@@ -1480,14 +1480,14 @@ class App {
                   nodeId: window.YZSocialC.dht.localNodeId.toString(),
                   timestamp: Date.now()
                 };
-                
+
                 await window.YZSocialC.dht.bootstrap.sendMessage(testMessage);
                 console.log('📤 Sent bridge test message');
                 return { success: true, bootstrapConnected: true };
               } else {
                 return { success: false, error: 'Bootstrap not connected' };
               }
-              
+
             } catch (error) {
               console.error('❌ Bridge test failed:', error);
               return { success: false, error: error.message };
@@ -1501,7 +1501,7 @@ class App {
             if (!window.YZSocialC.dht) {
               return { available: false, reason: 'DHT not available' };
             }
-            
+
             return {
               available: true,
               hasMembershipToken: !!window.YZSocialC.dht.membershipToken,
@@ -1517,28 +1517,28 @@ class App {
            */
           async testBridgeConnectivity() {
             console.log('🌉 TEST: Bridge connectivity test...');
-            
+
             try {
               if (!window.YZSocialC.dht) {
-                return { 
-                  success: false, 
+                return {
+                  success: false,
                   message: 'Bridge connectivity test failed: DHT not available',
                   error: 'DHT not available'
                 };
               }
-              
+
               const status = this.getReconnectionStatus();
-              
+
               // Check if bridge system components are accessible
               const hasMembershipToken = !!window.YZSocialC.dht.membershipToken;
-              const bootstrapConnected = window.YZSocialC.dht.bootstrap && 
+              const bootstrapConnected = window.YZSocialC.dht.bootstrap &&
                 typeof window.YZSocialC.dht.bootstrap.isBootstrapConnected === 'function' &&
                 window.YZSocialC.dht.bootstrap.isBootstrapConnected();
-              
+
               const connectedPeers = window.YZSocialC.dht.getConnectedPeers().length;
-              
+
               let bridgeStatus = 'unknown';
-              
+
               if (hasMembershipToken && connectedPeers > 0) {
                 bridgeStatus = 'active_member';
               } else if (bootstrapConnected && !hasMembershipToken) {
@@ -1548,12 +1548,12 @@ class App {
               } else {
                 bridgeStatus = 'not_connected';
               }
-              
+
               const success = bridgeStatus !== 'not_connected';
               const message = `Bridge connectivity: ${bridgeStatus} (${connectedPeers} peers, membership: ${hasMembershipToken ? 'yes' : 'no'}, bootstrap: ${bootstrapConnected ? 'yes' : 'no'})`;
-              
+
               console.log(`🌉 ${success ? '✅' : '❌'} ${message}`);
-              
+
               return {
                 success,
                 message,
@@ -1563,13 +1563,13 @@ class App {
                 connectedPeers,
                 details: status
               };
-              
+
             } catch (error) {
               console.error('❌ Bridge connectivity test failed:', error);
-              return { 
-                success: false, 
+              return {
+                success: false,
                 message: `Bridge connectivity test failed: ${error.message}`,
-                error: error.message 
+                error: error.message
               };
             }
           }
@@ -1629,7 +1629,7 @@ class App {
            */
           async testPeerDiscovery() {
             console.log('🔍 TEST: Testing peer discovery...');
-            
+
             try {
               if (!window.YZSocialC.dht || !window.YZSocialC.dht.isStarted) {
                 return {
@@ -1638,34 +1638,34 @@ class App {
                   error: 'DHT not available'
                 };
               }
-              
+
               const beforeRouting = window.YZSocialC.dht.routingTable.getAllNodes().length;
               const beforeConnections = window.YZSocialC.dht.getConnectedPeers().length;
-              
+
               // Trigger discovery
               window.YZSocialC.triggerPeerDiscovery();
               window.YZSocialC.refreshBuckets();
-              
+
               // Wait and check results
               await new Promise(resolve => setTimeout(resolve, 5000));
-              
+
               const afterRouting = window.YZSocialC.dht.routingTable.getAllNodes().length;
               const afterConnections = window.YZSocialC.dht.getConnectedPeers().length;
-              
+
               const result = {
                 routingTableGrowth: afterRouting - beforeRouting,
                 connectionGrowth: afterConnections - beforeConnections,
                 finalRoutingSize: afterRouting,
                 finalConnections: afterConnections
               };
-              
+
               console.log('🔍 Peer discovery results:', result);
-              
+
               const hasDiscovery = result.routingTableGrowth > 0 || result.connectionGrowth > 0;
-              
+
               return {
                 success: hasDiscovery || result.finalConnections > 0,
-                message: hasDiscovery 
+                message: hasDiscovery
                   ? `Discovery successful: +${result.routingTableGrowth} routing, +${result.connectionGrowth} connections`
                   : `No new peers discovered (${result.finalConnections} existing connections)`,
                 details: result
@@ -1735,33 +1735,33 @@ class App {
            */
           async testPeerDiscoveryLimited() {
             console.log('🔍 TEST: Limited peer discovery (non-disruptive)...');
-            
+
             try {
               const beforeRouting = window.YZSocialC.dht.routingTable.getAllNodes().length;
               const beforeConnections = window.YZSocialC.dht.getConnectedPeers().length;
-              
+
               console.log(`Before: ${beforeConnections} connected, ${beforeRouting} routing`);
-              
+
               // Only perform passive discovery checks instead of aggressive discovery
               const routingNodes = window.YZSocialC.dht.routingTable.getAllNodes();
               const connectedPeers = window.YZSocialC.dht.getConnectedPeers();
-              
+
               // Check for discrepancies without triggering new connections
-              const routingButNotConnected = routingNodes.filter(node => 
+              const routingButNotConnected = routingNodes.filter(node =>
                 !connectedPeers.some(peer => peer.id === node.id.toString())
               ).length;
-              
-              const connectedButNotRouting = connectedPeers.filter(peer => 
+
+              const connectedButNotRouting = connectedPeers.filter(peer =>
                 !routingNodes.some(node => node.id.toString() === peer.id)
               ).length;
-              
+
               const success = routingButNotConnected === 0;
-              const message = success 
+              const message = success
                 ? `Peer discovery: no discrepancies (${beforeConnections} connected, ${beforeRouting} routing)`
                 : `Peer discovery: ${routingButNotConnected} routing-only, ${connectedButNotRouting} connection-only discrepancies`;
-              
+
               console.log(`🔍 ${success ? '✅' : '⚠️'} ${message}`);
-              
+
               return {
                 success,
                 message,
@@ -1770,13 +1770,13 @@ class App {
                 finalRoutingSize: beforeRouting,
                 finalConnections: beforeConnections
               };
-              
+
             } catch (error) {
               console.error('❌ Limited peer discovery test failed:', error);
-              return { 
-                success: false, 
+              return {
+                success: false,
                 message: `Limited peer discovery failed: ${error.message}`,
-                error: error.message 
+                error: error.message
               };
             }
           }
@@ -1789,18 +1789,18 @@ class App {
            */
           testSignalingModes() {
             console.log('📡 TEST: Testing WebRTC signaling modes...');
-            
+
             try {
               const signalingInfo = window.YZSocialC.getSignalingMode();
               const currentMode = signalingInfo.useBootstrapForSignaling ? 'bootstrap' : 'dht';
               console.log(`Current signaling mode: ${currentMode}`);
-              
+
               const connectedPeers = signalingInfo.connectedPeers;
               const expectedMode = connectedPeers >= 1 ? 'dht' : 'bootstrap';
-              
+
               const isCorrect = currentMode === expectedMode;
               console.log(`Expected: ${expectedMode}, Actual: ${currentMode} - ${isCorrect ? '✅' : '❌'}`);
-              
+
               return {
                 success: isCorrect,
                 message: `Signaling mode ${isCorrect ? 'correct' : 'incorrect'}: expected ${expectedMode}, got ${currentMode}`,
@@ -1823,10 +1823,10 @@ class App {
            */
           testConnectionHealth() {
             console.log('🏥 TEST: Testing connection health...');
-            
+
             try {
               const healthReport = window.YZSocialC.checkConnectionHealth();
-              
+
               if (!healthReport) {
                 return {
                   success: false,
@@ -1834,13 +1834,13 @@ class App {
                   error: 'DHT not available'
                 };
               }
-              
+
               const hasConnections = healthReport.connectedPeers > 0;
               const allConnected = Object.values(healthReport.connectionDetails || {})
                 .every(detail => detail.isConnected);
-              
+
               const success = hasConnections && allConnected;
-              
+
               return {
                 success,
                 message: `Connection health ${success ? 'good' : 'issues detected'}: ${healthReport.connectedPeers} peers connected`,
@@ -1864,19 +1864,19 @@ class App {
       async runAllTests() {
         console.log('🧪 RUNNING ALL TESTS...');
         console.log('='.repeat(50));
-        
+
         const results = {};
-        
+
         // Capture initial state for restoration
         const initialState = this.captureTestState();
-        
+
         try {
           // Read-only tests (safe to run)
           console.log('\n📡 READ-ONLY TESTS');
           console.log('-'.repeat(20));
           results.signaling = await this.tests.connection.testSignalingModes();
           results.connectionHealth = await this.tests.connection.testConnectionHealth();
-          
+
           // Bridge status test - normalize result
           const bridgeStatus = this.tests.network.getReconnectionStatus();
           results.bridgeStatus = {
@@ -1884,31 +1884,31 @@ class App {
             message: `Bridge status: ${bridgeStatus.available ? 'available' : 'not available'}${bridgeStatus.reason ? ` (${bridgeStatus.reason})` : ''}`,
             details: bridgeStatus
           };
-          
+
           // State-modifying tests (with cleanup)
           console.log('\n📦 STATE-MODIFYING TESTS');
           console.log('-'.repeat(20));
-          
+
           // Store/retrieve test with cleanup
           results.storeRetrieve = await this.tests.dht.testStoreRetrieveWithCleanup();
-          
+
           // Bridge connectivity test (NEW)
           results.bridgeConnectivity = await this.tests.network.testBridgeConnectivity();
-          
+
           // Peer discovery test (modified to be less disruptive)
           results.peerDiscovery = await this.tests.dht.testPeerDiscoveryLimited();
-          
+
           console.log('\n🔄 RESTORING INITIAL STATE...');
           await this.restoreTestState(initialState);
-          
+
           console.log('\n✅ ALL TESTS COMPLETED');
           console.log('='.repeat(50));
-          
+
           return results;
-          
+
         } catch (error) {
           console.error('❌ Test suite failed:', error);
-          
+
           // Attempt to restore state even on failure
           try {
             await this.restoreTestState(initialState);
@@ -1916,7 +1916,7 @@ class App {
           } catch (restoreError) {
             console.error('❌ Failed to restore state:', restoreError);
           }
-          
+
           return { error: error.message, partialResults: results };
         }
       },
@@ -1926,7 +1926,7 @@ class App {
        */
       captureTestState() {
         if (!this.dht) return null;
-        
+
         return {
           connectedPeers: this.dht.getConnectedPeers().slice(), // copy array
           routingTableSize: this.dht.routingTable.getAllNodes().length,
@@ -1943,7 +1943,7 @@ class App {
           console.log('No initial state to restore');
           return;
         }
-        
+
         // Clean up test data from storage
         const testKeys = ['test-key', 'test-data', 'peer-discovery-test'];
         for (const key of testKeys) {
@@ -1952,7 +1952,7 @@ class App {
             console.log(`🧹 Cleaned up test key: ${key}`);
           }
         }
-        
+
         console.log('📊 State restoration complete');
       }
     };
@@ -2016,7 +2016,7 @@ class App {
       max-width: 400px;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     `;
-    
+
     errorDiv.innerHTML = `
       <strong>Error:</strong> ${message}
       <button style="
@@ -2029,9 +2029,9 @@ class App {
         margin-left: 10px;
       " onclick="this.parentElement.remove()">×</button>
     `;
-    
+
     document.body.appendChild(errorDiv);
-    
+
     // Auto-remove after 10 seconds
     setTimeout(() => {
       if (errorDiv.parentElement) {
@@ -2045,20 +2045,20 @@ class App {
    */
   async destroy() {
     console.log('Destroying application...');
-    
+
     try {
       if (this.visualizer) {
         this.visualizer.destroy();
         this.visualizer = null;
       }
-      
+
       if (this.dht && this.dht.isStarted) {
         await this.dht.stop();
       }
-      
+
       this.dht = null;
       this.isInitialized = false;
-      
+
       console.log('Application destroyed successfully');
     } catch (error) {
       console.error('Error during application destruction:', error);
@@ -2082,7 +2082,7 @@ async function main() {
     console.log('Application already initializing, aborting duplicate...');
     return;
   }
-  
+
   if (window.YZSocialC) {
     if (window.YZSocialC.app) {
       console.log('Application already initialized, skipping...');
@@ -2120,31 +2120,31 @@ async function main() {
 
   // Create and initialize application
   const app = new App();
-  
+
   try {
     await app.initialize();
-    
+
     // Clear initialization flag after successful initialization
     window.YZSocialCInitializing = false;
-    
+
     // Handle page unload
     window.addEventListener('beforeunload', async (event) => {
       if (app.dht && app.dht.isStarted) {
         // Try to gracefully shutdown
         event.preventDefault();
         event.returnValue = '';
-        
+
         setTimeout(async () => {
           await app.destroy();
           window.location.reload();
         }, 100);
       }
     });
-    
+
   } catch (error) {
     console.error('Application startup failed:', error);
     app.displayError('Application startup failed: ' + error.message);
-    
+
     // Clear initialization flag on error too
     window.YZSocialCInitializing = false;
   }

@@ -8,7 +8,7 @@ export class DHTVisualizer {
     this.isLogging = true;
     this.maxLogEntries = 1000;
     this.updateInterval = null;
-    
+
     this.setupUI();
     this.setupEventHandlers();
     this.startPeriodicUpdates();
@@ -25,7 +25,7 @@ export class DHTVisualizer {
       nodeId: document.getElementById('node-id'),
       peerCount: document.getElementById('peer-count'),
       storageCount: document.getElementById('storage-count'),
-      
+
       // Control buttons
       startBtn: document.getElementById('start-dht'),
       stopBtn: document.getElementById('stop-dht'),
@@ -34,7 +34,7 @@ export class DHTVisualizer {
       inviteBtn: document.getElementById('invite-btn'),
       clearLogBtn: document.getElementById('clear-log'),
       runAllTestsBtn: document.getElementById('run-all-tests-btn'),
-      
+
       // Test buttons
       testBootstrapBtn: document.getElementById('test-bootstrap-btn'),
       testInvitationBtn: document.getElementById('test-invitation-btn'),
@@ -44,7 +44,7 @@ export class DHTVisualizer {
       testDiscoveryBtn: document.getElementById('test-discovery-btn'),
       testMaintenanceBtn: document.getElementById('test-maintenance-btn'),
       testReconnectionBtn: document.getElementById('test-reconnection-btn'),
-      
+
       // Test status indicators
       testBootstrapStatus: document.getElementById('test-bootstrap-status'),
       testInvitationStatus: document.getElementById('test-invitation-status'),
@@ -54,19 +54,19 @@ export class DHTVisualizer {
       testDiscoveryStatus: document.getElementById('test-discovery-status'),
       testMaintenanceStatus: document.getElementById('test-maintenance-status'),
       testReconnectionStatus: document.getElementById('test-reconnection-status'),
-      
+
       // Input fields
       storeKey: document.getElementById('store-key'),
       storeValue: document.getElementById('store-value'),
       getKey: document.getElementById('get-key'),
       inviteNodeId: document.getElementById('invite-node-id'),
-      
+
       // Stats
       statTotalPeers: document.getElementById('stat-total-peers'),
       statConnectedPeers: document.getElementById('stat-connected-peers'),
       statRoutingTable: document.getElementById('stat-routing-table'),
       statStorageItems: document.getElementById('stat-storage-items'),
-      
+
       // Other
       peerList: document.getElementById('peer-list'),
       logOutput: document.getElementById('log-output'),
@@ -75,7 +75,7 @@ export class DHTVisualizer {
     };
 
     this.logContainer = this.elements.logOutput;
-    
+
     // Set initial node ID
     if (this.dht && this.dht.localNodeId) {
       this.elements.nodeId.textContent = this.dht.localNodeId.toString();
@@ -89,15 +89,15 @@ export class DHTVisualizer {
     // DHT control buttons
     this.elements.startBtn.addEventListener('click', () => this.startDHT());
     this.elements.stopBtn.addEventListener('click', () => this.stopDHT());
-    
+
     // DHT operations
     this.elements.storeBtn.addEventListener('click', () => this.storeValue());
     this.elements.getBtn.addEventListener('click', () => this.getValue());
     this.elements.inviteBtn.addEventListener('click', () => this.inviteClient());
-    
+
     // Log controls
     this.elements.clearLogBtn.addEventListener('click', () => this.clearLog());
-    
+
     // Test controls
     if (this.elements.runAllTestsBtn) {
       this.elements.runAllTestsBtn.addEventListener('click', () => this.runAllTests());
@@ -126,7 +126,7 @@ export class DHTVisualizer {
     if (this.elements.testReconnectionBtn) {
       this.elements.testReconnectionBtn.addEventListener('click', () => this.runReconnectionTest());
     }
-    
+
     // Enter key handlers
     this.elements.storeKey.addEventListener('keypress', (e) => {
       if (e.key === 'Enter') this.storeValue();
@@ -164,10 +164,10 @@ export class DHTVisualizer {
       this.elements.startBtn.disabled = true;
       this.elements.stopBtn.disabled = false;
       this.hideLoading();
-      
+
       // Re-setup component event handlers after restart
       this.setupComponentEventHandlers();
-      
+
       // Force immediate update of peer display
       setTimeout(() => {
         this.updatePeerDisplay();
@@ -180,7 +180,7 @@ export class DHTVisualizer {
       this.updateStatus('Stopped');
       this.elements.startBtn.disabled = false;
       this.elements.stopBtn.disabled = true;
-      
+
       // Clear peer display when stopped
       this.updatePeerDisplay();
       this.updateStats();
@@ -212,7 +212,7 @@ export class DHTVisualizer {
     if (this.dht.bootstrap) {
       this.dht.bootstrap.removeAllListeners('connected');
       this.dht.bootstrap.removeAllListeners('disconnected');
-      
+
       // Bootstrap events
       this.dht.bootstrap.on('connected', ({ serverUrl }) => {
         this.log(`Connected to bootstrap server: ${serverUrl}`, 'success');
@@ -227,7 +227,7 @@ export class DHTVisualizer {
       // CRITICAL FIX: Do NOT remove all listeners - this would remove the DHT's essential event handlers!
       // Instead, just check if our UI handlers are already added to avoid duplicates
       console.log('🎨 UI: Setting up connection event listeners (preserving DHT handlers)');
-      
+
       // Store references to our handlers so we can remove them specifically if needed
       if (!this.webrtcHandlers) {
         this.webrtcHandlers = {
@@ -246,17 +246,17 @@ export class DHTVisualizer {
           }
         };
       }
-      
+
       // Remove only our specific handlers before re-adding (avoid duplicates)
       this.dht.connectionManager.removeListener('peerError', this.webrtcHandlers.peerError);
       this.dht.connectionManager.removeListener('peerConnected', this.webrtcHandlers.peerConnected);
       this.dht.connectionManager.removeListener('peerDisconnected', this.webrtcHandlers.peerDisconnected);
-      
+
       // Add our UI handlers
       this.dht.connectionManager.on('peerError', this.webrtcHandlers.peerError);
       this.dht.connectionManager.on('peerConnected', this.webrtcHandlers.peerConnected);
       this.dht.connectionManager.on('peerDisconnected', this.webrtcHandlers.peerDisconnected);
-      
+
       console.log(`🎨 UI: Connection handlers added, total peerConnected listeners: ${this.dht.connectionManager.listenerCount('peerConnected')}`);
     }
   }
@@ -323,7 +323,7 @@ export class DHTVisualizer {
     try {
       this.log(`Storing: ${key} = ${value}`, 'info');
       const success = await this.dht.store(key, value);
-      
+
       if (success) {
         this.log(`Successfully stored: ${key}`, 'success');
         this.elements.storeKey.value = '';
@@ -355,7 +355,7 @@ export class DHTVisualizer {
     try {
       this.log(`Retrieving: ${key}`, 'info');
       const value = await this.dht.get(key);
-      
+
       if (value !== null) {
         this.log(`Retrieved: ${key} = ${value}`, 'success');
       } else {
@@ -385,7 +385,7 @@ export class DHTVisualizer {
     try {
       this.log(`Inviting client to join DHT: ${clientId}`, 'info');
       const result = await this.dht.inviteNewClient(clientId);
-      
+
       if (result) {
         this.log(`Successfully invited ${clientId} to join DHT`, 'success');
         this.elements.inviteNodeId.value = '';
@@ -442,7 +442,7 @@ export class DHTVisualizer {
 
     try {
       const stats = this.dht.getStats();
-      
+
       // Get current counts using DHT's connection-agnostic method
       const routingTableNodes = this.dht.routingTable ? this.dht.routingTable.getAllNodes() : [];
       let connectedPeersCount = 0;
@@ -452,19 +452,19 @@ export class DHTVisualizer {
         console.warn('Error getting connected peers count in updateStats:', error);
         connectedPeersCount = 0;
       }
-      
+
       // Update counters - show connected peers in status for consistency
       this.elements.peerCount.textContent = connectedPeersCount;
       this.elements.storageCount.textContent = stats.storage.keys;
-      
+
       // Update detailed stats - fix inconsistency by using connected peers for both
       // This addresses the issue where Status showed 4 peers but Network Statistics showed 3
       this.elements.statTotalPeers.textContent = connectedPeersCount; // FIXED: was routingTableNodes.length
       this.elements.statConnectedPeers.textContent = connectedPeersCount;
       this.elements.statRoutingTable.textContent = routingTableNodes.length;
       this.elements.statStorageItems.textContent = stats.storage.keys;
-      
-      
+
+
     } catch (error) {
       console.warn('Error updating stats:', error);
     }
@@ -479,17 +479,17 @@ export class DHTVisualizer {
     try {
       const dhtStarted = this.dht.isStarted;
       const routingTableNodes = this.dht.routingTable ? this.dht.routingTable.getAllNodes() : [];
-      
+
       // Get connected nodes using per-node connection status (NEW ARCHITECTURE)
       const connectedNodes = routingTableNodes.filter(node => node.isConnected());
       const connectedPeers = connectedNodes.map(node => node.id.toString());
-      
-      
+
+
       if (!dhtStarted) {
         this.elements.peerList.innerHTML = '<div class="wasm-placeholder">DHT not started</div>';
         return;
       }
-      
+
       if (connectedPeers.length === 0) {
         // Show more detailed info when no connections but routing table has entries
         if (routingTableNodes.length > 0) {
@@ -507,8 +507,8 @@ export class DHTVisualizer {
         const isConnected = node ? node.isConnected() : false;
         const statusClass = isConnected ? 'connected' : 'disconnected';
         const statusText = isConnected ? 'connected' : 'disconnected';
-        
-        
+
+
         return `
           <div class="peer-item">
             <span class="peer-id">${peerId}</span>
@@ -518,7 +518,7 @@ export class DHTVisualizer {
       }).join('');
 
       this.elements.peerList.innerHTML = peerElements;
-      
+
     } catch (error) {
       console.warn('Error updating peer display:', error);
       this.elements.peerList.innerHTML = '<div class="wasm-placeholder">Error loading peers</div>';
@@ -534,22 +534,22 @@ export class DHTVisualizer {
     const timestamp = new Date().toLocaleTimeString();
     const logEntry = document.createElement('div');
     logEntry.className = 'log-entry';
-    
+
     logEntry.innerHTML = `
       <span class="log-timestamp">[${timestamp}]</span>
       <span class="log-level-${level}">${message}</span>
     `;
 
     this.logContainer.appendChild(logEntry);
-    
+
     // Limit log entries
     while (this.logContainer.children.length > this.maxLogEntries) {
       this.logContainer.removeChild(this.logContainer.firstChild);
     }
-    
+
     // Auto-scroll to bottom
     this.logContainer.scrollTop = this.logContainer.scrollHeight;
-    
+
     // Also log to console
     console.log(`[DHT UI] ${message}`);
   }
@@ -570,12 +570,12 @@ export class DHTVisualizer {
     try {
       // This is a placeholder for WebAssembly initialization
       // In a real implementation, you would load and initialize the WASM module here
-      
+
       this.log('Initializing WebAssembly UI components...', 'info');
-      
+
       // Simulate WASM loading
       await new Promise(resolve => setTimeout(resolve, 1000));
-      
+
       // Update WASM container
       if (this.elements.wasmContainer) {
         this.elements.wasmContainer.innerHTML = `
@@ -585,7 +585,7 @@ export class DHTVisualizer {
           </div>
         `;
       }
-      
+
       this.log('WebAssembly UI components loaded successfully', 'success');
     } catch (error) {
       this.log(`Failed to load WebAssembly UI: ${error.message}`, 'error');
@@ -605,7 +605,7 @@ export class DHTVisualizer {
         peerCount = 0;
       }
     }
-    
+
     return {
       dhtStarted: this.dht ? this.dht.isStarted : false,
       peerCount,
@@ -628,15 +628,15 @@ export class DHTVisualizer {
   forceRefresh() {
     this.updateStats();
     this.updatePeerDisplay();
-    
+
     // Re-setup event handlers in case they got disconnected
     this.setupComponentEventHandlers();
-    
+
     // Update node ID display
     if (this.dht && this.dht.localNodeId) {
       this.elements.nodeId.textContent = this.dht.localNodeId.toString();
     }
-    
+
     this.log('UI force refreshed', 'info');
   }
 
@@ -648,7 +648,7 @@ export class DHTVisualizer {
       clearInterval(this.updateInterval);
       this.updateInterval = null;
     }
-    
+
     this.isLogging = false;
     this.log('UI visualizer destroyed', 'warn');
   }
@@ -669,24 +669,24 @@ export class DHTVisualizer {
    */
   async runAllTests() {
     this.log('🧪 Running All Tests...', 'info');
-    
+
     try {
       if (!window.YZSocialC) {
         this.log('YZSocialC not available', 'error');
         return;
       }
-      
+
       const results = await window.YZSocialC.runAllTests();
-      
+
       // Update status indicators based on results
       for (const [testName, result] of Object.entries(results)) {
         const formattedName = testName.charAt(0).toUpperCase() + testName.slice(1);
         this.updateTestStatus(formattedName, result.success ? 'passed' : 'failed');
-        
-        this.log(`${formattedName} Test: ${result.success ? 'PASSED' : 'FAILED'} - ${result.message}`, 
+
+        this.log(`${formattedName} Test: ${result.success ? 'PASSED' : 'FAILED'} - ${result.message}`,
                  result.success ? 'success' : 'error');
       }
-      
+
     } catch (error) {
       this.log(`All tests failed: ${error.message}`, 'error');
     }
@@ -698,19 +698,19 @@ export class DHTVisualizer {
   async runBootstrapTest() {
     this.log('🔗 Testing Bootstrap Connection...', 'info');
     this.updateTestStatus('Bootstrap', 'running');
-    
+
     try {
       if (!window.YZSocialC || !window.YZSocialC.tests) {
         this.log('Test functions not available', 'error');
         this.updateTestStatus('Bootstrap', 'failed');
         return;
       }
-      
+
       const result = await window.YZSocialC.testConnectivity();
       this.updateTestStatus('Bootstrap', result.success ? 'passed' : 'failed');
-      this.log(`Bootstrap Test: ${result.success ? 'PASSED' : 'FAILED'} - ${result.message}`, 
+      this.log(`Bootstrap Test: ${result.success ? 'PASSED' : 'FAILED'} - ${result.message}`,
                result.success ? 'success' : 'error');
-      
+
     } catch (error) {
       this.updateTestStatus('Bootstrap', 'failed');
       this.log(`Bootstrap test failed: ${error.message}`, 'error');
@@ -723,18 +723,18 @@ export class DHTVisualizer {
   async runInvitationTest() {
     this.log('📧 Testing Invitation System...', 'info');
     this.updateTestStatus('Invitation', 'running');
-    
+
     try {
       if (!this.dht || !this.dht.isStarted) {
         this.log('DHT not started', 'error');
         this.updateTestStatus('Invitation', 'failed');
         return;
       }
-      
+
       // Create a test invitation token
       const testClientId = 'test-client-' + Date.now();
       const token = await this.dht.createInvitationToken(testClientId);
-      
+
       if (token) {
         this.updateTestStatus('Invitation', 'passed');
         this.log('Invitation Test: PASSED - Token created successfully', 'success');
@@ -742,7 +742,7 @@ export class DHTVisualizer {
         this.updateTestStatus('Invitation', 'failed');
         this.log('Invitation Test: FAILED - Could not create token', 'error');
       }
-      
+
     } catch (error) {
       this.updateTestStatus('Invitation', 'failed');
       this.log(`Invitation test failed: ${error.message}`, 'error');
@@ -755,19 +755,19 @@ export class DHTVisualizer {
   async runConnectionTest() {
     this.log('🔌 Testing Connection Health...', 'info');
     this.updateTestStatus('Connection', 'running');
-    
+
     try {
       if (!window.YZSocialC || !window.YZSocialC.tests) {
         this.log('Test functions not available', 'error');
         this.updateTestStatus('Connection', 'failed');
         return;
       }
-      
+
       const result = await window.YZSocialC.tests.connection.testConnectionHealth();
       this.updateTestStatus('Connection', result.success ? 'passed' : 'failed');
-      this.log(`Connection Test: ${result.success ? 'PASSED' : 'FAILED'} - ${result.message}`, 
+      this.log(`Connection Test: ${result.success ? 'PASSED' : 'FAILED'} - ${result.message}`,
                result.success ? 'success' : 'error');
-      
+
     } catch (error) {
       this.updateTestStatus('Connection', 'failed');
       this.log(`Connection test failed: ${error.message}`, 'error');
@@ -780,19 +780,19 @@ export class DHTVisualizer {
   async runStorageTest() {
     this.log('💾 Testing DHT Storage...', 'info');
     this.updateTestStatus('Storage', 'running');
-    
+
     try {
       if (!window.YZSocialC || !window.YZSocialC.tests) {
         this.log('Test functions not available', 'error');
         this.updateTestStatus('Storage', 'failed');
         return;
       }
-      
+
       const result = await window.YZSocialC.tests.dht.testStoreRetrieve();
       this.updateTestStatus('Storage', result.success ? 'passed' : 'failed');
-      this.log(`Storage Test: ${result.success ? 'PASSED' : 'FAILED'} - ${result.message}`, 
+      this.log(`Storage Test: ${result.success ? 'PASSED' : 'FAILED'} - ${result.message}`,
                result.success ? 'success' : 'error');
-      
+
     } catch (error) {
       this.updateTestStatus('Storage', 'failed');
       this.log(`Storage test failed: ${error.message}`, 'error');
@@ -805,17 +805,17 @@ export class DHTVisualizer {
   async runRoutingTest() {
     this.log('🛤️ Testing Routing Table...', 'info');
     this.updateTestStatus('Routing', 'running');
-    
+
     try {
       if (!this.dht) {
         this.log('DHT not available', 'error');
         this.updateTestStatus('Routing', 'failed');
         return;
       }
-      
+
       const routingNodes = this.dht.routingTable.getAllNodes().length;
       const connectedPeers = this.dht.getConnectedPeers().length;
-      
+
       if (routingNodes > 0 && connectedPeers > 0) {
         this.updateTestStatus('Routing', 'passed');
         this.log(`Routing Test: PASSED - ${routingNodes} routing entries, ${connectedPeers} connected`, 'success');
@@ -823,7 +823,7 @@ export class DHTVisualizer {
         this.updateTestStatus('Routing', 'failed');
         this.log(`Routing Test: FAILED - ${routingNodes} routing entries, ${connectedPeers} connected`, 'error');
       }
-      
+
     } catch (error) {
       this.updateTestStatus('Routing', 'failed');
       this.log(`Routing test failed: ${error.message}`, 'error');
@@ -836,19 +836,19 @@ export class DHTVisualizer {
   async runDiscoveryTest() {
     this.log('🔍 Testing Peer Discovery...', 'info');
     this.updateTestStatus('Discovery', 'running');
-    
+
     try {
       if (!window.YZSocialC || !window.YZSocialC.tests) {
         this.log('Test functions not available', 'error');
         this.updateTestStatus('Discovery', 'failed');
         return;
       }
-      
+
       const result = await window.YZSocialC.tests.dht.testPeerDiscovery();
       this.updateTestStatus('Discovery', result.success ? 'passed' : 'failed');
-      this.log(`Discovery Test: ${result.success ? 'PASSED' : 'FAILED'} - ${result.message}`, 
+      this.log(`Discovery Test: ${result.success ? 'PASSED' : 'FAILED'} - ${result.message}`,
                result.success ? 'success' : 'error');
-      
+
     } catch (error) {
       this.updateTestStatus('Discovery', 'failed');
       this.log(`Discovery test failed: ${error.message}`, 'error');
@@ -861,18 +861,18 @@ export class DHTVisualizer {
   async runMaintenanceTest() {
     this.log('⚙️ Testing Background Maintenance...', 'info');
     this.updateTestStatus('Maintenance', 'running');
-    
+
     try {
       if (!this.dht) {
         this.log('DHT not available', 'error');
         this.updateTestStatus('Maintenance', 'failed');
         return;
       }
-      
+
       // Check if background maintenance processes are running
       const hasRefreshTimer = this.dht.refreshTimer !== null && this.dht.refreshTimer !== undefined;
       const hasOfferPolling = this.dht.dhtOfferPollingInterval !== null && this.dht.dhtOfferPollingInterval !== undefined;
-      
+
       if (hasRefreshTimer || hasOfferPolling) {
         this.updateTestStatus('Maintenance', 'passed');
         this.log(`Maintenance Test: PASSED - Background processes active (refresh: ${hasRefreshTimer}, polling: ${hasOfferPolling})`, 'success');
@@ -880,7 +880,7 @@ export class DHTVisualizer {
         this.updateTestStatus('Maintenance', 'failed');
         this.log('Maintenance Test: FAILED - No background maintenance processes detected', 'error');
       }
-      
+
     } catch (error) {
       this.updateTestStatus('Maintenance', 'failed');
       this.log(`Maintenance test failed: ${error.message}`, 'error');
@@ -890,7 +890,7 @@ export class DHTVisualizer {
   /**
    * Run Reconnection Test
    * Tests bridge node reconnection flow:
-   * 1. Disconnect from all peers 
+   * 1. Disconnect from all peers
    * 2. Validate membership token exists
    * 3. Connect to bootstrap server
    * 4. Bootstrap should route to bridge nodes
@@ -899,7 +899,7 @@ export class DHTVisualizer {
   async runReconnectionTest() {
     this.log('🔄 Testing Bridge Node Reconnection...', 'info');
     this.updateTestStatus('Reconnection', 'running');
-    
+
     try {
       if (!this.dht) {
         this.log('DHT not available', 'error');
@@ -914,9 +914,9 @@ export class DHTVisualizer {
         this.updateTestStatus('Reconnection', 'failed');
         return;
       }
-      
+
       // Display token info safely
-      const tokenInfo = typeof membershipToken === 'object' 
+      const tokenInfo = typeof membershipToken === 'object'
         ? `${membershipToken.type || 'token'} (holder: ${membershipToken.holder?.substring(0, 8) || 'unknown'}...)`
         : `${membershipToken.toString().substring(0, 20)}...`;
       this.log(`✓ Membership token available: ${tokenInfo}`, 'success');
@@ -972,12 +972,12 @@ export class DHTVisualizer {
       while (attempts < maxAttempts && !reconnectionSuccess) {
         await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 seconds
         attempts++;
-        
+
         const currentPeers = this.dht.getConnectedPeers().length;
         const currentRouting = this.dht.routingTable.getAllNodes().length;
-        
+
         this.log(`Attempt ${attempts}: ${currentPeers} connected peers, ${currentRouting} routing table entries`, 'info');
-        
+
         if (currentPeers > 0) {
           reconnectionSuccess = true;
           this.log(`✓ Reconnection successful after ${attempts} attempts`, 'success');
@@ -991,12 +991,12 @@ export class DHTVisualizer {
         try {
           await this.dht.refreshBuckets();
           await new Promise(resolve => setTimeout(resolve, 5000)); // Wait for discovery
-          
+
           const finalPeers = this.dht.getConnectedPeers().length;
           const finalRouting = this.dht.routingTable.getAllNodes().length;
-          
+
           this.log(`After k-bucket refresh: ${finalPeers} connected peers, ${finalRouting} routing table entries`, 'success');
-          
+
           if (finalPeers >= initialPeers * 0.5) { // At least 50% of original peers reconnected
             this.updateTestStatus('Reconnection', 'passed');
             this.log('Reconnection Test: PASSED - Successfully reconnected to DHT network via bridge nodes', 'success');

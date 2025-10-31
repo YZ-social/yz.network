@@ -6,7 +6,7 @@ import { EventEmitter } from 'events';
 export class WebRTCManager extends EventEmitter {
   constructor(options = {}) {
     super();
-    
+
     this.options = {
       iceServers: options.iceServers || [
         { urls: 'stun:stun.l.google.com:19302' },
@@ -47,7 +47,7 @@ export class WebRTCManager extends EventEmitter {
     this.keepAliveInterval = 30000; // 30 seconds for active tabs
     this.keepAliveIntervalHidden = 10000; // 10 seconds for inactive tabs
     this.keepAliveTimeout = 60000; // 60 seconds to wait for pong response
-    
+
     // Initialize Page Visibility API if available
     if (typeof document !== 'undefined') {
       this.setupVisibilityHandling();
@@ -65,7 +65,7 @@ export class WebRTCManager extends EventEmitter {
 
     this.localNodeId = localNodeId;
     this.isInitialized = true;
-    
+
     console.log(`🚀 Initializing WebRTC with node ID: ${localNodeId}`);
     this.emit('initialized', { localNodeId });
   }
@@ -78,16 +78,16 @@ export class WebRTCManager extends EventEmitter {
 
     // Set initial visibility state
     this.isTabVisible = !document.hidden;
-    
+
     console.log(`📱 Setting up visibility handling. Initial state: ${this.isTabVisible ? 'visible' : 'hidden'}`);
 
     // Listen for visibility changes
     document.addEventListener('visibilitychange', () => {
       const wasVisible = this.isTabVisible;
       this.isTabVisible = !document.hidden;
-      
+
       console.log(`📱 Tab visibility changed: ${wasVisible ? 'visible' : 'hidden'} → ${this.isTabVisible ? 'visible' : 'hidden'}`);
-      
+
       // Adjust keep-alive frequency for all connections
       this.adjustKeepAliveFrequency();
     });
@@ -188,7 +188,7 @@ export class WebRTCManager extends EventEmitter {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         console.log(`📤 Created offer for ${peerId}`);
-        
+
         // Send offer through bootstrap server
         this.emit('signal', {
           peerId,
@@ -218,16 +218,16 @@ export class WebRTCManager extends EventEmitter {
 
       // Check immediately
       checkConnection();
-      
+
       // Use event-driven approach instead of polling
       const connectionHandler = () => {
         checkConnection();
       };
-      
+
       // Listen for connection state changes instead of polling
       pc.addEventListener('connectionstatechange', connectionHandler);
       pc.addEventListener('iceconnectionstatechange', connectionHandler);
-      
+
       setTimeout(() => {
         pc.removeEventListener('connectionstatechange', connectionHandler);
         pc.removeEventListener('iceconnectionstatechange', connectionHandler);
@@ -273,20 +273,20 @@ export class WebRTCManager extends EventEmitter {
     // Connection state changes
     pc.onconnectionstatechange = () => {
       console.log(`🔗 Connection state for ${peerId}: ${pc.connectionState}`);
-      
+
       if (pc.connectionState === 'connected') {
         clearTimeout(pc.timeout);
         this.connectionStates.set(peerId, 'connected');
         this.pendingConnections.delete(peerId);
-        
+
         console.log(`✅ WebRTC Connected to ${peerId}`);
         console.log(`🚀 CRITICAL: About to emit peerConnected event for ${peerId}`);
         this.emit('peerConnected', { peerId, connection: pc, manager: this, initiator: true });
         console.log(`✅ CRITICAL: peerConnected event emitted for ${peerId}`);
-        
+
         // Start keep-alive for this connection
         this.startKeepAlive(peerId);
-        
+
       } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
         console.log(`❌ Connection failed/disconnected for ${peerId}: ${pc.connectionState}`);
         this.connectionStates.set(peerId, pc.connectionState);
@@ -301,7 +301,7 @@ export class WebRTCManager extends EventEmitter {
     // ICE connection state changes with enhanced debugging
     pc.oniceconnectionstatechange = () => {
       console.log(`🧊 ICE connection state for ${peerId}: ${pc.iceConnectionState}`);
-      
+
       if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
         console.log(`✅ ICE connection established for ${peerId}: ${pc.iceConnectionState}`);
         // Log successful ICE candidate pair information
@@ -368,7 +368,7 @@ export class WebRTCManager extends EventEmitter {
     dataChannel.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data);
-        
+
         // Handle keep-alive messages
         if (message.type === 'keep_alive_ping') {
           this.handleKeepAlivePing(peerId, message);
@@ -377,7 +377,7 @@ export class WebRTCManager extends EventEmitter {
           this.handleKeepAlivePong(peerId, message);
           return;
         }
-        
+
         this.emit('data', { peerId, data: message });
       } catch (error) {
         console.warn(`Invalid JSON data from ${peerId}:`, error);
@@ -398,15 +398,15 @@ export class WebRTCManager extends EventEmitter {
     console.log(`🔍 SIGNAL DEBUG: ${signal.type} from ${peerId}, connection exists: ${this.connections.has(peerId)}`);
 
     let pc = this.connections.get(peerId);
-    
+
     // Perfect Negotiation Pattern: Determine who is polite/impolite based on node IDs
     const isPolite = this.localNodeId && this.localNodeId < peerId;
     const makingOffer = pc && pc.signalingState === 'have-local-offer';
     const ignoreOffer = !isPolite && signal.type === 'offer' && makingOffer;
-    
+
     console.log(`🤝 Perfect Negotiation - Role: ${isPolite ? 'POLITE' : 'IMPOLITE'} (${this.localNodeId} vs ${peerId})`);
     console.log(`🔍 Perfect Negotiation - States: makingOffer=${makingOffer}, ignoreOffer=${ignoreOffer}`);
-    
+
     // Perfect Negotiation: Handle collision resolution
     if (ignoreOffer) {
       console.log(`💪 Perfect Negotiation - Being impolite, ignoring offer from ${peerId} (we have precedence)`);
@@ -420,7 +420,7 @@ export class WebRTCManager extends EventEmitter {
         try {
           // CRITICAL FIX: Create connection synchronously to avoid race conditions
           // Call the connection creation logic directly instead of using async createConnection()
-          
+
           // Check if already creating connection
           if (this.connections.has(peerId)) {
             pc = this.connections.get(peerId);
@@ -434,20 +434,20 @@ export class WebRTCManager extends EventEmitter {
               rtcpMuxPolicy: 'require',
               iceCandidatePoolSize: 10
             });
-            
+
             this.connections.set(peerId, rtcPC);
             this.connectionStates.set(peerId, 'connecting');
-            
+
             // Setup peer connection events immediately
             this.setupPeerConnectionEvents(peerId, rtcPC, false); // false = not initiator
-            
+
             // Setup pending connection tracking
             this.pendingConnections.set(peerId, {
               startTime: Date.now(),
               initiator: false,
               pc: rtcPC
             });
-            
+
             // Set connection timeout
             const timeout = setTimeout(() => {
               if (this.connectionStates.get(peerId) === 'connecting') {
@@ -460,10 +460,10 @@ export class WebRTCManager extends EventEmitter {
                 this.destroyConnection(peerId, 'timeout');
               }
             }, this.options.timeout);
-            
+
             rtcPC.timeout = timeout;
             pc = rtcPC;
-            
+
             console.log(`✅ Incoming connection created synchronously for ${peerId}`);
           }
         } catch (error) {
@@ -477,7 +477,7 @@ export class WebRTCManager extends EventEmitter {
     } else {
       console.log(`🔍 Using existing connection for ${peerId}: signaling=${pc.signalingState}, connection=${pc.connectionState}`);
     }
-    
+
     // Perfect Negotiation: Handle rollback if we're being polite
     if (isPolite && signal.type === 'offer' && makingOffer) {
       console.log(`🤝 Perfect Negotiation - Being polite, performing rollback for ${peerId}`);
@@ -524,23 +524,23 @@ export class WebRTCManager extends EventEmitter {
       console.log(`🚀 CRITICAL: Entering try block to process signal type: ${signal.type}`);
       if (signal.type === 'offer') {
         console.log(`📥 Processing offer from ${peerId}`);
-        console.log(`🔍 Offer details:`, { 
-          hasSignal: !!signal, 
-          hasSdp: !!signal.sdp, 
+        console.log(`🔍 Offer details:`, {
+          hasSignal: !!signal,
+          hasSdp: !!signal.sdp,
           signalingState: pc.signalingState,
-          connectionState: pc.connectionState 
+          connectionState: pc.connectionState
         });
-        
+
         await pc.setRemoteDescription(new RTCSessionDescription({
           type: 'offer',
           sdp: signal.sdp
         }));
-        
+
         console.log(`✅ Remote description set for ${peerId}, signaling state: ${pc.signalingState}`);
-        
+
         // Mark remote description as set
         this.remoteDescriptionSet.set(peerId, true);
-        
+
         // Process any queued ICE candidates
         await this.processQueuedSignals(peerId);
 
@@ -548,7 +548,7 @@ export class WebRTCManager extends EventEmitter {
         console.log(`🔄 Creating answer for ${peerId}`);
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        
+
         console.log(`📤 Created answer for ${peerId}, local signaling state: ${pc.signalingState}`);
         this.emit('signal', {
           peerId,
@@ -564,10 +564,10 @@ export class WebRTCManager extends EventEmitter {
           type: 'answer',
           sdp: signal.sdp
         }));
-        
+
         // Mark remote description as set
         this.remoteDescriptionSet.set(peerId, true);
-        
+
         // Process any queued ICE candidates
         await this.processQueuedSignals(peerId);
 
@@ -583,7 +583,7 @@ export class WebRTCManager extends EventEmitter {
     } catch (error) {
       // Perfect Negotiation: Handle signaling errors gracefully
       const isPolite = this.localNodeId && this.localNodeId < peerId;
-      
+
       if (isPolite && signal.type === 'offer') {
         console.log(`🤝 Perfect Negotiation - Polite peer handling offer error gracefully for ${peerId}`);
         // Don't destroy connection for polite peers during offer processing
@@ -606,7 +606,7 @@ export class WebRTCManager extends EventEmitter {
 
     console.log(`🔄 Processing ${queuedSignals.length} queued signals for ${peerId}`);
     const pc = this.connections.get(peerId);
-    
+
     if (!pc) {
       console.warn(`⚠️ No connection found for ${peerId} when processing queued signals`);
       return;
@@ -637,7 +637,7 @@ export class WebRTCManager extends EventEmitter {
    */
   sendData(peerId, data) {
     const dataChannel = this.dataChannels.get(peerId);
-    
+
     if (!dataChannel) {
       throw new Error(`No data channel to peer ${peerId}`);
     }
@@ -647,7 +647,7 @@ export class WebRTCManager extends EventEmitter {
     }
 
     const message = typeof data === 'string' ? data : JSON.stringify(data);
-    
+
     try {
       dataChannel.send(message);
       return true;
@@ -666,7 +666,7 @@ export class WebRTCManager extends EventEmitter {
 
     for (const [peerId, dataChannel] of this.dataChannels.entries()) {
       if (excludePeers.includes(peerId)) continue;
-      
+
       if (dataChannel.readyState === 'open') {
         try {
           dataChannel.send(message);
@@ -696,12 +696,12 @@ export class WebRTCManager extends EventEmitter {
   isConnected(peerId) {
     const connection = this.connections.get(peerId);
     if (!connection) return false;
-    
+
     // Check WebSocket connection
     if (connection instanceof WebSocket) {
       return connection.readyState === WebSocket.OPEN;
     }
-    
+
     // Check WebRTC connection
     return connection.connectionState === 'connected';
   }
@@ -725,22 +725,22 @@ export class WebRTCManager extends EventEmitter {
    */
   isValidDHTPeer(peerId) {
     // Filter out bootstrap server connections and invalid peer IDs
-    
+
     // Check if it looks like a bootstrap server
     if (peerId.includes('bootstrap') || peerId.includes('server')) {
       return false;
     }
-    
+
     // Check if it's a websocket connection (should only be WebRTC for DHT peers)
     if (peerId.startsWith('ws://') || peerId.startsWith('wss://')) {
       return false;
     }
-    
+
     // Check for localhost/IP addresses (bootstrap servers)
     if (peerId.includes('localhost') || peerId.includes('127.0.0.1') || peerId.includes('8080') || peerId.includes('8081')) {
       return false;
     }
-    
+
     // Basic format validation - DHT node IDs should be hex strings of appropriate length
     const hexPattern = /^[a-f0-9]{40,}$/i;
     return hexPattern.test(peerId);
@@ -753,7 +753,7 @@ export class WebRTCManager extends EventEmitter {
     const connectedCount = this.getConnectedPeers().length; // Already filtered to valid DHT peers
     const validPeers = Array.from(this.connections.keys()).filter(peerId => this.isValidDHTPeer(peerId));
     const pendingCount = Array.from(this.pendingConnections.keys()).filter(peerId => this.isValidDHTPeer(peerId)).length;
-    
+
     // Only count actually connected peers, not just connection attempts
     const totalCount = connectedCount;
 
@@ -776,7 +776,7 @@ export class WebRTCManager extends EventEmitter {
    */
   destroyConnection(peerId, reason = 'manual') {
     console.log(`Destroying connection to ${peerId} (${reason})`);
-    
+
     const pc = this.connections.get(peerId);
     if (pc) {
       clearTimeout(pc.timeout);
@@ -854,12 +854,12 @@ export class WebRTCManager extends EventEmitter {
           // Check if this is a bridge node connection based on metadata
           const peerMetadata = this.peerMetadata?.get(peerId);
           const messageType = (peerMetadata && peerMetadata.isBridgeNode) ? 'dht_peer_hello' : 'handshake';
-          
+
           ws.send(JSON.stringify({
             type: messageType,
             peerId: this.localNodeId
           }));
-          
+
           console.log(`📤 Sent ${messageType} to ${peerMetadata?.isBridgeNode ? 'bridge node' : 'peer'} ${peerId.substring(0, 8)}`);
 
           // Wait for handshake response
@@ -871,20 +871,20 @@ export class WebRTCManager extends EventEmitter {
           const handleHandshakeResponse = (event) => {
             try {
               const message = JSON.parse(event.data);
-              
+
               // Handle both regular handshake and bridge node responses
-              const isValidResponse = 
+              const isValidResponse =
                 (message.type === 'handshake_response' && message.success) ||
                 (message.type === 'dht_peer_connected' && message.bridgeNodeId);
-              
+
               if (isValidResponse) {
                 clearTimeout(handshakeTimeout);
                 ws.removeEventListener('message', handleHandshakeResponse);
-                
+
                 if (message.type === 'dht_peer_connected') {
                   console.log(`✅ Successfully connected to bridge node ${message.bridgeNodeId.substring(0, 8)}`);
                 }
-                
+
                 // Set up the WebSocket connection for DHT messaging
                 this.setupWebSocketConnection(peerId, ws);
                 resolve(ws);
@@ -935,7 +935,7 @@ export class WebRTCManager extends EventEmitter {
     ws.addEventListener('message', (event) => {
       try {
         const message = JSON.parse(event.data);
-        
+
         // Skip handshake messages
         if (message.type === 'handshake' || message.type === 'handshake_response') {
           return;
@@ -968,7 +968,7 @@ export class WebRTCManager extends EventEmitter {
    */
   async sendWebSocketMessage(peerId, message) {
     const ws = this.connections.get(peerId);
-    
+
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       throw new Error(`No open WebSocket connection to peer ${peerId}`);
     }
@@ -1007,7 +1007,7 @@ export class WebRTCManager extends EventEmitter {
    */
   async sendMessage(peerId, message) {
     const connection = this.connections.get(peerId);
-    
+
     if (!connection) {
       throw new Error(`No connection to peer ${peerId}`);
     }
@@ -1078,7 +1078,7 @@ export class WebRTCManager extends EventEmitter {
     // Clean up tracking structures
     this.keepAlivePings.delete(peerId);
     this.keepAliveResponses.delete(peerId);
-    
+
     // Clear any pending timeouts
     const timeouts = this.keepAliveTimeouts.get(peerId);
     if (timeouts) {
@@ -1129,24 +1129,24 @@ export class WebRTCManager extends EventEmitter {
           if (pendingPings && pendingPings.has(pingMessage.pingId)) {
             console.warn(`⚠️ Keep-alive ping ${pingMessage.pingId} to ${peerId} timed out after ${this.keepAliveTimeout}ms`);
             pendingPings.delete(pingMessage.pingId);
-            
+
             // Remove timeout from tracking
             const timeouts = this.keepAliveTimeouts.get(peerId);
             if (timeouts) {
               timeouts.delete(timeoutId);
             }
-            
+
             // Check if we have too many failed pings
             const lastResponse = this.keepAliveResponses.get(peerId) || 0;
             const timeSinceLastResponse = Date.now() - lastResponse;
-            
+
             if (timeSinceLastResponse > this.keepAliveTimeout * 2) {
               console.error(`❌ Peer ${peerId} not responding to keep-alive pings for ${timeSinceLastResponse}ms, marking as failed`);
               this.destroyConnection(peerId, 'keep_alive_timeout');
             }
           }
         }, this.keepAliveTimeout);
-        
+
         // Track timeout for cleanup
         const timeouts = this.keepAliveTimeouts.get(peerId) || new Set();
         timeouts.add(timeoutId);
@@ -1202,7 +1202,7 @@ export class WebRTCManager extends EventEmitter {
    */
   handleKeepAlivePong(peerId, pongMessage) {
     const roundTripTime = Date.now() - pongMessage.originalTimestamp;
-    
+
     // Only log pong responses occasionally to reduce spam, or if RTT is high
     if (Math.random() < 0.1 || roundTripTime > 5000) {
       console.log(`📱 Received keep-alive pong from ${peerId}: ${pongMessage.pingId} (RTT: ${roundTripTime}ms, peer tab ${pongMessage.tabVisible ? 'visible' : 'hidden'})`);
@@ -1216,7 +1216,7 @@ export class WebRTCManager extends EventEmitter {
 
     // Update last response timestamp
     this.keepAliveResponses.set(peerId, Date.now());
-    
+
     // Clean up corresponding timeout (ping was successful)
     // Note: We can't easily match timeout to specific ping, but successful response means connection is healthy
   }
@@ -1226,7 +1226,7 @@ export class WebRTCManager extends EventEmitter {
    */
   cleanupAllKeepAlives() {
     console.log(`📱 Cleaning up ${this.keepAliveIntervals.size} keep-alive timers`);
-    
+
     for (const [peerId, intervalId] of this.keepAliveIntervals.entries()) {
       clearInterval(intervalId);
     }
@@ -1234,7 +1234,7 @@ export class WebRTCManager extends EventEmitter {
     this.keepAliveIntervals.clear();
     this.keepAlivePings.clear();
     this.keepAliveResponses.clear();
-    
+
     // Clear all pending timeouts
     for (const [peerId, timeouts] of this.keepAliveTimeouts.entries()) {
       for (const timeoutId of timeouts) {
@@ -1304,14 +1304,14 @@ export class WebRTCManager extends EventEmitter {
    */
   debugWebRTCStates() {
     console.log('=== WebRTC Connection Debug Report ===');
-    
+
     const report = {
       totalConnections: this.connections.size,
       connectedPeers: this.getConnectedPeers().length,
       pendingConnections: this.pendingConnections.size,
       connections: []
     };
-    
+
     for (const [peerId, connection] of this.connections.entries()) {
       if (connection instanceof RTCPeerConnection) {
         const connectionInfo = {
@@ -1323,16 +1323,16 @@ export class WebRTCManager extends EventEmitter {
           hasDataChannel: this.dataChannels.has(peerId),
           dataChannelState: this.dataChannels.get(peerId)?.readyState || 'none'
         };
-        
+
         report.connections.push(connectionInfo);
-        
+
         console.log(`Peer ${peerId.substring(0, 8)}:`, connectionInfo);
-        
+
         // Get detailed ICE candidate information
         connection.getStats().then(stats => {
           const candidates = [];
           const candidatePairs = [];
-          
+
           stats.forEach(report => {
             if (report.type === 'local-candidate' || report.type === 'remote-candidate') {
               candidates.push({
@@ -1352,7 +1352,7 @@ export class WebRTCManager extends EventEmitter {
               });
             }
           });
-          
+
           if (candidates.length > 0 || candidatePairs.length > 0) {
             console.log(`  ICE Details for ${peerId.substring(0, 8)}:`, {
               candidates: candidates.length,
@@ -1365,40 +1365,40 @@ export class WebRTCManager extends EventEmitter {
         });
       }
     }
-    
+
     console.log('Summary:', {
       total: report.totalConnections,
       connected: report.connectedPeers,
       pending: report.pendingConnections,
       success_rate: report.totalConnections > 0 ? `${(report.connectedPeers / report.totalConnections * 100).toFixed(1)}%` : '0%'
     });
-    
+
     return report;
   }
-  
+
   /**
    * Check connection health for all peers
    */
   checkConnectionHealth() {
     console.log('=== Connection Health Check ===');
-    
+
     const healthReport = {
       healthy: [],
       unhealthy: [],
       pending: []
     };
-    
+
     for (const [peerId, connection] of this.connections.entries()) {
       const status = {
         peerId: peerId.substring(0, 8),
         connected: this.isConnected(peerId),
         state: this.getConnectionState(peerId)
       };
-      
+
       if (connection instanceof RTCPeerConnection) {
         status.connectionState = connection.connectionState;
         status.iceConnectionState = connection.iceConnectionState;
-        
+
         if (connection.connectionState === 'connected') {
           healthReport.healthy.push(status);
         } else if (connection.connectionState === 'connecting') {
@@ -1408,21 +1408,21 @@ export class WebRTCManager extends EventEmitter {
         }
       }
     }
-    
+
     console.log('Health Report:', {
       healthy: healthReport.healthy.length,
       pending: healthReport.pending.length,
       unhealthy: healthReport.unhealthy.length
     });
-    
+
     if (healthReport.unhealthy.length > 0) {
       console.log('Unhealthy connections:', healthReport.unhealthy);
     }
-    
+
     if (healthReport.pending.length > 0) {
       console.log('Pending connections:', healthReport.pending);
     }
-    
+
     return healthReport;
   }
 

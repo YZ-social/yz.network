@@ -1,11 +1,11 @@
 /**
  * Base DHT Client - Superclass for all DHT node implementations
- * 
+ *
  * Provides common DHT initialization logic for:
  * - BrowserDHTClient (browser environments)
- * - NodeDHTClient (Node.js environments) 
+ * - NodeDHTClient (Node.js environments)
  * - PassiveBridgeNode (bridge/observer nodes)
- * 
+ *
  * Uses connection-agnostic architecture where DHT handles connection management internally.
  */
 
@@ -33,7 +33,7 @@ export class DHTClient extends EventEmitter {
 
     // Generate node ID (subclasses can override this)
     this.nodeId = this.generateNodeId();
-    
+
     this.dht = null;
     this.bootstrap = null;
     this.isStarted = false;

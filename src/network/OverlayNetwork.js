@@ -8,7 +8,7 @@ import { DHTNodeId } from '../core/DHTNodeId.js';
 export class OverlayNetwork extends EventEmitter {
   constructor(dht, options = {}) {
     super();
-    
+
     this.dht = dht;
     this.options = {
       maxDirectConnections: options.maxDirectConnections || 100,
@@ -23,7 +23,7 @@ export class OverlayNetwork extends EventEmitter {
     this.connectionRequests = new Map(); // requestId -> request info
     this.routingCache = new Map(); // destination -> route info
     this.messageQueue = new Map(); // peerId -> [messages...]
-    
+
     // Connection pools for different purposes
     this.connectionPools = {
       messaging: new Set(), // For direct messaging
@@ -64,17 +64,17 @@ export class OverlayNetwork extends EventEmitter {
     if (this.isStarted) return;
 
     console.log('Starting overlay network...');
-    
+
     if (!this.dht || !this.dht.isStarted) {
       throw new Error('DHT must be started before overlay network');
     }
 
     // Start maintenance tasks
     this.startMaintenanceTasks();
-    
+
     this.isStarted = true;
     this.emit('started');
-    
+
     console.log('Overlay network started');
   }
 
@@ -130,11 +130,11 @@ export class OverlayNetwork extends EventEmitter {
    * Send a direct message to a peer
    */
   async sendDirectMessage(peerId, message, options = {}) {
-    const { 
+    const {
       priority = 'normal',
       reliable = true,
       timeout = 10000,
-      route = true 
+      route = true
     } = options;
 
     // Try direct connection first
@@ -214,7 +214,7 @@ export class OverlayNetwork extends EventEmitter {
     // Send to first hop
     const nextHop = route[0];
     console.log(`Routing message to ${targetPeerId} via ${nextHop}`);
-    
+
     return this.dht.sendMessage(nextHop, routedMessage);
   }
 
@@ -230,13 +230,13 @@ export class OverlayNetwork extends EventEmitter {
 
     console.log(`Finding route to ${targetPeerId}`);
 
-    // Try direct DHT lookup first  
+    // Try direct DHT lookup first
     // CRITICAL: targetPeerId is a peer ID (hex string), use fromHex() not fromString()
     const targetId = DHTNodeId.fromHex(targetPeerId);
     const closestNodes = this.dht.routingTable.findClosestNodes(targetId, 5);
 
     // Filter to only connected nodes
-    const connectedNodes = closestNodes.filter(node => 
+    const connectedNodes = closestNodes.filter(node =>
       this.dht.isPeerConnected(node.id.toString())
     );
 
@@ -305,7 +305,7 @@ export class OverlayNetwork extends EventEmitter {
    */
   async handleConnectionRequest(peerId, message) {
     const { purpose, options } = message;
-    
+
     console.log(`Connection request from ${peerId} for ${purpose}`);
 
     // Check if we can accept the connection
@@ -345,7 +345,7 @@ export class OverlayNetwork extends EventEmitter {
    */
   async handleDirectMessage(peerId, message) {
     const { messageId, payload, priority } = message;
-    
+
     console.log(`Direct message from ${peerId}: ${messageId}`);
 
     // Update activity
@@ -426,16 +426,16 @@ export class OverlayNetwork extends EventEmitter {
    */
   handleDHTDisconnection(peerId) {
     console.log(`DHT connection lost with ${peerId}`);
-    
+
     // Clean up direct connections
     if (this.directConnections.has(peerId)) {
       const connectionInfo = this.directConnections.get(peerId);
-      
+
       // Remove from pools
       for (const purpose of connectionInfo.purposes) {
         this.connectionPools[purpose].delete(peerId);
       }
-      
+
       this.directConnections.delete(peerId);
       this.emit('directConnectionLost', { peerId });
     }
@@ -469,7 +469,7 @@ export class OverlayNetwork extends EventEmitter {
    */
   async sendKeepAlives() {
     const now = Date.now();
-    
+
     for (const [peerId, connectionInfo] of this.directConnections.entries()) {
       if (now - connectionInfo.lastActivity > this.options.keepAliveInterval) {
         try {
@@ -491,7 +491,7 @@ export class OverlayNetwork extends EventEmitter {
   cleanupRoutingCache() {
     const now = Date.now();
     const maxAge = 5 * 60 * 1000; // 5 minutes
-    
+
     for (const [peerId, routeInfo] of this.routingCache.entries()) {
       if (now - routeInfo.timestamp > maxAge) {
         this.routingCache.delete(peerId);
@@ -505,7 +505,7 @@ export class OverlayNetwork extends EventEmitter {
   checkConnectionHealth() {
     const now = Date.now();
     const timeout = 2 * this.options.keepAliveInterval;
-    
+
     for (const [peerId, connectionInfo] of this.directConnections.entries()) {
       if (now - connectionInfo.lastActivity > timeout) {
         console.warn(`Connection to ${peerId} appears stale, removing`);
@@ -529,7 +529,7 @@ export class OverlayNetwork extends EventEmitter {
       isStarted: this.isStarted,
       directConnections: this.directConnections.size,
       connectionPools: Object.fromEntries(
-        Object.entries(this.connectionPools).map(([purpose, peers]) => 
+        Object.entries(this.connectionPools).map(([purpose, peers]) =>
           [purpose, peers.size]
         )
       ),
@@ -545,7 +545,7 @@ export class OverlayNetwork extends EventEmitter {
    */
   getConnectionsByPurpose() {
     const byPurpose = {};
-    
+
     for (const [peerId, connectionInfo] of this.directConnections.entries()) {
       for (const purpose of connectionInfo.purposes) {
         if (!byPurpose[purpose]) {
@@ -558,7 +558,7 @@ export class OverlayNetwork extends EventEmitter {
         });
       }
     }
-    
+
     return byPurpose;
   }
 
@@ -587,14 +587,14 @@ export class OverlayNetwork extends EventEmitter {
     this.connectionRequests.clear();
     this.routingCache.clear();
     this.messageQueue.clear();
-    
+
     for (const pool of Object.values(this.connectionPools)) {
       pool.clear();
     }
 
     this.isStarted = false;
     this.emit('stopped');
-    
+
     console.log('Overlay network stopped');
   }
 
@@ -630,7 +630,7 @@ export class OverlayNetwork extends EventEmitter {
    */
   async sendDHTSignal(peerId, signal) {
     console.log(`🚀 DHT Signaling: Sending ${signal.type} to ${peerId} via DHT messaging`);
-    
+
     try {
       if (signal.type === 'offer') {
         await this.sendWebRTCOffer(peerId, signal.sdp);
@@ -647,7 +647,7 @@ export class OverlayNetwork extends EventEmitter {
       }
     } catch (error) {
       console.error(`Failed to send DHT signal ${signal.type} to ${peerId}:`, error);
-      
+
       // Fallback to bootstrap signaling if DHT messaging fails
       console.log(`🔄 Falling back to bootstrap signaling for ${peerId}`);
       await this.dht.bootstrap.forwardSignal(peerId, signal);
@@ -659,7 +659,7 @@ export class OverlayNetwork extends EventEmitter {
    */
   async routeWebRTCMessage(targetPeer, message) {
     console.log(`🚀 Routing WebRTC message to ${targetPeer}: ${message.type}`);
-    
+
     try {
       // Try to send directly if we have a connection to the target
       if (this.dht.isPeerConnected(targetPeer)) {
@@ -667,12 +667,12 @@ export class OverlayNetwork extends EventEmitter {
         console.log(`✅ Directly routed WebRTC message to ${targetPeer}`);
         return;
       }
-      
+
       // In small networks, any connected peer can potentially route to the target
       // Try XOR-closest nodes first, then fall back to any connected peer
       const targetNodeId = this.dht.localNodeId.constructor.fromHex(targetPeer);
       const closestNodes = this.dht.routingTable.findClosestNodes(targetNodeId, this.dht.options.alpha);
-      
+
       // Try closest nodes first if they're connected
       for (const node of closestNodes) {
         const nextHop = node.id.toString();
@@ -682,14 +682,14 @@ export class OverlayNetwork extends EventEmitter {
           return;
         }
       }
-      
+
       // Fall back to any connected peer for small networks where XOR-closest might not be connected
       const connectedPeers = this.dht.getConnectedPeers();
       if (connectedPeers.length === 0) {
         console.warn(`No connected peers available to route WebRTC message to ${targetPeer.substring(0, 8)}...`);
         return;
       }
-      
+
       // Try any connected peer as a potential route
       for (const nextHop of connectedPeers) {
         try {
@@ -700,7 +700,7 @@ export class OverlayNetwork extends EventEmitter {
           console.warn(`Failed to route via ${nextHop.substring(0, 8)}...: ${error.message}`);
         }
       }
-      
+
       console.warn(`No connected route found to forward WebRTC message to ${targetPeer.substring(0, 8)}... (tried ${connectedPeers.length} peers)`);
     } catch (error) {
       console.error(`Failed to route WebRTC message to ${targetPeer}:`, error);
@@ -712,7 +712,7 @@ export class OverlayNetwork extends EventEmitter {
    */
   async sendWebRTCOffer(targetPeer, offer) {
     console.log(`📤 Sending WebRTC offer via DHT to ${targetPeer}`);
-    
+
     const message = {
       type: 'webrtc_offer',
       senderPeer: this.dht.localNodeId.toString(),
@@ -728,7 +728,7 @@ export class OverlayNetwork extends EventEmitter {
    */
   async sendWebRTCAnswer(targetPeer, answer) {
     console.log(`📤 Sending WebRTC answer via DHT to ${targetPeer}`);
-    
+
     const message = {
       type: 'webrtc_answer',
       senderPeer: this.dht.localNodeId.toString(),
@@ -744,7 +744,7 @@ export class OverlayNetwork extends EventEmitter {
    */
   async sendWebRTCIceCandidate(targetPeer, candidate) {
     console.log(`📤 Sending WebRTC ICE candidate via DHT to ${targetPeer}`);
-    
+
     const message = {
       type: 'webrtc_ice',
       senderPeer: this.dht.localNodeId.toString(),

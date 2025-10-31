@@ -33,7 +33,7 @@ export class BootstrapClient extends EventEmitter {
    */
   async connect(localNodeId, metadata = {}) {
     this.localNodeId = localNodeId;
-    
+
     if (this.isDestroyed) {
       throw new Error('BootstrapClient is destroyed');
     }
@@ -52,7 +52,7 @@ export class BootstrapClient extends EventEmitter {
     return new Promise((resolve, reject) => {
       try {
         this.ws = new WebSocket(serverUrl);
-        
+
         const timeout = setTimeout(() => {
           this.ws?.close();
           reject(new Error('Connection timeout'));
@@ -63,7 +63,7 @@ export class BootstrapClient extends EventEmitter {
           console.log('Connected to bootstrap server');
           this.isConnected = true;
           this.reconnectAttempts = 0;
-          
+
           // Small delay to ensure WebSocket is fully ready
           setTimeout(() => {
             try {
@@ -117,7 +117,7 @@ export class BootstrapClient extends EventEmitter {
         this.ws.onerror = (error) => {
           clearTimeout(timeout);
           console.error('Bootstrap connection error:', error);
-          
+
           if (!this.isConnected) {
             reject(error);
           } else {
@@ -176,12 +176,12 @@ export class BootstrapClient extends EventEmitter {
           // Also check if this is a peer list response
           if (message.data && message.data.peers) {
             this.emit('peerList', message.data.peers);
-            
+
             // CRITICAL: Check if peers contain bridge nodes that need connection
-            const bridgeNodes = message.data.peers.filter(peer => 
+            const bridgeNodes = message.data.peers.filter(peer =>
               peer.metadata && peer.metadata.isBridgeNode && peer.metadata.listeningAddress
             );
-            
+
             if (bridgeNodes.length > 0) {
               console.log(`🌉 Bootstrap response contains ${bridgeNodes.length} bridge nodes - emitting bridge connection event`);
               this.emit('bridgeNodesReceived', {
@@ -250,7 +250,7 @@ export class BootstrapClient extends EventEmitter {
     if (request) {
       clearTimeout(request.timeout);
       this.pendingRequests.delete(message.requestId);
-      
+
       if (message.success) {
         request.resolve(message.data);
       } else {
@@ -315,7 +315,7 @@ export class BootstrapClient extends EventEmitter {
         nodeId: this.localNodeId,
         metadata: this.metadata || {}
       });
-      
+
       return {
         peers: response.peers || [],
         isGenesis: response.isGenesis || false
@@ -336,7 +336,7 @@ export class BootstrapClient extends EventEmitter {
         maxPeers,
         nodeId: this.localNodeId
       });
-      
+
       return response.peers || [];
     } catch (error) {
       console.error('Error requesting peers:', error);
@@ -355,7 +355,7 @@ export class BootstrapClient extends EventEmitter {
         invitationToken,
         inviterNodeId: this.localNodeId
       }, timeout);
-      
+
       return { success: true, data: response };
     } catch (error) {
       console.error('Error sending invitation:', error);
@@ -455,11 +455,11 @@ export class BootstrapClient extends EventEmitter {
     }
 
     this.reconnectAttempts++;
-    
+
     // Try next server
     this.currentServerIndex = (this.currentServerIndex + 1) % this.options.bootstrapServers.length;
-    
-    
+
+
     setTimeout(() => {
       if (!this.isDestroyed && !this.isConnected) {
         this.attemptConnection().catch(error => {
