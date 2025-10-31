@@ -6,6 +6,7 @@ import { BootstrapClient } from '../bootstrap/BootstrapClient.js';
 import { InvitationToken } from '../core/InvitationToken.js';
 import { ConnectionManagerFactory } from '../network/ConnectionManagerFactory.js';
 import { OverlayNetwork } from '../network/OverlayNetwork.js';
+import Logger from '../utils/Logger.js';
 
 /**
  * Main Kademlia DHT implementation with connection-agnostic transport
@@ -13,15 +14,18 @@ import { OverlayNetwork } from '../network/OverlayNetwork.js';
 export class KademliaDHT extends EventEmitter {
   constructor(options = {}) {
     super();
-    
+
     // Track DHT instance creation
     const instanceId = Math.random().toString(36).substr(2, 9);
     this.instanceId = instanceId;
 
+    // Create logger instance
+    this.logger = new Logger('DHT');
+
     this.options = {
       k: options.k || 20, // Kademlia k parameter
       alpha: options.alpha || 3, // Parallelism parameter
-      replicateK: options.replicateK || 3, // Replication factor
+      replicateK: options.replicateK || 20, // Replication factor (Kademlia-compliant: replicate to k closest nodes)
       refreshInterval: options.refreshInterval || 60 * 1000, // Base interval - will be adaptive
       aggressiveRefreshInterval: options.aggressiveRefreshInterval || 15 * 1000, // 15s for new/isolated nodes
       standardRefreshInterval: options.standardRefreshInterval || 600 * 1000, // 10 minutes following IPFS standard
@@ -223,6 +227,19 @@ export class KademliaDHT extends EventEmitter {
     this.connectionManagerEventHandler = ({ peerId, connection, manager, initiator }) => {
       console.log(`🔗 DHT received peerConnected: ${peerId.substring(0, 8)}... (via ${manager?.constructor.name})`);
 
+      // Skip DHT operations for bootstrap server connections
+      // Bootstrap connections have IDs like "bootstrap_1234567890" which aren't valid DHT node IDs
+      if (peerId.startsWith('bootstrap_')) {
+        console.log(`🔗 Bootstrap server connection detected - skipping DHT operations for ${peerId.substring(0, 16)}...`);
+        return;
+      }
+
+      // Validate that peerId is a valid 40-character hex DHT node ID
+      if (!peerId || peerId.length !== 40 || !/^[0-9a-f]{40}$/i.test(peerId)) {
+        console.warn(`⚠️ Invalid DHT node ID format: ${peerId} - skipping DHT operations`);
+        return;
+      }
+
       // CRITICAL: Update lastSeen timestamp to prevent stale node removal during reconnection
       const peerNode = this.routingTable.getNode(peerId);
       if (peerNode) {
@@ -324,13 +341,17 @@ export class KademliaDHT extends EventEmitter {
     
     ConnectionManagerFactory.initializeTransports(transportOptionsWithBootstrap);
 
-    // Initialize default metadata for this DHT client (not a bridge node)
-    ConnectionManagerFactory.setPeerMetadata(this.localNodeId.toString(), {
+    // Initialize local node metadata (use bootstrapMetadata if available, fallback to defaults)
+    const localMetadata = {
       isBridgeNode: false,
-      nodeType: 'client',
+      nodeType: typeof process === 'undefined' ? 'browser' : 'nodejs',
       capabilities: typeof process === 'undefined' ? ['webrtc'] : ['websocket'],
-      startTime: Date.now()
-    });
+      startTime: Date.now(),
+      ...this.bootstrapMetadata  // Override with actual metadata from NodeDHTClient.getBootstrapMetadata()
+    };
+
+    console.log(`📋 Registering local node metadata:`, localMetadata);
+    ConnectionManagerFactory.setPeerMetadata(this.localNodeId.toString(), localMetadata);
 
     // Set up routing table to listen to connection manager events
     this.setupRoutingTableEventHandlers();
@@ -433,40 +454,54 @@ export class KademliaDHT extends EventEmitter {
           console.log(`🌉 Bridge node ${peer.nodeId.substring(0, 8)}... - will connect via bridgeNodesReceived handler`);
           // Skip connecting here - bridge nodes use dedicated connection path
         } else {
-          // SECURITY: No automatic connections - all peers must be explicitly invited
-          // Both Genesis and non-Genesis peers wait for explicit invitations
-          console.log(`⏳ Found peer ${peer.nodeId.substring(0, 8)}... - waiting for explicit invitation`);
-          // Do not auto-connect - connections only through invitation system
+          // Regular peers: Just add to routing table, k-bucket maintenance will connect later
+          console.log(`📋 Added peer ${peer.nodeId.substring(0, 8)}... to routing table (k-bucket maintenance will connect)`);
+          // Peer metadata already stored above via getOrCreatePeerNode
         }
       } catch (error) {
         console.warn(`Failed to initiate connection to ${peer.nodeId}:`, error);
       }
     }
 
-    // Wait for at least one connection
+    // Check if we have peers in routing table (even if not connected yet)
+    const routingTableSize = this.routingTable.getAllNodes().length;
+
     if (connectionPromises.length > 0) {
+      // We have connection attempts (e.g., to bridge nodes)
       try {
         await Promise.race(connectionPromises);
         console.log('✅ Connected to initial peers');
         this.isBootstrapped = true;
-        
+
         // Give connections more time to establish before considering DHT signaling
         setTimeout(() => {
           const actualConnections = this.getConnectedPeers().length;
           const routingEntries = this.routingTable.getAllNodes().length;
-          
+
           if (actualConnections < routingEntries) {
             this.cleanupRoutingTable();
           }
-          
+
           this.considerDHTSignaling();
         }, 5000); // 5 seconds delay - check DHT signaling readiness
-        
+
       } catch (error) {
         console.warn('Failed to connect to any bootstrap peers:', error);
       }
+    } else if (routingTableSize > 0) {
+      // No immediate connections, but we have peers in routing table for k-bucket maintenance
+      console.log(`📋 ${routingTableSize} peers added to routing table (k-bucket maintenance will establish connections)`);
+      this.isBootstrapped = true;
+
+      // Trigger k-bucket maintenance to connect to peers
+      setTimeout(async () => {
+        console.log('🔧 Triggering k-bucket maintenance for peer connections...');
+        await this.refreshStaleBuckets();
+        // CRITICAL: Also connect to discovered peers (refreshStaleBuckets only does discovery)
+        await this.connectToRecentlyDiscoveredPeers();
+      }, 1000); // Short delay to let routing table settle
     } else {
-      console.warn('No connection attempts could be initiated');
+      console.warn('No peers available for bootstrap');
     }
   }
 
@@ -1339,24 +1374,25 @@ export class KademliaDHT extends EventEmitter {
    */
   isValidDHTPeer(peerId) {
     // Filter out bootstrap server connections and invalid peer IDs
-    
+
+    // Silently reject our own node ID (find_node handler checks this explicitly too)
     if (peerId === this.localNodeId.toString()) {
       return false;
     }
-    
+
     if (peerId.includes('bootstrap') || peerId.includes('server')) {
       return false;
     }
-    
+
     if (peerId.startsWith('ws://') || peerId.startsWith('wss://')) {
       return false;
     }
-    
+
     const hexPattern = /^[a-f0-9]{40,}$/i;
     if (!hexPattern.test(peerId)) {
       return false;
     }
-    
+
     // Additional validation: peer must be either connected or have been discovered through invitation
     // This helps prevent random search target IDs from being treated as real peers
     if (!this.isPeerConnected(peerId) && !this.isPeerConnected(peerId)) {
@@ -1365,7 +1401,7 @@ export class KademliaDHT extends EventEmitter {
         console.debug(`🔍 Validating disconnected peer ${peerId.substring(0,8)}: not in routing table yet`);
       }
     }
-    
+
     return true;
   }
 
@@ -2331,27 +2367,29 @@ export class KademliaDHT extends EventEmitter {
    * Store key-value pair in DHT
    */
   async store(key, value) {
-    console.log(`Storing key: ${key}`);
-    console.log(`Current routing table size: ${this.routingTable.getAllNodes().length}`);
-    console.log(`Connected peers: ${this.getConnectedPeers().length}`);
-    
+    this.logger.info(`📝 Storing key: ${key}`);
+    this.logger.debug(`Current routing table size: ${this.routingTable.getAllNodes().length}`);
+    this.logger.debug(`Connected peers: ${this.getConnectedPeers().length}`);
+
     // Clean routing table of disconnected peers before operations
     this.cleanupRoutingTable();
-    
+
     const keyId = DHTNodeId.fromString(key);
     const closestNodes = await this.findNode(keyId);
-    
-    // Filter to only peers with active WebRTC connections
+
+    // Filter to only peers with active connections
     const connectedClosestNodes = closestNodes.filter(node => {
       const peerId = node.id.toString();
       const isConnected = this.isPeerConnected(peerId);
       if (!isConnected) {
-        // Node not connected, but we still track it as a potential contact
+        this.logger.debug(`   Node ${peerId.substring(0, 8)}... not connected, skipping replication`);
       }
       return isConnected;
     });
-    
-    
+
+    this.logger.info(`   Found ${closestNodes.length} closest nodes, ${connectedClosestNodes.length} connected`);
+    this.logger.info(`   Will replicate to ${Math.min(connectedClosestNodes.length, this.options.replicateK)} nodes (replicateK=${this.options.replicateK})`);
+
     // Store locally if we're one of the closest
     const localDistance = this.localNodeId.xorDistance(keyId);
     const shouldStoreLocally = connectedClosestNodes.length < this.options.replicateK ||
@@ -2366,22 +2404,37 @@ export class KademliaDHT extends EventEmitter {
         timestamp: Date.now(),
         publisher: this.localNodeId.toString()
       });
+      this.logger.info(`   ✅ Stored locally (we are one of the ${this.options.replicateK} closest nodes)`);
+    } else {
+      this.logger.debug(`   Skipping local storage (not one of the ${this.options.replicateK} closest nodes)`);
     }
 
     // Store on closest connected nodes
-    const storePromises = connectedClosestNodes
-      .slice(0, this.options.replicateK)
-      .map(node => this.sendStore(node.id.toString(), key, value));
+    const targetNodes = connectedClosestNodes.slice(0, this.options.replicateK);
+    this.logger.info(`   Replicating to ${targetNodes.length} peers...`);
+
+    const storePromises = targetNodes.map(node => {
+      const peerId = node.id.toString();
+      this.logger.debug(`   → Sending store to ${peerId.substring(0, 8)}...`);
+      return this.sendStore(peerId, key, value);
+    });
 
     const results = await Promise.allSettled(storePromises);
     const successes = results.filter(r => r.status === 'fulfilled').length;
-    // const failures = results.filter(r => r.status === 'rejected');
-    
-    
+    const failures = results.filter(r => r.status === 'rejected');
+
+    this.logger.info(`   ✅ Replication complete: ${successes}/${targetNodes.length} successful`);
+    if (failures.length > 0) {
+      this.logger.warn(`   ⚠️ ${failures.length} replication failures`);
+      failures.forEach((f, i) => {
+        this.logger.debug(`      Failed to ${targetNodes[i].id.toString().substring(0, 8)}...: ${f.reason}`);
+      });
+    }
+
     // Add to republish queue
     this.republishQueue.set(key, Date.now() + this.options.republishInterval);
-    
-    return successes > 0;
+
+    return successes > 0 || shouldStoreLocally;
   }
 
   /**
@@ -2606,7 +2659,7 @@ export class KademliaDHT extends EventEmitter {
     if (!this.peerNodes) {
       this.peerNodes = new Map();
     }
-    
+
     let peerNode = this.routingTable.getNode(peerId);
     if (!peerNode) {
       peerNode = new DHTNode(peerId);
@@ -2614,7 +2667,14 @@ export class KademliaDHT extends EventEmitter {
       for (const [key, value] of Object.entries(metadata)) {
         peerNode.setMetadata(key, value);
       }
-      // Don't add to routing table here - wait for actual connection via peerConnected event
+
+      // CRITICAL: Add to routing table if we have metadata (discovered peer)
+      // Node will have connection = null until k-bucket maintenance connects
+      if (Object.keys(metadata).length > 0) {
+        console.log(`📋 Adding discovered peer ${peerId.substring(0, 8)}... to routing table with metadata (not yet connected)`);
+        this.routingTable.addNode(peerNode);
+      }
+      // If no metadata, wait for actual connection via peerConnected event
     }
     
     // CRITICAL FIX: Always store in peerNodes Map for connection management
@@ -2622,11 +2682,16 @@ export class KademliaDHT extends EventEmitter {
     
     // Create connection manager if not exists
     if (!peerNode.connectionManager) {
-      if (this.serverConnectionManager) {
-        // Reuse server connection manager for bridge/server nodes
-        console.log(`🔗 Reusing server connection manager for peer ${peerId.substring(0, 8)}...`);
+      // CRITICAL: Only reuse serverConnectionManager if peer already connected via server
+      // For new outgoing connections, create a dedicated client connection manager
+      const isAlreadyConnectedViaServer = this.serverConnectionManager &&
+                                           this.serverConnectionManager.isConnected(peerId);
+
+      if (isAlreadyConnectedViaServer) {
+        // Peer already connected via our WebSocket server - reuse server manager
+        console.log(`🔗 Reusing server connection manager for already-connected peer ${peerId.substring(0, 8)}...`);
         peerNode.connectionManager = this.serverConnectionManager;
-        
+
         // CRITICAL: Set up event handler for server connection manager too
         if (this.connectionManagerEventHandler && !this.serverEventHandlerAttached) {
           this.serverConnectionManager.on('peerConnected', this.connectionManagerEventHandler);
@@ -2634,9 +2699,11 @@ export class KademliaDHT extends EventEmitter {
           console.log(`🔗 Event handler attached to server connection manager`);
         }
       } else {
-        // Create new connection manager for client nodes
+        // Create new CLIENT connection manager for outgoing connections
+        // CRITICAL: Pass DHTNode's metadata directly - routing table is single source of truth
+        console.log(`🔗 Creating CLIENT connection manager for outgoing connection to ${peerId.substring(0, 8)}...`);
         peerNode.connectionManager = ConnectionManagerFactory.getManagerForPeer(peerId, peerNode.metadata);
-        
+
         // CRITICAL: Initialize connection manager with local node ID
         peerNode.connectionManager.initialize(this.localNodeId.toString());
         
@@ -3684,13 +3751,19 @@ export class KademliaDHT extends EventEmitter {
         for (const nodeInfo of message.nodes) {
           try {
             // Validate node info structure
-            if (!nodeInfo.id || !this.isValidDHTPeer(nodeInfo.id)) {
-              console.log(`❌ Skipping invalid peer ID: ${nodeInfo.id}`);
+            if (!nodeInfo.id) {
+              console.error(`❌ Skipping peer with missing ID:`, nodeInfo);
               continue;
             }
 
-            // Don't add ourselves to routing table
+            // Don't add ourselves to routing table (normal behavior, skip silently)
             if (nodeInfo.id === this.localNodeId.toString()) {
+              continue;
+            }
+
+            if (!this.isValidDHTPeer(nodeInfo.id)) {
+              console.error(`❌ Skipping invalid peer ID: ${nodeInfo.id}`);
+              console.error(`❌   Why: hasBootstrap=${nodeInfo.id.includes('bootstrap') || nodeInfo.id.includes('server')}, hasWs=${nodeInfo.id.startsWith('ws://') || nodeInfo.id.startsWith('wss://')}, hexOk=${/^[a-f0-9]{40,}$/i.test(nodeInfo.id)}`);
               continue;
             }
 

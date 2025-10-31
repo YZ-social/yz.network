@@ -67,6 +67,17 @@ export class DHTVisualizer {
       statRoutingTable: document.getElementById('stat-routing-table'),
       statStorageItems: document.getElementById('stat-storage-items'),
       
+      // Identity elements
+      identityNodeId: document.getElementById('identity-node-id'),
+      identityPublicKey: document.getElementById('identity-public-key'),
+      identityCreated: document.getElementById('identity-created'),
+      identityLastUsed: document.getElementById('identity-last-used'),
+      identityVerified: document.getElementById('identity-verified'),
+      exportIdentityBtn: document.getElementById('export-identity-btn'),
+      importIdentityBtn: document.getElementById('import-identity-btn'),
+      deleteIdentityBtn: document.getElementById('delete-identity-btn'),
+      identityFileInput: document.getElementById('identity-file-input'),
+
       // Other
       peerList: document.getElementById('peer-list'),
       logOutput: document.getElementById('log-output'),
@@ -75,11 +86,14 @@ export class DHTVisualizer {
     };
 
     this.logContainer = this.elements.logOutput;
-    
+
     // Set initial node ID
     if (this.dht && this.dht.localNodeId) {
       this.elements.nodeId.textContent = this.dht.localNodeId.toString();
     }
+
+    // Update identity UI if available
+    this.updateIdentityUI();
   }
 
   /**
@@ -140,6 +154,20 @@ export class DHTVisualizer {
     this.elements.inviteNodeId.addEventListener('keypress', (e) => {
       if (e.key === 'Enter') this.inviteClient();
     });
+
+    // Identity management buttons
+    if (this.elements.exportIdentityBtn) {
+      this.elements.exportIdentityBtn.addEventListener('click', () => this.exportIdentity());
+    }
+    if (this.elements.importIdentityBtn) {
+      this.elements.importIdentityBtn.addEventListener('click', () => this.importIdentity());
+    }
+    if (this.elements.deleteIdentityBtn) {
+      this.elements.deleteIdentityBtn.addEventListener('click', () => this.deleteIdentity());
+    }
+    if (this.elements.identityFileInput) {
+      this.elements.identityFileInput.addEventListener('change', (e) => this.handleIdentityFileUpload(e));
+    }
 
     // Setup DHT event handlers
     this.setupDHTEventHandlers();
@@ -276,6 +304,21 @@ export class DHTVisualizer {
 
     try {
       await this.dht.start();
+
+      // DHT started successfully
+      this.hideLoading();
+      this.updateStatus('Running');
+      this.elements.stopBtn.disabled = false;
+      this.log('DHT started successfully', 'success');
+
+      // Update identity UI after identity is loaded
+      this.updateIdentityUI();
+
+      // Force stats update to refresh routing table and peer counts
+      setTimeout(() => {
+        this.updateStats();
+      }, 2000);
+
     } catch (error) {
       this.log(`Failed to start DHT: ${error.message}`, 'error');
       this.updateStatus('Failed');
@@ -385,7 +428,7 @@ export class DHTVisualizer {
     try {
       this.log(`Inviting client to join DHT: ${clientId}`, 'info');
       const result = await this.dht.inviteNewClient(clientId);
-      
+
       if (result) {
         this.log(`Successfully invited ${clientId} to join DHT`, 'success');
         this.elements.inviteNodeId.value = '';
@@ -394,6 +437,191 @@ export class DHTVisualizer {
       }
     } catch (error) {
       this.log(`Invitation failed: ${error.message}`, 'error');
+    }
+  }
+
+  /**
+   * Update identity UI display
+   */
+  updateIdentityUI() {
+    if (!this.dht) return;
+
+    try {
+      // Check if DHT client has identity methods (BrowserDHTClient)
+      if (typeof this.dht.getIdentityInfo === 'function') {
+        const identityInfo = this.dht.getIdentityInfo();
+
+        if (identityInfo) {
+          // Update node ID display
+          if (this.elements.identityNodeId) {
+            this.elements.identityNodeId.textContent = identityInfo.nodeId;
+          }
+
+          // Update public key display (compact JSON format)
+          if (this.elements.identityPublicKey && identityInfo.publicKey) {
+            const publicKeyStr = JSON.stringify(identityInfo.publicKey);
+            this.elements.identityPublicKey.textContent = publicKeyStr;
+          }
+
+          // Update created timestamp
+          if (this.elements.identityCreated) {
+            const createdDate = new Date(identityInfo.createdAt);
+            this.elements.identityCreated.textContent = createdDate.toLocaleString();
+          }
+
+          // Update last used timestamp
+          if (this.elements.identityLastUsed && identityInfo.lastUsed) {
+            const lastUsedDate = new Date(identityInfo.lastUsed);
+            this.elements.identityLastUsed.textContent = lastUsedDate.toLocaleString();
+          }
+
+          // Show verified indicator
+          if (this.elements.identityVerified) {
+            this.elements.identityVerified.style.display = 'inline-block';
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('Error updating identity UI:', error);
+    }
+  }
+
+  /**
+   * Export identity backup
+   */
+  async exportIdentity() {
+    if (!this.dht || typeof this.dht.exportIdentity !== 'function') {
+      this.log('Identity export not available', 'error');
+      return;
+    }
+
+    try {
+      this.log('Exporting identity backup...', 'info');
+      const backup = await this.dht.exportIdentity();
+
+      // Create downloadable JSON file
+      const dataStr = JSON.stringify(backup, null, 2);
+      const dataBlob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(dataBlob);
+
+      // Create download link
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `yz-identity-${backup.nodeId.substring(0, 8)}-${Date.now()}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      // Clean up object URL
+      URL.revokeObjectURL(url);
+
+      this.log('Identity backup exported successfully', 'success');
+    } catch (error) {
+      this.log(`Failed to export identity: ${error.message}`, 'error');
+    }
+  }
+
+  /**
+   * Import identity backup (trigger file input)
+   */
+  importIdentity() {
+    if (!this.elements.identityFileInput) {
+      this.log('Identity import not available', 'error');
+      return;
+    }
+
+    // Trigger file input click
+    this.elements.identityFileInput.click();
+  }
+
+  /**
+   * Handle identity file upload
+   */
+  async handleIdentityFileUpload(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    if (!this.dht || typeof this.dht.importIdentity !== 'function') {
+      this.log('Identity import not available', 'error');
+      return;
+    }
+
+    try {
+      this.log(`Importing identity from ${file.name}...`, 'info');
+
+      // Read file content
+      const fileContent = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target.result);
+        reader.onerror = (e) => reject(new Error('Failed to read file'));
+        reader.readAsText(file);
+      });
+
+      // Parse JSON
+      const backup = JSON.parse(fileContent);
+
+      // Import identity
+      const identity = await this.dht.importIdentity(backup);
+
+      this.log(`Identity imported successfully: ${identity.nodeId.substring(0, 16)}...`, 'success');
+      this.log('⚠️ Please restart the DHT to use the imported identity', 'warn');
+
+      // Update UI
+      this.updateIdentityUI();
+
+      // Clear file input
+      event.target.value = '';
+
+    } catch (error) {
+      this.log(`Failed to import identity: ${error.message}`, 'error');
+      event.target.value = '';
+    }
+  }
+
+  /**
+   * Delete identity (requires confirmation)
+   */
+  async deleteIdentity() {
+    if (!this.dht || typeof this.dht.deleteIdentity !== 'function') {
+      this.log('Identity deletion not available', 'error');
+      return;
+    }
+
+    // Confirm deletion
+    const confirmed = confirm(
+      '⚠️ WARNING: This will permanently delete your cryptographic identity!\n\n' +
+      'You will lose your current Node ID and all associated DHT membership.\n' +
+      'Make sure you have exported a backup if you want to restore this identity later.\n\n' +
+      'Are you sure you want to continue?'
+    );
+
+    if (!confirmed) {
+      this.log('Identity deletion cancelled', 'info');
+      return;
+    }
+
+    try {
+      this.log('Deleting identity...', 'warn');
+      await this.dht.deleteIdentity();
+
+      this.log('Identity deleted successfully', 'success');
+      this.log('⚠️ Please refresh the page to generate a new identity', 'warn');
+
+      // Hide verified indicator
+      if (this.elements.identityVerified) {
+        this.elements.identityVerified.style.display = 'none';
+      }
+
+      // Update displays
+      if (this.elements.identityNodeId) {
+        this.elements.identityNodeId.textContent = 'Identity deleted - refresh page';
+      }
+      if (this.elements.identityCreated) {
+        this.elements.identityCreated.textContent = '-';
+      }
+
+    } catch (error) {
+      this.log(`Failed to delete identity: ${error.message}`, 'error');
     }
   }
 
@@ -455,14 +683,14 @@ export class DHTVisualizer {
       
       // Update counters - show connected peers in status for consistency
       this.elements.peerCount.textContent = connectedPeersCount;
-      this.elements.storageCount.textContent = stats.storage.keys;
-      
+      this.elements.storageCount.textContent = stats.storage?.keys || 0;
+
       // Update detailed stats - fix inconsistency by using connected peers for both
       // This addresses the issue where Status showed 4 peers but Network Statistics showed 3
       this.elements.statTotalPeers.textContent = connectedPeersCount; // FIXED: was routingTableNodes.length
       this.elements.statConnectedPeers.textContent = connectedPeersCount;
       this.elements.statRoutingTable.textContent = routingTableNodes.length;
-      this.elements.statStorageItems.textContent = stats.storage.keys;
+      this.elements.statStorageItems.textContent = stats.storage?.keys || 0;
       
       
     } catch (error) {

@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import { WebSocket, WebSocketServer } from 'ws';
+import crypto from 'crypto';
 
 /**
  * Enhanced Bootstrap Server with Bridge Integration
@@ -31,7 +32,8 @@ export class EnhancedBootstrapServer extends EventEmitter {
     this.peers = new Map(); // nodeId -> { ws, lastSeen, metadata, isGenesisPeer, type }
     this.connectedClients = new Map(); // nodeId -> { ws, nodeId, metadata, timestamp }
     this.server = null;
-    
+    this.genesisAssigned = false; // Track if genesis has been successfully assigned (for open network mode)
+
     // Bridge node management
     this.bridgeConnections = new Map(); // bridgeAddr -> WebSocket
     this.bridgeReconnectTimers = new Map(); // bridgeAddr -> timer
@@ -39,7 +41,10 @@ export class EnhancedBootstrapServer extends EventEmitter {
     this.pendingGenesisRequests = new Map(); // nodeId -> { ws, message, timestamp }
     this.pendingInvitations = new Map(); // invitationId -> { inviterNodeId, inviteeNodeId, inviterWs, inviteeWs, status, timestamp }
     this.pendingBridgeQueries = new Map(); // requestId -> { ws, nodeId, metadata, clientMessage, resolve, reject, timeout }
-    
+
+    // Authentication management
+    this.authChallenges = new Map(); // nodeId -> { nonce, timestamp, publicKey, ws }
+
     // Server state
     this.isStarted = false;
     this.totalConnections = 0;
@@ -270,6 +275,8 @@ export class EnhancedBootstrapServer extends EventEmitter {
     try {
       if (message.type === 'register') {
         await this.handleClientRegistration(ws, message);
+      } else if (message.type === 'auth_response') {
+        await this.handleAuthResponse(ws, message);
       } else if (message.type === 'get_peers_or_genesis') {
         await this.handleGetPeersOrGenesis(ws, message);
       } else if (message.type === 'send_invitation') {
@@ -316,8 +323,8 @@ export class EnhancedBootstrapServer extends EventEmitter {
         console.log(`➕ Added client ${nodeId.substring(0, 8)}... to connected clients (total: ${this.connectedClients.size})`);
       }
       
-      // In genesis mode, first connecting peer becomes genesis
-      if (this.options.createNewDHT && this.connectedClients.size === 1) {
+      // In genesis mode, first connecting peer becomes genesis (only once)
+      if (this.options.createNewDHT && !this.genesisAssigned) {
         console.log(`🌟 Genesis mode: Designating ${nodeId?.substring(0, 8)}... as genesis peer`);
 
         // Update peer record to mark as genesis
@@ -353,26 +360,28 @@ export class EnhancedBootstrapServer extends EventEmitter {
         return;
       }
 
-      // Open network mode - use random peer onboarding for scalability
-      if (this.options.openNetwork && this.connectedClients.size > 1) {
+      // Open network mode - connect subsequent peers via random onboarding peer (after genesis)
+      if (this.options.openNetwork && this.genesisAssigned) {
         console.log(`🌐 Open network mode: Finding random onboarding peer for ${nodeId?.substring(0, 8)}...`);
 
         // DON'T send immediate response - wait for bridge to find helper peer
         // The response will be sent in handleOnboardingPeerResult()
 
-        // Query bridge for random peer selection
+        // Query bridge for random peer selection (distributes load across DHT)
         setTimeout(async () => {
           try {
-            console.log(`🎲 Querying bridge for random onboarding peer (connection-agnostic)...`);
+            console.log(`🎲 Querying bridge for random onboarding peer (avoids bridge bottleneck)...`);
 
             // Ensure bridge nodes are connected
-            if (this.bridgeConnections.size === 0) {
-              await this.connectToBridgeNodes();
-            }
+            await this.connectToBridgeNodes();
 
             console.log(`🔍 Bridge connections status: ${this.bridgeConnections.size} connected`);
+            for (const [addr, ws] of this.bridgeConnections) {
+              console.log(`   ${addr}: ${ws.readyState === 1 ? 'OPEN' : 'NOT_OPEN'}`);
+            }
 
-            // Get random peer from bridge (bridge finds peer via DHT, sends invitation via DHT)
+            // Ask bridge to select random active peer to invite this new node
+            // This prevents bridge nodes from becoming connection bottlenecks
             await this.getOnboardingPeerFromBridge(ws, nodeId, message.metadata || {}, message);
           } catch (error) {
             console.error(`❌ Failed to get onboarding peer from bridge: ${error.message}`);
@@ -381,7 +390,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
               type: 'response',
               requestId: message.requestId,
               success: false,
-              error: `Random peer onboarding failed: ${error.message}`
+              error: `Onboarding failed: ${error.message}`
             }));
           }
         }, 500); // Small delay to ensure peer registration is complete
@@ -389,7 +398,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
         return;
       }
 
-      // Standard mode - return existing peers or empty list
+      // Standard mode (not open network) - return existing peers or empty list
       const availablePeers = Array.from(this.connectedClients.values())
         .filter(client => client.nodeId !== nodeId)
         .slice(0, maxPeers || 20)
@@ -691,6 +700,208 @@ export class EnhancedBootstrapServer extends EventEmitter {
       nodeId,
       timestamp: Date.now()
     }));
+
+    // If client provided a public key with proper JWK structure, initiate cryptographic authentication
+    // Node.js clients use GUID-based IDs and don't require authentication
+    if (metadata && metadata.publicKey &&
+        metadata.publicKey.kty === 'EC' &&
+        metadata.publicKey.x &&
+        metadata.publicKey.y) {
+      console.log(`🔐 Initiating cryptographic authentication for ${nodeId.substring(0, 8)}...`);
+      await this.initiateAuthentication(ws, nodeId, metadata.publicKey);
+    } else if (metadata && metadata.nodeType === 'nodejs') {
+      console.log(`✅ Node.js client ${nodeId.substring(0, 8)}... registered (no authentication required)`);
+    }
+  }
+
+  /**
+   * Derive 160-bit Kademlia node ID from public key (same algorithm as browser)
+   */
+  async deriveNodeIdFromPublicKey(publicKeyJwk) {
+    try {
+      // Decode base64url coordinates to bytes
+      const base64UrlToBytes = (base64url) => {
+        const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+        return Buffer.from(base64, 'base64');
+      };
+
+      // Concatenate x and y coordinates
+      const xBytes = base64UrlToBytes(publicKeyJwk.x);
+      const yBytes = base64UrlToBytes(publicKeyJwk.y);
+      const publicKeyBytes = Buffer.concat([xBytes, yBytes]);
+
+      // SHA-256 hash
+      const hash = crypto.createHash('sha256').update(publicKeyBytes).digest('hex');
+
+      // Take first 160 bits (40 hex characters)
+      return hash.substring(0, 40);
+    } catch (error) {
+      console.error('Error deriving node ID from public key:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Initiate cryptographic authentication challenge
+   */
+  async initiateAuthentication(ws, nodeId, publicKey) {
+    try {
+      // Step 1: Verify node ID matches public key hash
+      const derivedNodeId = await this.deriveNodeIdFromPublicKey(publicKey);
+
+      if (derivedNodeId !== nodeId) {
+        console.error(`❌ Node ID mismatch! Claimed: ${nodeId.substring(0, 16)}..., Derived: ${derivedNodeId.substring(0, 16)}...`);
+        ws.send(JSON.stringify({
+          type: 'auth_failure',
+          reason: 'Node ID does not match public key hash',
+          timestamp: Date.now()
+        }));
+        return;
+      }
+
+      console.log(`✅ Node ID verified for ${nodeId.substring(0, 8)}...`);
+
+      // Step 2: Generate authentication challenge
+      const nonce = crypto.randomBytes(32).toString('hex');
+      const timestamp = Date.now();
+
+      // Store challenge for verification
+      this.authChallenges.set(nodeId, {
+        nonce,
+        timestamp,
+        publicKey,
+        ws
+      });
+
+      // Clean up old challenges after 2 minutes
+      setTimeout(() => {
+        this.authChallenges.delete(nodeId);
+      }, 2 * 60 * 1000);
+
+      // Step 3: Send challenge to client
+      console.log(`🎲 Sending authentication challenge to ${nodeId.substring(0, 8)}...`);
+      ws.send(JSON.stringify({
+        type: 'auth_challenge',
+        nonce,
+        timestamp
+      }));
+    } catch (error) {
+      console.error('Error initiating authentication:', error);
+      ws.send(JSON.stringify({
+        type: 'auth_failure',
+        reason: 'Authentication initialization failed',
+        error: error.message,
+        timestamp: Date.now()
+      }));
+    }
+  }
+
+  /**
+   * Handle authentication response from client
+   */
+  async handleAuthResponse(ws, message) {
+    try {
+      const { nodeId, signature, timestamp } = message;
+
+      if (!nodeId || !signature) {
+        console.error('❌ Invalid auth response - missing nodeId or signature');
+        ws.send(JSON.stringify({
+          type: 'auth_failure',
+          reason: 'Missing required authentication fields',
+          timestamp: Date.now()
+        }));
+        return;
+      }
+
+      // Retrieve stored challenge
+      const challenge = this.authChallenges.get(nodeId);
+      if (!challenge) {
+        console.error(`❌ No pending challenge for node ${nodeId.substring(0, 8)}...`);
+        ws.send(JSON.stringify({
+          type: 'auth_failure',
+          reason: 'No pending authentication challenge',
+          timestamp: Date.now()
+        }));
+        return;
+      }
+
+      // Verify signature
+      const challengeData = `${challenge.nonce}:${challenge.timestamp}`;
+      const isValid = await this.verifySignature(challengeData, signature, challenge.publicKey);
+
+      // Clean up challenge
+      this.authChallenges.delete(nodeId);
+
+      if (isValid) {
+        console.log(`✅ Authentication successful for ${nodeId.substring(0, 8)}...`);
+
+        // Mark peer as verified
+        if (this.peers.has(nodeId)) {
+          const peer = this.peers.get(nodeId);
+          peer.verified = true;
+          peer.metadata.verified = true;
+        }
+
+        // Send success message
+        ws.send(JSON.stringify({
+          type: 'auth_success',
+          nodeId,
+          timestamp: Date.now()
+        }));
+      } else {
+        console.error(`❌ Authentication failed for ${nodeId.substring(0, 8)}... - invalid signature`);
+        ws.send(JSON.stringify({
+          type: 'auth_failure',
+          reason: 'Invalid signature',
+          timestamp: Date.now()
+        }));
+      }
+    } catch (error) {
+      console.error('Error handling auth response:', error);
+      ws.send(JSON.stringify({
+        type: 'auth_failure',
+        reason: 'Authentication verification failed',
+        error: error.message,
+        timestamp: Date.now()
+      }));
+    }
+  }
+
+  /**
+   * Verify ECDSA signature using Node.js crypto
+   *
+   * CRITICAL: Web Crypto API outputs ECDSA signatures in IEEE P1363 format (raw r||s),
+   * while Node.js crypto expects DER format by default. We must use the newer API
+   * with dsaEncoding option to handle browser signatures correctly.
+   */
+  async verifySignature(data, signatureHex, publicKeyJwk) {
+    try {
+      // Import JWK public key as KeyObject
+      const publicKeyObject = crypto.createPublicKey({
+        key: publicKeyJwk,
+        format: 'jwk'
+      });
+
+      // Convert hex signature to buffer
+      const signatureBuffer = Buffer.from(signatureHex, 'hex');
+
+      // Verify signature using newer API with IEEE P1363 format
+      // This matches the format output by Web Crypto API in browsers
+      const isValid = crypto.verify(
+        'sha256',
+        Buffer.from(data, 'utf8'),
+        {
+          key: publicKeyObject,
+          dsaEncoding: 'ieee-p1363'  // CRITICAL: Match browser signature format
+        },
+        signatureBuffer
+      );
+
+      return isValid;
+    } catch (error) {
+      console.error('Error verifying signature:', error);
+      return false;
+    }
   }
 
   /**
@@ -1134,7 +1345,11 @@ export class EnhancedBootstrapServer extends EventEmitter {
 
     if (success) {
       console.log(`✅ Genesis peer ${nodeId.substring(0, 8)} connected to bridge - genesis status removed`);
-      
+
+      // Mark genesis as assigned (for open network mode)
+      this.genesisAssigned = true;
+      console.log(`🔒 Genesis flag set - subsequent peers will connect to bridge directly`);
+
       // Update peer status - no longer genesis, now has valid DHT membership
       const peer = this.peers.get(nodeId);
       if (peer) {

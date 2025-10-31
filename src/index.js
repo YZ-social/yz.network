@@ -1,4 +1,4 @@
-import { KademliaDHT } from './dht/KademliaDHT.js';
+import { BrowserDHTClient } from './browser/BrowserDHTClient.js';
 import { DHTVisualizer } from './ui/DHTVisualizer.js';
 import { DHTNode } from './core/DHTNode.js';
 
@@ -27,11 +27,16 @@ class App {
     console.log('Initializing YZSocialC DHT Application...');
 
     try {
-      // Create DHT instance with configuration
-      this.dht = new KademliaDHT({
+      // Check URL parameters for tab-specific identity mode
+      const urlParams = new URLSearchParams(window.location.search);
+      const useTabIdentity = urlParams.get('tabIdentity') !== 'false'; // Default: true (enables testing multiple tabs)
+
+      // Create BrowserDHTClient with cryptographic identity
+      this.dht = new BrowserDHTClient({
         k: 20,
         alpha: 3,
-        replicateK: 3,
+        replicateK: 20,
+        useTabIdentity: useTabIdentity, // Enable tab-specific identities for testing multiple clients
         bootstrapServers: [
           'ws://localhost:8080'
         ],
@@ -46,13 +51,12 @@ class App {
         }
       });
 
-      // Set browser-specific bootstrap metadata for Enhanced Bootstrap Server
-      this.dht.bootstrapMetadata = {
-        nodeType: 'browser',
-        capabilities: ['webrtc', 'websocket-client'],
-        canAcceptConnections: false,
-        canInitiateConnections: true
-      };
+      if (useTabIdentity) {
+        console.log('🔑 Tab-specific identity mode: ENABLED (testing multiple tabs)');
+        console.log('   To disable: Add ?tabIdentity=false to URL');
+      } else {
+        console.log('🔑 Tab-specific identity mode: DISABLED (shared identity across tabs)');
+      }
 
       // Create UI visualizer
       this.visualizer = new DHTVisualizer(this.dht);
@@ -407,6 +411,19 @@ class App {
           console.log('Starting DHT...');
           await this.dht.start();
           console.log('DHT started successfully');
+
+          // Update identity UI after identity is loaded
+          if (this.visualizer && typeof this.visualizer.updateIdentityUI === 'function') {
+            this.visualizer.updateIdentityUI();
+          }
+
+          // Force stats update to refresh routing table display
+          if (this.visualizer && typeof this.visualizer.updateStats === 'function') {
+            setTimeout(() => {
+              this.visualizer.updateStats();
+            }, 2000); // Wait for connections to establish
+          }
+
           return true;
         } catch (error) {
           console.error('Failed to start DHT:', error);

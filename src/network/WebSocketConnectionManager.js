@@ -243,7 +243,8 @@ export class WebSocketConnectionManager extends ConnectionManager {
     }
 
     // Perfect Negotiation Pattern for WebSocket (similar to WebRTC)
-    // When both peers try to connect simultaneously, use node ID comparison
+    // When both peers try to connect simultaneously (glare condition), use node ID comparison
+    const peerMetadata = this.getPeerMetadata(peerId);
     const existingConnection = this.connections.get(peerId);
     if (existingConnection) {
       // Glare condition detected - both peers trying to connect
@@ -287,22 +288,23 @@ export class WebSocketConnectionManager extends ConnectionManager {
     }
 
     // Get WebSocket address from peer metadata
-    const metadata = this.getPeerMetadata(peerId);
+    const metadata = peerMetadata || this.getPeerMetadata(peerId);
     const wsAddress = metadata?.listeningAddress;
 
-    // Use node types from factory (set in constructor)
-    // targetNodeType can be overridden by peer metadata if more specific info available
+    // Determine node types for connection handling
     const localNodeType = this.localNodeType;
-    const targetNodeType = metadata?.nodeType || this.targetNodeType || 'browser';
+    const targetNodeType = metadata?.nodeType;
+    const finalTargetNodeType = targetNodeType || this.targetNodeType || 'browser';
 
-    console.log(`🔗 WebSocket connection: ${localNodeType} → ${targetNodeType}`);
+    console.log(`🔗 WebSocket connection: ${localNodeType} → ${finalTargetNodeType}`);
 
     // Handle different connection scenarios
     if (!wsAddress) {
-      if (localNodeType === 'nodejs' && targetNodeType === 'browser') {
-        // Node.js → Browser: Use DHT reverse signaling
+      if (localNodeType === 'nodejs' && (targetNodeType === 'browser' || !targetNodeType)) {
+        // Node.js → Browser OR Node.js → Unknown: Use DHT reverse signaling
         // Browser cannot create WebSocket server, so Node.js asks browser to connect back
-        console.log(`🔄 Node.js→Browser connection - requesting browser to connect back via DHT signaling`);
+        // For unknown peers, use reverse signaling as fallback - peer will connect if they can
+        console.log(`🔄 ${localNodeType}→${targetNodeType||'unknown'} connection - requesting peer to connect back via DHT signaling`);
         return this.requestBrowserConnection(peerId, initiator);
       } else {
         throw new Error(`No WebSocket address for peer ${peerId} (${localNodeType}→${targetNodeType})`);

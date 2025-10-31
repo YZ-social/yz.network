@@ -223,11 +223,12 @@ export class NodeDHTClient extends DHTClient {
     const keyInfo = await InvitationToken.generateKeyPair();
     console.log('🔐 Generated cryptographic key pair for invitation tokens');
 
-    // Create DHT with WebSocket connection manager
+    // Create DHT with WebSocket connection manager and bootstrap metadata
     this.dht = new KademliaDHT({
       nodeId: this.nodeId,
       serverConnectionManager: this.connectionManager, // CRITICAL: Node.js servers pass as serverConnectionManager so DHT reuses it for all peers
       bootstrap: this.bootstrap,
+      bootstrapMetadata: this.getBootstrapMetadata(), // Include Node.js metadata (nodeType, listeningAddress, etc.)
       k: this.options.k,
       alpha: this.options.alpha,
       replicateK: this.options.replicateK

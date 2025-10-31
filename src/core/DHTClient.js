@@ -25,7 +25,7 @@ export class DHTClient extends EventEmitter {
       bootstrapServers: options.bootstrapServers || ['ws://localhost:8080'],
       k: options.k || 20,
       alpha: options.alpha || 3,
-      replicateK: options.replicateK || 3,
+      replicateK: options.replicateK || 20,
       timeout: options.timeout || 30000,
       maxConnections: options.maxConnections || 50,
       ...options

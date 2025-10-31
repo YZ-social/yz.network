@@ -2,6 +2,71 @@ import { PassiveBridgeNode } from './src/bridge/PassiveBridgeNode.js';
 import { EnhancedBootstrapServer } from './src/bridge/EnhancedBootstrapServer.js';
 import { NodeDHTClient } from './src/node/NodeDHTClient.js';
 
+// Configure debug level (set DEBUG_LEVEL env var to: error, warn, info, debug, trace)
+// Default: error (only show test output and errors)
+if (!process.env.DEBUG_LEVEL) {
+  process.env.DEBUG_LEVEL = 'error';
+}
+
+// Suppress verbose logging - only show test script output and critical errors
+const originalLog = console.log;
+const originalWarn = console.warn;
+const originalError = console.error;
+
+// WHITELIST: Only allow these patterns through (applies to all console methods)
+const allowedPatterns = [
+  /^🎬/,                                 // Script start
+  /^⏳/,                                  // Waiting messages (includes Perfect Negotiation waits)
+  /^🔗/,                                  // Connection attempts (Perfect Negotiation)
+  /^✅ All .* started$/,                 // "All X started" summary
+  /^✅ Bootstrap server started/,        // Bootstrap confirmation
+  /^✅ Node \d+ retrieved/,              // Retrieval confirmations
+  /^✅ Test script completed/,           // Test completion
+  /^✅ All DHT operations completed/,    // DHT operations complete
+  /^✅ Connected to peer/,               // Successful peer connections
+  /^Test \d+/,                           // Test headers (e.g., "Test 1:")
+  /^\nTest \d+/,                         // Test headers with leading newline
+  /^🧪/,                                  // Test emoji and summary
+  /^🌐 Final Network Topology/,          // Network topology header
+  /^🧹/,                                  // Cleanup messages
+  /^======/,                             // Dividers
+  /^  [📝⏳✅❌]/,                       // HRS test operations (2 spaces indent)
+  /^   [✅❌]/,                          // Test results (3 spaces indent)
+  /^   Node \d+:/,                       // Topology details (3 spaces)
+  /^   \d+\./,                           // Error list items (3 spaces)
+  /^      Error:/,                       // Error details (6 spaces)
+  /^\[DHT\] [📝✅]/,                    // DHT store/retrieve success only
+  /^❌/,                                 // Any error/failure messages
+  /^⚠️/,                                 // Warning messages (for test summary)
+  /^✅.*passed/i,                        // Test passed messages
+  /^Overall Status:/,                    // Overall test status
+  /^Node \d+:/,                          // Topology output
+  /^Test 4\.5:/,                         // HRS test header
+  /Error:/,                              // Actual error messages (stack traces)
+  /^\s+at /                              // Stack trace lines
+];
+
+console.log = function(...args) {
+  const message = args.join(' ');
+  if (allowedPatterns.some(pattern => pattern.test(message))) {
+    originalLog.apply(console, args);
+  }
+};
+
+console.warn = function(...args) {
+  const message = args.join(' ');
+  if (allowedPatterns.some(pattern => pattern.test(message))) {
+    originalWarn.apply(console, args);
+  }
+};
+
+console.error = function(...args) {
+  const message = args.join(' ');
+  if (allowedPatterns.some(pattern => pattern.test(message))) {
+    originalError.apply(console, args);
+  }
+};
+
 const MAX_CONNECTIONS = 20; // Per node, for various kinds of nodes.
 const BOOTSTRAP_PORT = 8080;
 const BOOTSTRAP_SERVERS = [`ws://localhost:${BOOTSTRAP_PORT}`];
@@ -71,7 +136,7 @@ let testResults = {
   errors: []
 };
 
-async function configureNodes({number = 4} = {}) {
+async function configureNodes({number = 10} = {}) {
   console.log(`\n👥 Starting ${number} Node.js DHT client(s)...`);
 
   // Start a number of bots. The first is authorized as the genesis, and it invites all the rest.
@@ -165,16 +230,25 @@ async function testDHTOperations() {
     console.log('\nTest 4.5: HRS store each and read all...');
     await runTest("HRS store each and read all", async () => {
       for (let n in nodes) {
-	const key = 'key' + n;
-	const value = 'value' + n;
-	await nodes[n].store(key, value);
-	await delay(3e3);
-	let m = 0;
-	for (let node of nodes) {
-	  const retrieved = await node.get(key);
-	  const ok = retrieved === value;
-	  if (!ok) throw new Error(`store@ ${n} retrieve@ ${m++} got >${retrieved}<.`);
-	}
+        const key = 'key' + n;
+        const value = 'value' + n;
+        console.log(`  📝 Node ${n} storing key="${key}" value="${value}"`);
+        await nodes[n].store(key, value);
+        console.log(`  ⏳ Waiting 3s for replication...`);
+        await delay(3e3);
+
+        // Try to retrieve from all nodes
+        for (let m = 0; m < nodes.length; m++) {
+          const retrieved = await nodes[m].get(key);
+          const ok = retrieved === value;
+          if (!ok) {
+            console.error(`  ❌ Node ${m} failed to retrieve key="${key}"`);
+            console.error(`     Expected: "${value}"`);
+            console.error(`     Got: "${retrieved}"`);
+            throw new Error(`store@ ${n} retrieve@ ${m} got >${retrieved}<.`);
+          }
+          console.log(`  ✅ Node ${m} successfully retrieved key="${key}" value="${value}"`);
+        }
       }
       return true;
     });

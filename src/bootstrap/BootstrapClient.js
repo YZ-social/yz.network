@@ -234,6 +234,21 @@ export class BootstrapClient extends EventEmitter {
           this.emit('connectToBridge', message);
           break;
 
+        case 'auth_challenge':
+          console.log('🔐 Received authentication challenge from bootstrap server');
+          this.emit('authChallenge', message);
+          break;
+
+        case 'auth_success':
+          console.log('✅ Bootstrap authentication successful');
+          this.emit('authSuccess', message);
+          break;
+
+        case 'auth_failure':
+          console.error('❌ Bootstrap authentication failed:', message.reason);
+          this.emit('authFailure', message);
+          break;
+
         default:
           console.warn('Unknown bootstrap message type:', message.type);
       }

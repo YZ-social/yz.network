@@ -32,10 +32,14 @@ npm install
 - **Terminal 1:** `npm run bridge-nodes` - Start internal bridge nodes FIRST (ports 8083, 8084)
 - **Terminal 2:** `npm run bridge-bootstrap` - Start public bootstrap server (port 8080)
 - **Terminal 2 (Genesis):** `npm run bridge-bootstrap:genesis` - Create new DHT network
+- **Terminal 2 (Open Network):** `npm run bridge-bootstrap:genesis:openNetwork` - Genesis + no invitations required
+- **Terminal 2 (Open Access):** `npm run bridge-bootstrap:openNetwork` - Existing DHT + open access
 
 **Bridge System (Single Command - Development):**
 - `npm run bridge` - Start complete bridge system (all components together)
 - `npm run bridge:genesis` - Start bridge system in genesis mode (creates new DHT)
+- `npm run bridge:genesis:openNetwork` - Complete system with genesis + open network
+- `npm run bridge:openNetwork` - Complete system with open access to existing DHT
 
 **Server Management:**
 - `npm run shutdown` - Kill all YZSocialC servers (ports 3000, 8080-8084, 9083-9084)
@@ -79,10 +83,12 @@ npm install
 - **Transport agnostic design** - Adding new transports requires no architectural changes
 
 **Bridge System (`src/bridge/`) - NEW:**
-- `PassiveBridgeNode.js` - Internal DHT observer for reconnection services (ports 8083, 8084)
-- `EnhancedBootstrapServer.js` - Public bootstrap server with bridge integration (port 8080)
+- `PassiveBridgeNode.js` - Internal DHT observer for reconnection services and random peer selection (ports 8083, 8084)
+- `EnhancedBootstrapServer.js` - Public bootstrap server with bridge integration and open network mode (port 8080)
 - `start-bridge-system.js` - Complete bridge system deployment and management
+- `start-enhanced-bootstrap.js` - Bootstrap server startup with command-line flag parsing
 - **Two-Tier Security**: Public bootstrap edge + internal bridge network for minimal attack surface
+- **Open Network Mode**: Bridge-coordinated automatic peer onboarding without manual invitations
 
 **Bootstrap (`src/bootstrap/`):**
 - `BootstrapClient.js` - Client for connecting to bootstrap servers
@@ -92,23 +98,158 @@ npm install
 - `DHTVisualizer.js` - Web-based DHT network visualization and controls
 - WebAssembly components for advanced UI (placeholder implementation)
 
+**Browser Identity (`src/browser/`):**
+- `BrowserDHTClient.js` - Browser-specific DHT client with cryptographic identity integration
+- `IdentityStore.js` - IndexedDB-based persistent identity storage with tab-specific support
+
+### Cryptographic Identity System
+
+**Overview:**
+YZSocialC implements a robust cryptographic identity system for secure peer identification and authentication.
+
+**Identity Components:**
+- **Key Generation**: ECDSA P-256 key pairs using Web Crypto API
+- **Node ID Derivation**: SHA-256 hash of public key → 160-bit Kademlia ID
+- **Storage**: IndexedDB for persistent identity across browser sessions
+- **Privacy**: Private keys never leave the browser, stored only in IndexedDB
+
+**Authentication Flow:**
+1. **Client Registration**:
+   - `BrowserDHTClient` loads/generates identity from `IdentityStore`
+   - Sends Node ID + public key to bootstrap server in metadata
+2. **Challenge Generation**:
+   - Bootstrap server generates nonce + timestamp
+   - Sends `auth_challenge` message to client
+3. **Signature Creation**:
+   - Client signs challenge using ECDSA private key
+   - Sends signature in `auth_response` message
+4. **Verification**:
+   - Bootstrap server verifies signature using public key (Node.js crypto)
+   - IEEE P1363 format matching between Web Crypto (browser) and Node.js crypto
+5. **Access Grant**:
+   - Successful verification → `auth_success` message
+   - Failed verification → `auth_failure` message with connection termination
+
+**Tab-Specific Identity (Testing Feature):**
+- **Purpose**: Enable testing multiple DHT clients in same browser without conflicts
+- **Default Behavior**: Each tab gets unique identity (enabled by default)
+- **Implementation**:
+  - `IdentityStore` constructor accepts `useTabIdentity` option
+  - Uses `sessionStorage.getItem('yz-network-tab-id')` for per-tab IDs
+  - Storage keys: `tab_${timestamp}_${random}` vs `'default'`
+  - Tab ID persists only for tab session (cleared when tab closes)
+- **URL Control**:
+  - Default: `http://localhost:3000` → tab-specific identities enabled
+  - Shared: `http://localhost:3000?tabIdentity=false` → all tabs share identity
+- **Use Cases**:
+  - Testing multi-client WebRTC connections in single browser
+  - Debugging invitation/onboarding flows without multiple devices
+  - Development convenience without needing incognito mode
+
+**Implementation Files:**
+- `src/browser/IdentityStore.js` - Identity storage and management (lines 18-46: tab-specific logic)
+- `src/browser/BrowserDHTClient.js` - Integration with DHT client (lines 22-33: passes option)
+- `src/index.js` - URL parameter handling (lines 30-59: enables tab identity by default)
+- `src/bridge/EnhancedBootstrapServer.js` - Server-side verification (lines 827-931: auth handlers)
+
+**Security Considerations:**
+- Private keys stored in IndexedDB (browser-managed, origin-isolated)
+- Public keys shared with bootstrap for verification only
+- Signatures use standard ECDSA with SHA-256
+- Tab-specific identities are for **testing only** - production should use shared identity
+- No server-side credential storage - authentication is challenge/response only
+
+### Open Network Mode
+
+**Overview:**
+Eliminates manual invitation workflow for development/testing by enabling automatic peer onboarding through bridge coordination.
+
+**Standard Mode vs Open Network:**
+- **Standard Mode**: Genesis peer manually invites each new peer with invitation tokens
+- **Open Network**: Bridge automatically coordinates introductions between new and existing peers
+
+**Architecture:**
+1. **Genesis Connection**: First peer connects to bridge nodes, gains DHT membership
+2. **Helper Selection**: Bridge queries DHT for random active member when new peer joins
+3. **Distributed Invitations**: Selected helper creates invitation token for new peer via DHT messaging
+4. **No Bottleneck**: Each new peer gets different helper, distributing connection load
+5. **Scalability**: Bridge coordinates without maintaining connections to all peers
+
+**Implementation:**
+- `EnhancedBootstrapServer.js` handles `-openNetwork` flag
+- `PassiveBridgeNode.js` implements `handleGetOnboardingPeer()` for random peer selection
+- Uses DHT messaging (`create_invitation_for_peer`) to route invitation requests
+- Filters out bridge nodes from helper selection (only active DHT members selected)
+
+**Activation:**
+```bash
+# npm scripts
+npm run bridge-bootstrap:genesis:openNetwork   # New DHT + open network
+npm run bridge-bootstrap:openNetwork           # Existing DHT + open access
+npm run bridge:genesis:openNetwork             # Complete system
+
+# Command line
+node src/bridge/start-enhanced-bootstrap.js -createNewDHT -openNetwork
+```
+
+**Flow Diagram:**
+```
+New Peer → Bootstrap Server → Bridge Node (query random peer)
+                                    ↓
+                            Select Random Active DHT Member
+                                    ↓
+                            Send invitation request via DHT
+                                    ↓
+                            Helper Peer → Creates Invitation Token
+                                    ↓
+                            New Peer ← Bootstrap ← Helper Peer
+                                    ↓
+                            WebRTC Connection Established
+                                    ↓
+                            New Peer joins DHT Routing Table
+```
+
+**Key Benefits:**
+- **Testing Efficiency**: No manual invitation coordination during development
+- **Distributed Load**: Connection load spread across existing DHT members
+- **Scalability**: Avoids bridge node becoming connection bottleneck
+- **Self-Organizing**: Network grows organically through peer-to-peer introductions
+- **Production Toggle**: Easily disable for controlled network access
+
+**Implementation Files:**
+- `src/bridge/EnhancedBootstrapServer.js` (lines 21, 364-398): Open network mode handling
+- `src/bridge/PassiveBridgeNode.js` (line 933+): Random peer selection and invitation coordination
+- `src/bridge/start-enhanced-bootstrap.js` (line 21): Flag parsing
+- `package.json` (lines 18-23): npm script definitions
+
+**Security Notes:**
+- Recommended for **development/testing only**
+- All peers still require cryptographic authentication
+- Bridge validates active peers before selection
+- Membership tokens still issued after successful connection
+- Production deployments should use standard invitation mode
+
 ### Key Features
 
 1. **Kademlia DHT**: Full implementation with proper k-buckets, XOR distance routing
 2. **WebRTC Transport**: Native WebRTC API with Perfect Negotiation Pattern for reliable P2P connections
 3. **Minimal Server Dependency**: Aggressive transition to DHT-based signaling after first connection
-4. **Chain of Trust Security**: Cryptographic invitation tokens prevent unauthorized network access
-5. **DHT-Based ICE Candidate Exchange**: Complete WebRTC signaling (offers/answers/ICE) via DHT storage
-6. **Serverless Reconnection System**: Bridge nodes enable disconnected peers to rejoin without new invitations
-7. **Passive Bridge Monitoring**: Bridge nodes observe DHT network without participating in operations
-8. **Network Health Verification**: Cryptographic fingerprints ensure reconnection to correct DHT network
-9. **Two-Tier Security Architecture**: Public bootstrap edge with internal bridge network for minimal attack surface
-10. **Adaptive Refresh System**: Literature-compliant Kademlia refresh with adaptive timing (15s for new nodes, 10min for established nodes)
-11. **Progressive Enhancement Cryptography**: Ed25519 with native browser crypto + library fallback
-12. **Peer Announcement System**: Active nodes broadcast status to bridge observers for network health assessment
-13. **Background Maintenance System**: Automatic periodic maintenance following Kademlia specifications - bucket refresh (60s) and connection management (30s) ensuring routing table entries represent reachable peers
-14. **Per-Node Connection Management**: Each DHTNode owns its connectionManager and connection object, eliminating centralized event handling
-15. **Self-Managing Event Handlers**: Nodes set up and tear down their own event handlers, preventing cross-connection interference
+4. **Cryptographic Identity**: ECDSA P-256 keys with challenge/response authentication via bootstrap server
+5. **Chain of Trust Security**: Ed25519-signed invitation tokens prevent unauthorized network access
+6. **Open Network Mode**: No invitations required - bridge coordinates automatic peer introductions for testing/development
+7. **DHT-Based ICE Candidate Exchange**: Complete WebRTC signaling (offers/answers/ICE) via DHT storage
+8. **Serverless Reconnection System**: Bridge nodes enable disconnected peers to rejoin without new invitations
+9. **Passive Bridge Monitoring**: Bridge nodes observe DHT network without participating in operations
+10. **Network Health Verification**: Cryptographic fingerprints ensure reconnection to correct DHT network
+11. **Two-Tier Security Architecture**: Public bootstrap edge with internal bridge network for minimal attack surface
+12. **Adaptive Refresh System**: Literature-compliant Kademlia refresh with adaptive timing (15s for new nodes, 10min for established nodes)
+13. **Progressive Enhancement Cryptography**: Ed25519 with native browser crypto + library fallback
+14. **Peer Announcement System**: Active nodes broadcast status to bridge observers for network health assessment
+15. **Background Maintenance System**: Automatic periodic maintenance following Kademlia specifications - bucket refresh (60s) and connection management (30s) ensuring routing table entries represent reachable peers
+16. **Per-Node Connection Management**: Each DHTNode owns its connectionManager and connection object, eliminating centralized event handling
+17. **Self-Managing Event Handlers**: Nodes set up and tear down their own event handlers, preventing cross-connection interference
+18. **Tab-Specific Identity Testing**: Per-tab unique identities for easy multi-client testing in single browser
+19. **Distributed Onboarding**: Bridge selects random active peers as helpers, preventing connection bottlenecks
 
 ### Per-Node Connection Architecture with RoutingTable Event Management
 
@@ -298,7 +439,7 @@ await this.connectionManager.createConnection(peerId, true); // ❌ FORBIDDEN
 **DHT Parameters:**
 - `k = 20` - Kademlia k parameter (bucket size)
 - `alpha = 3` - Lookup parallelism
-- `replicateK = 3` - Replication factor for stored data
+- `replicateK = 20` - Replication factor (Kademlia-compliant: replicate to k closest nodes for fault tolerance)
 - `aggressiveRefreshInterval = 15 seconds` - For new/isolated nodes (< 2 peers)
 - `standardRefreshInterval = 10 minutes` - For well-connected nodes (following IPFS/literature standards)
 - `pingInterval = 1 minute` - Node liveness check frequency
@@ -485,6 +626,15 @@ YZSocialC.getPeers()
 YZSocialC.inviteNewClient('target_node_id') // Invite peer to join DHT
 YZSocialC.dht.createInvitationToken('target_node_id') // Create token manually
 
+// Cryptographic Identity Management (NEW)
+YZSocialC.getIdentityInfo() // Get identity info (without private key)
+await YZSocialC.exportIdentity() // Export identity for backup
+await YZSocialC.importIdentity(backup) // Import identity from backup
+await YZSocialC.deleteIdentity() // Delete identity (requires page reload)
+// Check if tab-specific identity is enabled
+console.log('Tab identity enabled:', YZSocialC.dht.identityStore.useTabIdentity)
+console.log('Storage key:', YZSocialC.dht.identityStore.storageKey)
+
 // DHT Signaling Control
 YZSocialC.getSignalingMode() // Check current signaling mode
 YZSocialC.switchToDHTSignaling() // Force switch to DHT-based ICE sharing
@@ -639,6 +789,45 @@ node src/bridge/start-enhanced-bootstrap.js -createNewDHT    # Genesis mode
 node src/bridge/start-enhanced-bootstrap.js                 # Standard mode
 ```
 
+**Tab-Specific Identity Testing (NEW):**
+
+By default, each browser tab gets a unique cryptographic identity for easy multi-client testing:
+
+```bash
+# Start servers (in separate terminals)
+npm run bridge-nodes
+npm run bridge-bootstrap:genesis:openNetwork
+npm run dev
+
+# Open multiple tabs in same browser
+# Tab 1 (Client A): http://localhost:3000
+# Tab 2 (Client B): http://localhost:3000
+# Tab 3 (Client C): http://localhost:3000
+
+# Each tab automatically gets unique Node ID
+# No need for multiple browsers or incognito mode!
+```
+
+**Console output per tab:**
+```
+🔑 Tab-specific identity mode: ENABLED (testing multiple tabs)
+   To disable: Add ?tabIdentity=false to URL
+🆕 Generated new tab ID: tab_1761751234_xyz789
+🔑 IdentityStore: Using tab-specific identity (key: tab_1761751234_xyz789)
+✅ IdentityStore: Generated identity with node ID: ab12cd34ef56...
+```
+
+**To test shared identity behavior (all tabs use same Node ID):**
+```
+# Add URL parameter to disable tab-specific identity
+http://localhost:3000?tabIdentity=false
+```
+
+**Implementation Details:**
+- Uses `sessionStorage` for per-tab IDs (cleared when tab closes)
+- IndexedDB stores each identity with unique key: `tab_${timestamp}_${random}` or `'default'`
+- Private keys isolated per tab, never shared between tabs
+- Production deployments should use shared identity (set `?tabIdentity=false`)
 
 **Network Behavior:**
 - **Hybrid Signaling Mode**: Bootstrap server for new client invitations, direct DHT messaging for existing members

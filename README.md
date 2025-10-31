@@ -7,10 +7,13 @@ A browser-based Distributed Hash Table (DHT) implementation using the Kademlia a
 - **Kademlia DHT**: Literature-compliant implementation with adaptive refresh and k-buckets
 - **Native WebRTC**: Direct peer-to-peer connections with Perfect Negotiation Pattern and keep-alive
 - **Minimal Server Dependency**: Bootstrap server only for initial peer discovery
-- **Chain of Trust Security**: Cryptographic invitation tokens prevent unauthorized access
+- **Cryptographic Identity**: ECDSA P-256 key pairs with challenge/response authentication
+- **Chain of Trust Security**: Ed25519-signed invitation tokens prevent unauthorized access
+- **Open Network Mode**: No invitations required - bridge coordinates automatic peer introductions
 - **DHT-Based Signaling**: Complete WebRTC negotiation through DHT messaging with signal handling
 - **Adaptive Performance**: 15s refresh for new nodes, 10min for established (following literature)
 - **Connection Resilience**: Keep-alive for inactive tabs, emergency discovery bypass, connection health monitoring
+- **Tab-Specific Testing**: Multiple clients in same browser for easy development testing
 - **Browser-First**: No Node.js dependencies in client code
 
 ## Quick Start
@@ -74,16 +77,22 @@ npm run build           # Build for production
 npm run test            # Run tests
 npm run lint            # Run ESLint
 
+# Bridge System (Recommended)
+npm run bridge-nodes                        # Start bridge nodes (internal)
+npm run bridge-bootstrap                    # Start bootstrap (standard mode)
+npm run bridge-bootstrap:genesis            # Start bootstrap (genesis mode)
+npm run bridge-bootstrap:genesis:openNetwork # Genesis + open network
+npm run bridge-bootstrap:openNetwork        # Open network (existing DHT)
+
+# Bridge System (All-in-One)
+npm run bridge:genesis                      # Complete system (genesis)
+npm run bridge:genesis:openNetwork          # Complete system (genesis + open)
+npm run bridge                              # Complete system (standard)
+
 # Server Management
-npm run bootstrap       # Start bootstrap server
-npm run bootstrap:genesis  # Start in genesis mode
 npm run shutdown        # Kill all servers
 npm run restart         # Restart bootstrap server
-
-
-# Debugging
 npm run kill-ports      # Kill processes on default ports
-npm run start-all       # Start all services
 ```
 
 ## Browser Console Debug
@@ -130,11 +139,26 @@ YZSocialC.investigatePhantomPeer('node_id')
 
 ### Browser Testing (Web UI)
 
-1. Start bootstrap server: `npm run bootstrap:genesis`
-2. Start dev server: `npm run dev`
-3. Open browser to dev server URL
-4. First client becomes genesis peer automatically
-5. Use invite button to add more peers
+#### Multi-Tab Testing (Default)
+1. Start bootstrap server: `npm run bridge-bootstrap:genesis:openNetwork`
+2. Start bridge nodes: `npm run bridge-nodes`
+3. Start dev server: `npm run dev`
+4. **Client A**: Open `http://localhost:3000` - becomes genesis peer
+5. **Client B**: Open **new tab** `http://localhost:3000` - gets unique identity automatically
+6. Each tab will have different Node ID thanks to tab-specific identity feature
+7. Watch them connect via WebRTC through DHT network
+
+#### Single Identity Testing
+To test behavior with shared identity across tabs:
+1. Open `http://localhost:3000?tabIdentity=false` in first tab
+2. Open `http://localhost:3000?tabIdentity=false` in second tab
+3. Both tabs share same identity (for testing persistent identity features)
+
+#### Multi-Browser Testing
+For production-like testing without tab identity:
+1. Open client A in Chrome
+2. Open client B in Firefox or Chrome Incognito
+3. Each browser has naturally separate identity storage
 
 
 
@@ -158,12 +182,131 @@ YZSocialC.investigatePhantomPeer('node_id')
 6. Automatic transition to DHT-based signaling
 7. Bootstrap server disconnected (minimal dependency achieved)
 
+## Cryptographic Identity System
+
+YZSocialC uses a robust cryptographic identity system for secure peer identification and authentication.
+
+### Identity Components
+
+- **Key Pair**: ECDSA P-256 (Web Crypto API standard)
+  - Private key: Stored in IndexedDB, never leaves browser
+  - Public key: Shared with bootstrap server for verification
+- **Node ID**: 160-bit Kademlia ID derived from SHA-256 hash of public key
+- **Storage**: IndexedDB for persistent identity across sessions
+
+### Bootstrap Authentication Flow
+
+1. **Client connects** to bootstrap server with Node ID and public key
+2. **Server generates challenge** with nonce and timestamp
+3. **Client signs challenge** using private key (ECDSA signature)
+4. **Server verifies signature** using public key (Node.js crypto)
+5. **Authentication success** grants network access
+
+### Tab-Specific Identity (Testing Feature)
+
+**Default Behavior**: Each browser tab gets unique identity for easy multi-client testing
+- Enabled by default (URL: `http://localhost:3000`)
+- Uses `sessionStorage` to generate per-tab IDs
+- Allows testing multiple clients in same browser without conflicts
+
+**Shared Identity Mode**: All tabs use same identity
+- Add URL parameter: `http://localhost:3000?tabIdentity=false`
+- Useful for testing persistent identity behavior
+- Identity persists across browser restarts
+
+### Identity Management Commands
+
+```javascript
+// Export identity for backup
+const backup = await YZSocialC.exportIdentity()
+
+// Import identity from backup
+await YZSocialC.importIdentity(backup)
+
+// Delete identity (requires page reload to regenerate)
+await YZSocialC.deleteIdentity()
+
+// Get identity info (without private key)
+const info = YZSocialC.getIdentityInfo()
+```
+
+## Open Network Mode
+
+**Purpose**: Simplifies testing and development by eliminating manual invitation workflow. New peers automatically join the network through bridge coordination.
+
+### How It Works
+
+**Standard Mode (Invitation Required)**:
+1. Genesis peer creates invitation token for specific new peer
+2. New peer uses token to join network
+3. Manual coordination required for each new peer
+
+**Open Network Mode (No Invitations)**:
+1. **Genesis Peer**: First client connects, becomes genesis temporarily
+2. **Automatic Bridge Connection**: Genesis connects to bridge node, gains DHT membership
+3. **Subsequent Peers**: Bridge selects random active DHT member to invite them
+4. **Distributed Load**: Each new peer gets introduced by different existing member
+5. **No Bottleneck**: Bridge coordinates but doesn't connect to all peers directly
+
+### Activation
+
+**npm Scripts**:
+```bash
+# Start open network (genesis mode)
+npm run bridge-bootstrap:genesis:openNetwork
+
+# Connect to existing open network
+npm run bridge-bootstrap:openNetwork
+
+# Complete system (bridge nodes + bootstrap)
+npm run bridge:genesis:openNetwork
+npm run bridge:openNetwork
+```
+
+**Command Line Flags**:
+```bash
+# Genesis + open network
+node src/bridge/start-enhanced-bootstrap.js -createNewDHT -openNetwork
+
+# Existing network + open access
+node src/bridge/start-enhanced-bootstrap.js -openNetwork
+```
+
+### Onboarding Flow (Open Network)
+
+1. **New peer connects** to bootstrap server
+2. **Bridge query**: Bootstrap asks bridge for random active peer
+3. **Helper selection**: Bridge randomly selects existing DHT member
+4. **Invitation via DHT**: Bridge sends invitation request to helper peer
+5. **Helper invites**: Existing member creates invitation token for new peer
+6. **WebRTC establishment**: New peer connects to helper via WebRTC
+7. **DHT membership**: New peer joins routing table and can help others
+
+### Architecture Benefits
+
+- **Scalability**: Load distributed across existing DHT members
+- **No Central Bottleneck**: Bridge doesn't maintain connections to all peers
+- **Self-Organizing**: Network grows organically through peer introductions
+- **Testing Friendly**: No manual coordination for development testing
+- **Production Ready**: Can disable for controlled network access
+
+### Security Considerations
+
+- **Testing Only**: Open network mode recommended for development/testing
+- **Production**: Use standard invitation mode for controlled access
+- **Authentication Still Required**: All peers must pass cryptographic challenge
+- **Bridge Validation**: Bridge verifies active peers before selection
+- **Membership Tokens**: Issued normally after successful connection
+
 ## Security Model
 
+- **Cryptographic Identity**: ECDSA P-256 keys with challenge/response authentication
 - **Chain of Trust**: Genesis peer controls initial network access
 - **Invitation Tokens**: Ed25519-signed, single-use, time-limited
 - **Replay Protection**: Unique nonces prevent token reuse
 - **Decentralized Validation**: DHT stores consumed tokens and public keys
+- **Signature Verification**: Bootstrap server validates all peer identities
+- **No Credential Storage**: Private keys never leave browser, stored only in IndexedDB
 
 ## Configuration
 

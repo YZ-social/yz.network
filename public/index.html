@@ -377,6 +377,7 @@
                 <div class="status-item">
                     <span>Node ID: </span>
                     <span class="status-value" id="node-id">-</span>
+                    <span class="status-indicator passed" id="identity-verified" style="margin-left: 10px; display: none;">✓ Verified</span>
                 </div>
                 <div class="status-item">
                     <span>Peers: </span>
@@ -389,6 +390,7 @@
             </div>
             
             <div class="grid">
+                <!-- Row 1: DHT Operations (left) | Network Statistics (right) -->
                 <div class="card">
                     <div class="card-header">DHT Operations</div>
                     <div class="card-body">
@@ -399,29 +401,29 @@
                             </button>
                             <button class="btn btn-danger" id="stop-dht" disabled>Stop DHT</button>
                         </div>
-                        
+
                         <div class="input-group">
                             <input type="text" class="form-control" id="store-key" placeholder="Key">
                             <input type="text" class="form-control" id="store-value" placeholder="Value">
                             <button class="btn btn-success" id="store-btn">Store</button>
                         </div>
-                        
+
                         <div class="input-group">
                             <input type="text" class="form-control" id="get-key" placeholder="Key to retrieve">
                             <button class="btn btn-warning" id="get-btn">Get</button>
                         </div>
-                        
+
                         <div class="input-group">
                             <input type="text" class="form-control" id="invite-node-id" placeholder="Node ID to invite to DHT">
                             <button class="btn btn-info" id="invite-btn" style="background: linear-gradient(135deg, #20c997, #17a2b8);">Invite</button>
                         </div>
-                        
+
                         <div class="controls">
                             <button class="btn btn-primary" id="run-all-tests-btn" style="background: linear-gradient(135deg, #28a745, #20c997);">Run All Tests</button>
                         </div>
                     </div>
                 </div>
-                
+
                 <div class="card">
                     <div class="card-header">Network Statistics</div>
                     <div class="card-body">
@@ -493,6 +495,7 @@
                     </div>
                 </div>
                 
+                <!-- Row 3: WebAssembly UI (left) | Cryptographic Identity (right) -->
                 <div class="card">
                     <div class="card-header">WebAssembly UI</div>
                     <div class="card-body">
@@ -504,7 +507,39 @@
                         </div>
                     </div>
                 </div>
-                
+
+                <div class="card">
+                    <div class="card-header">Cryptographic Identity</div>
+                    <div class="card-body">
+                        <div style="background: #f8f9fa; padding: 15px; border-radius: 6px; margin-bottom: 15px;">
+                            <div style="margin-bottom: 10px;">
+                                <strong style="color: #6c757d; font-size: 0.9em;">Node ID:</strong>
+                                <div id="identity-node-id" style="font-family: monospace; font-size: 11px; word-break: break-all; margin-top: 5px;">Loading...</div>
+                            </div>
+                            <div style="margin-bottom: 10px;">
+                                <strong style="color: #6c757d; font-size: 0.9em;">Public Key:</strong>
+                                <div id="identity-public-key" style="font-family: monospace; font-size: 10px; word-break: break-all; margin-top: 5px; max-height: 60px; overflow-y: auto;">Loading...</div>
+                            </div>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                                <div>
+                                    <strong style="color: #6c757d; font-size: 0.9em;">Created:</strong>
+                                    <div id="identity-created" style="font-size: 0.85em; margin-top: 5px;">-</div>
+                                </div>
+                                <div>
+                                    <strong style="color: #6c757d; font-size: 0.9em;">Last Used:</strong>
+                                    <div id="identity-last-used" style="font-size: 0.85em; margin-top: 5px;">-</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="controls">
+                            <button class="btn btn-primary" id="export-identity-btn" style="background: linear-gradient(135deg, #17a2b8, #117a8b); font-size: 12px; padding: 8px 16px;">Export</button>
+                            <button class="btn btn-warning" id="import-identity-btn" style="font-size: 12px; padding: 8px 16px;">Import</button>
+                            <button class="btn btn-danger" id="delete-identity-btn" style="font-size: 12px; padding: 8px 16px;">Delete</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 4: Activity Log (spans both columns) -->
                 <div class="card log-container">
                     <div class="card-header">
                         Activity Log
