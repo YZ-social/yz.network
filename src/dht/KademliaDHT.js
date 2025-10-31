@@ -2185,7 +2185,6 @@ export class KademliaDHT extends EventEmitter {
           const response = await this.sendFindNode(node.id.toString(), target, options);
           for (const peer of response.nodes || []) {
             const peerNode = DHTNode.fromCompact(peer);
-            results.add(peerNode);
 
             // CRITICAL: Add discovered peers to routing table (this is core Kademlia behavior)
             // findNode MUST populate routing table with discovered nodes for proper DHT function
@@ -2195,6 +2194,13 @@ export class KademliaDHT extends EventEmitter {
             if (peerId === this.localNodeId.toString()) {
               continue;
             }
+
+            // TODO: make more efficient at some point
+            if ([...results].some(peer => peer.id.toString() === peerId)) {
+              continue;
+            }
+
+            results.add(peerNode);
 
             // Only add valid DHT peers that aren't already known
             if (this.isValidDHTPeer(peerId) && !this.routingTable.getNode(peerId)) {
@@ -2344,6 +2350,7 @@ export class KademliaDHT extends EventEmitter {
     // Filter to only peers with active WebRTC connections
     const connectedClosestNodes = closestNodes.filter(node => {
       const peerId = node.id.toString();
+      if (peerId === this.localNodeId.toString()) return false; // ignore self
       const isConnected = this.isPeerConnected(peerId);
       if (!isConnected) {
         // Node not connected, but we still track it as a potential contact
