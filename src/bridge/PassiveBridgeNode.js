@@ -146,12 +146,11 @@ export class PassiveBridgeNode extends DHTClient {
       this.handleConnectionMessage(data.peerId, data.message);
     });
 
-    // Handle DHT messages through connection manager
-    this.connectionManager.on('dhtMessage', (data) => {
-      // Ensure peer is in routing table with server connection manager before processing message
-      const peerNode = this.dht.getOrCreatePeerNode(data.peerId, { connectionType: 'websocket', isBridgeConnected: true });
-      this.dht.handlePeerMessage(data.peerId, data.message);
-    });
+    // NOTE: dhtMessage handler is NOT set up here to avoid duplicate message processing.
+    // KademliaDHT.getOrCreatePeerNode() automatically sets up the dhtMessage handler
+    // when handleIncomingConnection() is called. Setting up a second handler here
+    // would cause every message to be processed twice.
+    // See: KademliaDHT.js lines 2755-2762 for the automatic dhtMessage handler setup.
   }
 
   /**

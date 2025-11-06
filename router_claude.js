@@ -18,6 +18,7 @@ const allowedPatterns = [
   /^🎬/,                                 // Script start
   /^⏳/,                                  // Waiting messages (includes Perfect Negotiation waits)
   /^🔗/,                                  // Connection attempts (Perfect Negotiation)
+  /^🔄/,                                  // Refresh/sync operations
   /^✅ All .* started$/,                 // "All X started" summary
   /^✅ Bootstrap server started/,        // Bootstrap confirmation
   /^✅ Node \d+ retrieved/,              // Retrieval confirmations
@@ -27,7 +28,7 @@ const allowedPatterns = [
   /^Test \d+/,                           // Test headers (e.g., "Test 1:")
   /^\nTest \d+/,                         // Test headers with leading newline
   /^🧪/,                                  // Test emoji and summary
-  /^🌐 Final Network Topology/,          // Network topology header
+  /^🌐/,                                  // Network topology (both "Final" and "After Stabilization")
   /^🧹/,                                  // Cleanup messages
   /^======/,                             // Dividers
   /^  [📝⏳✅❌]/,                       // HRS test operations (2 spaces indent)
@@ -184,15 +185,26 @@ async function testDHTOperations() {
   };
 
   try {
-    // Wait for connections to stabilize
-    console.log('⏳ Waiting for DHT network to stabilize...');
-    await delay(15e3);
+    // Wait briefly for automatic peer discovery to complete
+    // Nodes connect during invitation process, so we just need a short delay
+    // to allow background maintenance to stabilize routing tables
+    console.log('⏳ Waiting 5s for network stabilization...');
+    await delay(5e3);
+
+    // Log network topology BEFORE tests
+    console.log('\n🌐 Network Topology After Stabilization:');
+    for (let i = 0; i < nodes.length; i++) {
+      const connectedPeers = nodes[i].dht.getConnectedPeers().length;
+      const routingTableSize = nodes[i].dht.routingTable.getAllNodes().length;
+      console.log(`   Node ${i}: ${connectedPeers} connected, ${routingTableSize} in routing table`);
+    }
+    console.log();
 
     // Test 1: Node 0 stores and retrieves
     console.log('Test 1: Node 0 storing "test-key"...');
     const test1Result = await runTest('Node 0 store/retrieve', async () => {
       await nodes[0].store('test-key', 'Hello from Node 0');
-      await delay(1e3);
+      await delay(500); // Reduced delay for localhost testing
       const value = await nodes[0].get('test-key');
       console.log('✅ Node 0 retrieved value:', value);
       return value === 'Hello from Node 0';
@@ -200,7 +212,6 @@ async function testDHTOperations() {
 
     // Test 2: Node 1 retrieves Node 0's data
     console.log('\nTest 2: Node 1 retrieving "test-key" (stored by Node 0)...');
-    await delay(1e3);
     const test2Result = await runTest('Node 1 retrieve cross-node', async () => {
       const value = await nodes[1].get('test-key');
       console.log('✅ Node 1 retrieved value:', value);
@@ -211,7 +222,7 @@ async function testDHTOperations() {
     console.log('\nTest 3: Node 2 storing "test-key2"...');
     const test3Result = await runTest('Node 2 store/retrieve', async () => {
       await nodes[2].store('test-key2', 'Hello from Node 2');
-      await delay(1e3);
+      await delay(500); // Reduced delay for localhost testing
       const value = await nodes[2].get('test-key2');
       console.log('✅ Node 2 retrieved value:', value);
       return value === 'Hello from Node 2';
@@ -219,7 +230,6 @@ async function testDHTOperations() {
 
     // Test 4: Node 3 retrieves Node 2's data
     console.log('\nTest 4: Node 3 retrieving "test-key2" (stored by Node 2)...');
-    await delay(1e3);
     const test4Result = await runTest('Node 3 retrieve cross-node', async () => {
       const value = await nodes[3].get('test-key2');
       console.log('✅ Node 3 retrieved value:', value);
@@ -410,7 +420,7 @@ async function main() {
     await delay(5e3);
 
     // Start DHT clients
-    await configureNodes();
+    await configureNodes({number: 10});
 
     // Run tests
     await testDHTOperations();

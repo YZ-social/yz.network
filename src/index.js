@@ -298,6 +298,32 @@ class App {
         }
       },
 
+      // Strategic connection management debug utilities
+      debugStrategicConnections() {
+        if (!this.dht) {
+          console.warn('DHT not started');
+          return null;
+        }
+        return this.dht.debugStrategicConnections();
+      },
+
+      async maintainStrategicConnections() {
+        if (!this.dht) {
+          console.warn('DHT not started');
+          return false;
+        }
+        await this.dht.maintainStrategicConnections();
+        return true;
+      },
+
+      getPlatformLimits() {
+        if (!this.dht) {
+          console.warn('DHT not started');
+          return null;
+        }
+        return this.dht.platformLimits;
+      },
+
       async connectToPeer(peerId) {
         if (!this.dht) return false;
 
@@ -688,7 +714,9 @@ class App {
 
         try {
           console.log('🔍 Triggering manual peer discovery...');
-          await this.dht.triggerPeerDiscovery();
+          // Access internal KademliaDHT instance (this.dht is BrowserDHTClient, this.dht.dht is KademliaDHT)
+          const kademliaDHT = this.dht.dht || this.dht;
+          await kademliaDHT.triggerPeerDiscovery();
           console.log('✅ Peer discovery completed');
           return true;
         } catch (error) {
@@ -705,7 +733,9 @@ class App {
 
         try {
           console.log('🔄 Triggering manual bucket refresh...');
-          await this.dht.refreshBuckets();
+          // Access internal KademliaDHT instance (this.dht is BrowserDHTClient, this.dht.dht is KademliaDHT)
+          const kademliaDHT = this.dht.dht || this.dht;
+          await kademliaDHT.refreshBuckets();
           console.log('✅ Bucket refresh completed');
           return true;
         } catch (error) {

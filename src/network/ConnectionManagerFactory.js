@@ -68,11 +68,14 @@ export class ConnectionManagerFactory {
    * @returns {ConnectionManager} Appropriate connection manager
    */
   static getManagerForPeer(peerId, peerMetadata = null) {
-    // Check cache first to prevent multiple instances
-    if (ConnectionManagerFactory.managerCache.has(peerId)) {
-      console.log(`🔄 Reusing cached connection manager for ${peerId.substring(0, 8)}...`);
-      return ConnectionManagerFactory.managerCache.get(peerId);
-    }
+    // BUGFIX: Disabled manager caching to fix routing bug when multiple DHT nodes
+    // run in same process. Each DHT instance needs its own isolated managers.
+    // TODO: Implement per-instance caching using localNodeId in cache key
+    // OLD CODE (BROKEN):
+    // if (ConnectionManagerFactory.managerCache.has(peerId)) {
+    //   console.log(`🔄 Reusing cached connection manager for ${peerId.substring(0, 8)}...`);
+    //   return ConnectionManagerFactory.managerCache.get(peerId);
+    // }
 
     // Determine target node type from metadata
     let targetNodeType = 'browser'; // default
@@ -96,9 +99,9 @@ export class ConnectionManagerFactory {
       }
     }
 
-    // Cache the manager for future use
-    ConnectionManagerFactory.managerCache.set(peerId, manager);
-    console.log(`💾 Cached new connection manager for ${peerId.substring(0, 8)}...`);
+    // BUGFIX: Disabled caching (see getManagerForPeer comment above)
+    // ConnectionManagerFactory.managerCache.set(peerId, manager);
+    // console.log(`💾 Cached new connection manager for ${peerId.substring(0, 8)}...`);
 
     return manager;
   }

@@ -193,6 +193,14 @@ export class DHTVisualizer {
       this.elements.stopBtn.disabled = false;
       this.hideLoading();
 
+      // Update node ID display with correct identity-based ID
+      if (this.dht && this.dht.localNodeId) {
+        this.elements.nodeId.textContent = this.dht.localNodeId.toString();
+      }
+
+      // Update identity UI after identity is loaded
+      this.updateIdentityUI();
+
       // Re-setup component event handlers after restart
       this.setupComponentEventHandlers();
 
@@ -310,6 +318,11 @@ export class DHTVisualizer {
       this.updateStatus('Running');
       this.elements.stopBtn.disabled = false;
       this.log('DHT started successfully', 'success');
+
+      // Update node ID display with correct identity-based ID
+      if (this.dht && this.dht.localNodeId) {
+        this.elements.nodeId.textContent = this.dht.localNodeId.toString();
+      }
 
       // Update identity UI after identity is loaded
       this.updateIdentityUI();
@@ -1099,8 +1112,10 @@ export class DHTVisualizer {
       }
 
       // Check if background maintenance processes are running
-      const hasRefreshTimer = this.dht.refreshTimer !== null && this.dht.refreshTimer !== undefined;
-      const hasOfferPolling = this.dht.dhtOfferPollingInterval !== null && this.dht.dhtOfferPollingInterval !== undefined;
+      // Access internal KademliaDHT instance (this.dht is BrowserDHTClient, this.dht.dht is KademliaDHT)
+      const kademliaDHT = this.dht.dht || this.dht; // Support both BrowserDHTClient and direct KademliaDHT
+      const hasRefreshTimer = kademliaDHT.refreshTimer !== null && kademliaDHT.refreshTimer !== undefined;
+      const hasOfferPolling = kademliaDHT.dhtOfferPollingInterval !== null && kademliaDHT.dhtOfferPollingInterval !== undefined;
 
       if (hasRefreshTimer || hasOfferPolling) {
         this.updateTestStatus('Maintenance', 'passed');
@@ -1137,7 +1152,9 @@ export class DHTVisualizer {
       }
 
       // Step 1: Check if we have a membership token
-      const membershipToken = this.dht.membershipToken;
+      // Access internal KademliaDHT instance (this.dht is BrowserDHTClient, this.dht.dht is KademliaDHT)
+      const kademliaDHT = this.dht.dht || this.dht; // Support both BrowserDHTClient and direct KademliaDHT
+      const membershipToken = kademliaDHT.membershipToken;
       if (!membershipToken) {
         this.log('Reconnection Test: FAILED - No membership token available', 'error');
         this.updateTestStatus('Reconnection', 'failed');
@@ -1218,7 +1235,9 @@ export class DHTVisualizer {
       if (reconnectionSuccess) {
         this.log('Testing k-bucket maintenance for peer discovery...', 'info');
         try {
-          await this.dht.refreshBuckets();
+          // Access internal KademliaDHT instance for refreshBuckets method
+          const kademliaDHT = this.dht.dht || this.dht;
+          await kademliaDHT.refreshBuckets();
           await new Promise(resolve => setTimeout(resolve, 5000)); // Wait for discovery
 
           const finalPeers = this.dht.getConnectedPeers().length;

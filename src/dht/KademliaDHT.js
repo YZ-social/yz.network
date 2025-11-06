@@ -58,12 +58,19 @@ export class KademliaDHT extends EventEmitter {
     this.overlayNetwork = null;
     this.overlayOptions = options.overlayOptions || {};
 
+    // Detect platform limits for connection management
+    this.platformLimits = this.detectPlatformLimits();
+
     // Store transport options for ConnectionManagerFactory
     this.transportOptions = {
-      maxConnections: options.maxConnections || 50,
+      maxConnections: options.maxConnections || this.platformLimits.maxConnections,
       timeout: options.timeout || 30000,
       ...options.connectionOptions
     };
+
+    // Strategic connection management
+    this.maxBucketConnections = options.maxBucketConnections || this.platformLimits.maxBucketConnections;
+    this.priorityBuckets = options.priorityBuckets || this.platformLimits.priorityBuckets;
 
     this.bootstrap = options.bootstrap || new BootstrapClient({
       bootstrapServers: this.options.bootstrapServers
@@ -135,6 +142,48 @@ export class KademliaDHT extends EventEmitter {
     }
 
     this.setupEventHandlers();
+  }
+
+  /**
+   * Detect platform-specific connection limits
+   * Mobile browsers: ~20-30 WebRTC connections stable
+   * Desktop browsers: ~50-100 WebRTC connections stable
+   * Node.js servers: ~200+ WebSocket connections stable
+   */
+  detectPlatformLimits() {
+    // Check if we're in Node.js environment
+    const isNodeJS = typeof window === 'undefined' && typeof process !== 'undefined' && process.versions?.node;
+
+    if (isNodeJS) {
+      // Node.js server - can handle many connections
+      return {
+        maxConnections: 200,
+        maxBucketConnections: 5,  // 5 peers per bucket for redundancy
+        priorityBuckets: 20       // Maintain ~20 diverse buckets
+      };
+    }
+
+    // Browser environment - check if mobile
+    const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+    const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(userAgent);
+
+    if (isMobile) {
+      // Mobile browser - conservative limits
+      console.log('📱 Mobile platform detected - using conservative connection limits');
+      return {
+        maxConnections: 20,
+        maxBucketConnections: 2,  // 2 peers per bucket
+        priorityBuckets: 8        // Maintain ~8-10 diverse buckets
+      };
+    }
+
+    // Desktop browser - standard limits
+    console.log('💻 Desktop platform detected - using standard connection limits');
+    return {
+      maxConnections: 50,
+      maxBucketConnections: 3,  // 3 peers per bucket
+      priorityBuckets: 12       // Maintain ~12-15 diverse buckets
+    };
   }
 
   /**
@@ -673,6 +722,50 @@ export class KademliaDHT extends EventEmitter {
     } catch (error) {
       console.error('❌ Token validation failed:', error);
       return { valid: false, error: `Validation error: ${error.message}` };
+    }
+  }
+
+  /**
+   * Validate a membership token from a peer
+   * @param {Object} membershipToken - The membership token to validate
+   * @returns {Object} - {valid: boolean, reason?: string}
+   */
+  async validateMembershipToken(membershipToken) {
+    try {
+      // Basic structure validation
+      if (!membershipToken || typeof membershipToken !== 'object') {
+        return { valid: false, reason: 'Invalid token structure' };
+      }
+
+      if (!membershipToken.holder || !membershipToken.issuer || !membershipToken.signature) {
+        return { valid: false, reason: 'Missing required token fields' };
+      }
+
+      // Get issuer's public key from DHT
+      const issuerPublicKeyData = await this.get(`pubkey:${membershipToken.issuer}`);
+
+      if (!issuerPublicKeyData) {
+        // If we can't find the public key yet, it might still be propagating
+        // Allow the token but log a warning
+        console.warn(`⚠️ Could not verify membership token - issuer public key not yet available in DHT`);
+        return { valid: true }; // Lenient: allow if key not yet propagated
+      }
+
+      // Verify the token signature
+      const verification = await InvitationToken.verifyMembershipToken(
+        membershipToken,
+        issuerPublicKeyData
+      );
+
+      if (!verification.valid) {
+        return { valid: false, reason: verification.error || 'Signature verification failed' };
+      }
+
+      return { valid: true };
+
+    } catch (error) {
+      console.error(`❌ Membership token validation error:`, error);
+      return { valid: false, reason: `Validation error: ${error.message}` };
     }
   }
 
@@ -2176,7 +2269,9 @@ export class KademliaDHT extends EventEmitter {
     const targetBucketIndex = this.routingTable.getBucketIndex(target);
     this.bucketLastActivity.set(targetBucketIndex, Date.now());
 
-    const closest = this.routingTable.findClosestNodes(target, this.options.k);
+    // Allow caller to request more than k nodes (for bridge node filtering)
+    const limit = options.limit || this.options.k;
+    const closest = this.routingTable.findClosestNodes(target, limit);
     const contacted = new Set();
     const results = new Set();
 
@@ -2296,7 +2391,7 @@ export class KademliaDHT extends EventEmitter {
         const distB = b.id.xorDistance(target);
         return distA.compare(distB);
       })
-      .slice(0, this.options.k);
+      .slice(0, limit);
   }
 
   /**
@@ -2357,8 +2452,23 @@ export class KademliaDHT extends EventEmitter {
    * Handle find node request
    */
   async handleFindNode(peerId, message) {
+    console.log(`📥 FIND_NODE: Request received from ${peerId.substring(0, 8)}... (requestId: ${message.requestId})`);
+
     const targetId = DHTNodeId.fromString(message.target);
     const closestNodes = this.routingTable.findClosestNodes(targetId, this.options.k);
+    console.log(`🔍 FIND_NODE: Found ${closestNodes.length} closest nodes for target ${targetId.toString().substring(0, 8)}...`);
+
+    // NOTE: Bridge nodes ARE included in find_node responses for two reasons:
+    // 1. They need to be discoverable for messaging (reconnection services, onboarding)
+    // 2. They need to be in routing tables for DHT message routing
+    //
+    // Bridge nodes are filtered out from STORAGE operations in two places:
+    // - Client-side: store() operation filters bridge nodes when selecting replication targets
+    // - Server-side: handleStore() rejects storage requests on bridge nodes
+    //
+    // This architecture maintains:
+    // ✅ Bridge node discoverability for messaging
+    // ✅ Kademlia replication guarantees (k=20 active storage nodes)
 
     const response = {
       type: 'find_node_response',
@@ -2366,7 +2476,9 @@ export class KademliaDHT extends EventEmitter {
       nodes: closestNodes.map(node => node.toCompact())
     };
 
+    console.log(`📤 FIND_NODE: Sending response to ${peerId.substring(0, 8)}... with ${response.nodes.length} nodes`);
     await this.sendMessage(peerId, response);
+    console.log(`✅ FIND_NODE: Response sent successfully to ${peerId.substring(0, 8)}...`);
   }
 
   /**
@@ -2377,11 +2489,17 @@ export class KademliaDHT extends EventEmitter {
     this.logger.debug(`Current routing table size: ${this.routingTable.getAllNodes().length}`);
     this.logger.debug(`Connected peers: ${this.getConnectedPeers().length}`);
 
-    // Clean routing table of disconnected peers before operations
-    this.cleanupRoutingTable();
+    // DISABLED: Cleanup is too aggressive for sparse DHTs where background connections are still in progress
+    // Don't remove discovered nodes before they have a chance to connect
+    // this.cleanupRoutingTable();
 
     const keyId = DHTNodeId.fromString(key);
-    const closestNodes = await this.findNode(keyId);
+
+    // CRITICAL: Request more nodes than replicateK to account for bridge nodes
+    // Bridge nodes will be filtered out, so we need a buffer to ensure we have k=20 active nodes
+    // Request k + 10 to provide reasonable buffer (handles up to 10 bridge nodes in closest set)
+    const nodesToRequest = this.options.replicateK + 10;
+    const closestNodes = await this.findNode(keyId, { limit: nodesToRequest });
 
     // Filter to only peers with active connections
     const connectedClosestNodes = closestNodes.filter(node => {
@@ -2394,14 +2512,37 @@ export class KademliaDHT extends EventEmitter {
       return isConnected;
     });
 
-    this.logger.info(`   Found ${closestNodes.length} closest nodes, ${connectedClosestNodes.length} connected`);
-    this.logger.info(`   Will replicate to ${Math.min(connectedClosestNodes.length, this.options.replicateK)} nodes (replicateK=${this.options.replicateK})`);
+    // CRITICAL: Filter out passive/bridge nodes from replication targets
+    // Bridge nodes should never count toward replicateK=20 quota
+    // This maintains Kademlia replication guarantees
+    const activeConnectedNodes = connectedClosestNodes.filter(node => {
+      const peerId = node.id.toString();
+      const peerNode = this.routingTable.getNode(peerId) || this.peerNodes?.get(peerId);
+      const isBridgeNode = peerNode?.getMetadata?.('isBridgeNode') || peerNode?.metadata?.isBridgeNode;
+
+      if (isBridgeNode) {
+        this.logger.debug(`   Node ${peerId.substring(0, 8)}... is bridge node, excluding from replication`);
+        return false;
+      }
+      return true;
+    });
+
+    this.logger.info(`   Found ${closestNodes.length} closest nodes, ${connectedClosestNodes.length} connected, ${activeConnectedNodes.length} active (non-bridge)`);
+
+    // CRITICAL: Warn if we don't have enough active nodes after filtering bridge nodes
+    if (activeConnectedNodes.length < this.options.replicateK) {
+      const bridgeCount = connectedClosestNodes.length - activeConnectedNodes.length;
+      this.logger.warn(`   ⚠️ Only ${activeConnectedNodes.length}/${this.options.replicateK} active nodes available after filtering ${bridgeCount} bridge nodes`);
+      this.logger.warn(`   ⚠️ Replication guarantee degraded - storing on fewer than k=${this.options.replicateK} nodes`);
+    }
+
+    this.logger.info(`   Will replicate to ${Math.min(activeConnectedNodes.length, this.options.replicateK)} nodes (replicateK=${this.options.replicateK})`);
 
 
     // Store locally if we're one of the closest
     const localDistance = this.localNodeId.xorDistance(keyId);
-    const shouldStoreLocally = connectedClosestNodes.length < this.options.replicateK ||
-      connectedClosestNodes.some(node => {
+    const shouldStoreLocally = activeConnectedNodes.length < this.options.replicateK ||
+      activeConnectedNodes.some(node => {
         const nodeDistance = node.id.xorDistance(keyId);
         return localDistance.compare(nodeDistance) <= 0;
       });
@@ -2417,9 +2558,9 @@ export class KademliaDHT extends EventEmitter {
       this.logger.debug(`   Skipping local storage (not one of the ${this.options.replicateK} closest nodes)`);
     }
 
-    // Store on closest connected nodes
-    const targetNodes = connectedClosestNodes.slice(0, this.options.replicateK);
-    this.logger.info(`   Replicating to ${targetNodes.length} peers...`);
+    // Store on closest active (non-bridge) connected nodes
+    const targetNodes = activeConnectedNodes.slice(0, this.options.replicateK);
+    this.logger.info(`   Replicating to ${targetNodes.length} active peers...`);
 
     const storePromises = targetNodes.map(node => {
       const peerId = node.id.toString();
@@ -2471,6 +2612,22 @@ export class KademliaDHT extends EventEmitter {
   async handleStore(peerId, message) {
     const { key, value } = message;
 
+    // CRITICAL: Passive nodes (bridge nodes) must reject store requests
+    // to maintain Kademlia replication guarantees
+    if (this.options.disableStorage || this.options.passiveMode) {
+      console.log(`⚠️ Rejecting store request for ${key} - node is in passive/observer mode`);
+
+      const response = {
+        type: 'store_response',
+        requestId: message.requestId,
+        success: false,
+        error: 'Node is in passive mode and does not accept storage'
+      };
+
+      await this.sendMessage(peerId, response);
+      return;
+    }
+
     // Store the value
     this.storage.set(key, {
       value,
@@ -2493,28 +2650,40 @@ export class KademliaDHT extends EventEmitter {
    * Get value from DHT
    */
   async get(key) {
+    console.log(`🔍 GET started for key: "${key}"`);
+
     // Check local storage first
     if (this.storage.has(key)) {
       const stored = this.storage.get(key);
+      console.log(`✅ GET: Found "${key}" in local storage`);
       return stored.value;
     }
+    console.log(`❌ GET: "${key}" not in local storage, searching DHT...`);
 
     // Search DHT
     const keyId = DHTNodeId.fromString(key);
+    console.log(`🔍 GET: Calling findNode for key ID: ${keyId.toString().substring(0, 8)}...`);
     const closestNodes = await this.findNode(keyId);
+    console.log(`✅ GET: findNode returned ${closestNodes.length} closest nodes`);
 
     // Query nodes for the value
+    let queriesAttempted = 0;
     for (const node of closestNodes) {
       try {
+        queriesAttempted++;
+        console.log(`📤 GET: Querying node ${node.id.toString().substring(0, 8)}... (${queriesAttempted}/${closestNodes.length})`);
         const response = await this.sendFindValue(node.id.toString(), key);
+        console.log(`📥 GET: Response from ${node.id.toString().substring(0, 8)}...: found=${response.found}`);
         if (response.found && response.value !== undefined) {
+          console.log(`✅ GET: Successfully retrieved "${key}" from ${node.id.toString().substring(0, 8)}...`);
           return response.value;
         }
       } catch (error) {
-        console.warn(`Find value query failed for ${node.id.toString()}:`, error);
+        console.warn(`⚠️ GET: Find value query failed for ${node.id.toString().substring(0, 8)}...:`, error.message);
       }
     }
 
+    console.log(`❌ GET: Failed to find "${key}" after querying ${queriesAttempted} nodes`);
     return null;
   }
 
@@ -2548,6 +2717,7 @@ export class KademliaDHT extends EventEmitter {
    */
   async handleFindValue(peerId, message) {
     const { key } = message;
+    console.log(`🔍 [${this.localNodeId.toString().substring(0, 8)}] Handling find_value for "${key}" from ${peerId.substring(0, 8)}... (requestId: ${message.requestId})`);
 
     if (this.storage.has(key)) {
       // Return the value
@@ -2558,6 +2728,7 @@ export class KademliaDHT extends EventEmitter {
         found: true,
         value: stored.value
       };
+      console.log(`📤 [${this.localNodeId.toString().substring(0, 8)}] Sending find_value_response (FOUND) to ${peerId.substring(0, 8)}... (requestId: ${message.requestId})`);
       await this.sendMessage(peerId, response);
     } else {
       // Return closest nodes
@@ -2570,6 +2741,7 @@ export class KademliaDHT extends EventEmitter {
         found: false,
         nodes: closestNodes.map(node => node.toCompact())
       };
+      console.log(`📤 [${this.localNodeId.toString().substring(0, 8)}] Sending find_value_response (NOT FOUND, ${closestNodes.length} nodes) to ${peerId.substring(0, 8)}... (requestId: ${message.requestId})`);
       await this.sendMessage(peerId, response);
     }
   }
@@ -2654,6 +2826,310 @@ export class KademliaDHT extends EventEmitter {
     }
 
     return connectedPeers;
+  }
+
+  /**
+   * Analyze bucket coverage to identify undercovered buckets
+   * Returns array of bucket stats sorted by priority
+   */
+  analyzeBucketCoverage() {
+    const allNodes = this.routingTable.getAllNodes();
+    const connectedPeers = this.getConnectedPeers();
+
+    // Initialize bucket stats (160 buckets for 160-bit address space)
+    const buckets = new Map();
+    for (let i = 0; i < 160; i++) {
+      buckets.set(i, {
+        index: i,
+        connections: 0,
+        totalNodes: 0,
+        availablePeers: []
+      });
+    }
+
+    // Populate bucket stats
+    for (const node of allNodes) {
+      try {
+        const peerId = node.id.toString();
+        const bucketIndex = this.routingTable.getBucketIndex(node.id);
+        const bucket = buckets.get(bucketIndex);
+
+        bucket.totalNodes++;
+
+        if (connectedPeers.includes(peerId)) {
+          bucket.connections++;
+        } else {
+          // Skip our own node ID
+          if (peerId !== this.localNodeId.toString()) {
+            bucket.availablePeers.push(node);
+          }
+        }
+      } catch (error) {
+        // Ignore invalid nodes
+      }
+    }
+
+    // Convert to array and sort by priority
+    // Priority: buckets with fewer connections, especially higher-index (closer) buckets
+    return Array.from(buckets.values())
+      .filter(b => b.totalNodes > 0) // Only buckets with nodes
+      .sort((a, b) => {
+        // First sort by connection count (fewer connections = higher priority)
+        const connDiff = a.connections - b.connections;
+        if (connDiff !== 0) return connDiff;
+
+        // If connection count equal, prefer higher bucket index (closer peers)
+        return b.index - a.index;
+      });
+  }
+
+  /**
+   * Select strategic peers for connection to maximize bucket diversity
+   * @param {Array} discoveredNodes - Nodes discovered via DHT lookups
+   * @param {number} maxToSelect - Maximum number of peers to select
+   * @returns {Array} Strategic peers prioritized for connection
+   */
+  selectStrategicPeers(discoveredNodes, maxToSelect = null) {
+    const currentConnections = this.getConnectedPeers().length;
+    const maxConnections = this.transportOptions.maxConnections;
+    const availableSlots = maxConnections - currentConnections;
+
+    if (availableSlots <= 0) {
+      console.log(`⚠️ No available connection slots (${currentConnections}/${maxConnections})`);
+      return [];
+    }
+
+    const slotsToFill = maxToSelect ? Math.min(maxToSelect, availableSlots) : availableSlots;
+
+    // Group nodes by bucket index
+    const bucketMap = new Map();
+    for (const node of discoveredNodes) {
+      try {
+        const peerId = node.id.toString();
+
+        // Skip if already connected
+        if (this.isPeerConnected(peerId)) continue;
+
+        // Skip our own node
+        if (peerId === this.localNodeId.toString()) continue;
+
+        const bucketIndex = this.routingTable.getBucketIndex(node.id);
+        if (!bucketMap.has(bucketIndex)) {
+          bucketMap.set(bucketIndex, []);
+        }
+        bucketMap.get(bucketIndex).push(node);
+      } catch (error) {
+        // Ignore invalid nodes
+      }
+    }
+
+    // Sort buckets by priority (furthest buckets first for diversity)
+    const priorityBuckets = Array.from(bucketMap.entries())
+      .sort((a, b) => b[0] - a[0]); // Higher bucket index = closer peers = higher priority
+
+    // Select peers with bucket diversity
+    const selectedPeers = [];
+    const maxPerBucket = this.maxBucketConnections || 3;
+
+    for (const [bucketIndex, nodes] of priorityBuckets) {
+      // Take up to maxPerBucket peers from this bucket
+      const peersFromBucket = nodes.slice(0, maxPerBucket);
+      selectedPeers.push(...peersFromBucket);
+
+      if (selectedPeers.length >= slotsToFill) {
+        break;
+      }
+    }
+
+    const result = selectedPeers.slice(0, slotsToFill);
+
+    if (result.length > 0) {
+      console.log(`🎯 Selected ${result.length} strategic peers across ${new Set(result.map(n => this.routingTable.getBucketIndex(n.id))).size} buckets`);
+    }
+
+    return result;
+  }
+
+  /**
+   * Prune least valuable connection to make room for a better peer
+   * @param {DHTNode} newPeer - New peer to potentially connect
+   * @param {number} newPeerBucket - Bucket index of new peer
+   * @returns {boolean} True if a slot was freed, false if current connections are better
+   */
+  async pruneConnectionForBetterPeer(newPeer, newPeerBucket) {
+    const currentConnections = this.getConnectedPeers();
+    const maxConnections = this.transportOptions.maxConnections;
+
+    // No pruning needed if we're under the limit
+    if (currentConnections.length < maxConnections) {
+      return true;
+    }
+
+    // Calculate value for each current connection
+    const connectionValues = currentConnections.map(peerId => {
+      const node = this.routingTable.getNode(peerId);
+      if (!node) return null;
+
+      try {
+        const bucketIndex = this.routingTable.getBucketIndex(node.id);
+        const lastSeen = node.lastSeen || 0;
+        const messageCount = node.messageCount || 0;
+
+        // Value calculation:
+        // - Higher bucket index (closer peers) = more valuable
+        // - More recent activity = more valuable
+        // - More messages exchanged = more valuable
+        const recencyScore = Math.max(0, 100000 - (Date.now() - lastSeen) / 1000);
+        const activityScore = messageCount * 100;
+        const proximityScore = bucketIndex * 1000;
+
+        return {
+          peerId,
+          bucketIndex,
+          lastSeen,
+          messageCount,
+          value: proximityScore + recencyScore + activityScore
+        };
+      } catch (error) {
+        return null;
+      }
+    }).filter(v => v !== null)
+      .sort((a, b) => a.value - b.value); // Lowest value first
+
+    if (connectionValues.length === 0) {
+      return false;
+    }
+
+    // Calculate value of new peer
+    const newPeerRecencyScore = 100000; // New peer gets full recency score
+    const newPeerProximityScore = newPeerBucket * 1000;
+    const newPeerValue = newPeerProximityScore + newPeerRecencyScore;
+
+    // Find least valuable existing connection
+    const leastValuable = connectionValues[0];
+
+    // Only prune if new peer is significantly more valuable (1.5x threshold)
+    if (newPeerValue > leastValuable.value * 1.5) {
+      console.log(`🔄 Pruning connection to ${leastValuable.peerId.substring(0, 8)}... (value: ${leastValuable.value.toFixed(0)}) for better peer in bucket ${newPeerBucket} (value: ${newPeerValue.toFixed(0)})`);
+
+      // Gracefully close old connection
+      const node = this.routingTable.getNode(leastValuable.peerId);
+      if (node?.connectionManager) {
+        try {
+          await node.connectionManager.disconnect(leastValuable.peerId);
+          // Remove from routing table
+          this.routingTable.removeNode(leastValuable.peerId);
+          return true;
+        } catch (error) {
+          console.error(`Failed to prune connection to ${leastValuable.peerId}:`, error);
+          return false;
+        }
+      }
+    }
+
+    console.log(`✅ Keeping current connections - new peer (value: ${newPeerValue.toFixed(0)}) not valuable enough vs ${leastValuable.peerId.substring(0, 8)}... (value: ${leastValuable.value.toFixed(0)})`);
+    return false;
+  }
+
+  /**
+   * Maintain strategic connections across diverse buckets
+   * Replaces random connection attempts with strategic diversity-focused approach
+   */
+  async maintainStrategicConnections() {
+    const currentConnections = this.getConnectedPeers().length;
+    const maxConnections = this.transportOptions.maxConnections;
+
+    console.log(`🎯 Maintaining strategic connections (${currentConnections}/${maxConnections})`);
+
+    // If we're at limit, check if we should upgrade any connections
+    if (currentConnections >= maxConnections) {
+      console.log(`✅ Connection budget full (${currentConnections}/${maxConnections})`);
+
+      // Analyze if we have poor bucket coverage that justifies pruning
+      const bucketCoverage = this.analyzeBucketCoverage();
+      const undercovered = bucketCoverage.filter(b => b.connections < 1 && b.availablePeers.length > 0);
+
+      if (undercovered.length > 0) {
+        console.log(`📊 Found ${undercovered.length} buckets with no connections - considering strategic upgrades`);
+
+        // Try to upgrade connections for first few undercovered buckets
+        for (const bucket of undercovered.slice(0, 3)) {
+          if (bucket.availablePeers.length > 0) {
+            const newPeer = bucket.availablePeers[0];
+            const slotFreed = await this.pruneConnectionForBetterPeer(newPeer, bucket.index);
+
+            if (slotFreed) {
+              // Connect to the new peer
+              try {
+                await this.connectToPeer(newPeer.id.toString());
+                console.log(`✅ Upgraded connection for bucket ${bucket.index}`);
+              } catch (error) {
+                console.error(`Failed to connect to upgraded peer:`, error);
+              }
+            }
+          }
+        }
+      }
+
+      return;
+    }
+
+    // Find buckets with poor coverage
+    const bucketCoverage = this.analyzeBucketCoverage();
+    const undercovered = bucketCoverage.filter(b => {
+      const targetConnections = this.maxBucketConnections || 2;
+      return b.connections < targetConnections && b.availablePeers.length > 0;
+    });
+
+    if (undercovered.length === 0) {
+      console.log(`✅ All buckets have good coverage`);
+      return;
+    }
+
+    console.log(`📊 Found ${undercovered.length} undercovered buckets`);
+
+    // Connect to strategic peers from undercovered buckets
+    const peersToConnect = [];
+    for (const bucket of undercovered) {
+      const needed = Math.min(
+        (this.maxBucketConnections || 2) - bucket.connections,
+        bucket.availablePeers.length
+      );
+      peersToConnect.push(...bucket.availablePeers.slice(0, needed));
+
+      // Don't exceed available connection slots
+      if (peersToConnect.length >= maxConnections - currentConnections) {
+        break;
+      }
+    }
+
+    const toConnect = peersToConnect.slice(0, maxConnections - currentConnections);
+
+    if (toConnect.length > 0) {
+      console.log(`🎯 Connecting to ${toConnect.length} strategic peers for bucket diversity`);
+
+      for (const peer of toConnect) {
+        try {
+          await this.connectToPeer(peer.id.toString());
+        } catch (error) {
+          console.error(`Failed to connect to strategic peer ${peer.id.toString().substring(0, 8)}:`, error);
+        }
+      }
+    }
+  }
+
+  /**
+   * Connect to a specific peer (wrapper for connectToPeerViaDHT)
+   * @param {string} peerId - Peer ID to connect to
+   */
+  async connectToPeer(peerId) {
+    // Check connection limits
+    if (!(await this.shouldConnectToPeer(peerId))) {
+      return false;
+    }
+
+    // Use existing connection method
+    return await this.connectToPeerViaDHT(peerId);
   }
 
   /**
@@ -2760,16 +3236,9 @@ export class KademliaDHT extends EventEmitter {
         console.log(`📨 DHT message handler attached for ${peerId.substring(0, 8)}`);
       }
 
-      // CRITICAL: Set up signal event listener for DHT-based WebRTC signaling (only if not already attached)
-      if (!peerNode.connectionManager._dhtSignalHandlerAttached) {
-        peerNode.connectionManager.on('signal', ({ peerId: signalPeerId, signal }) => {
-          if (this.overlayNetwork) {
-            this.overlayNetwork.handleOutgoingSignal(signalPeerId, signal);
-          }
-        });
-        peerNode.connectionManager._dhtSignalHandlerAttached = true;
-        console.log(`📡 Signal handler attached for ${peerId.substring(0, 8)}`);
-      }
+      // NOTE: Signal handling removed - WebRTC signaling should be handled by WebRTCConnectionManager itself,
+      // not by DHT. WebSocketConnectionManager doesn't emit signals anyway.
+      // TODO: Move WebRTC signaling logic into WebRTCConnectionManager where it belongs.
 
       // CRITICAL: Transfer metadata to connection manager
       if (peerNode.metadata && Object.keys(peerNode.metadata).length > 0) {
@@ -2782,6 +3251,8 @@ export class KademliaDHT extends EventEmitter {
 
   /**
    * Send request and wait for response
+   * NOTE: Reduced timeout to 10s for faster failure detection on localhost
+   * (30s was causing test script to hang during node setup)
    */
   async sendRequestWithResponse(peerId, message, timeout = 10000) {
     // CRITICAL: Never send requests to ourselves
@@ -3286,50 +3757,8 @@ export class KademliaDHT extends EventEmitter {
    * Does NOT do additional discovery - just connects to existing routing table entries
    */
   async connectToRecentlyDiscoveredPeers() {
-    const allNodes = this.routingTable.getAllNodes();
-    const unconnectedPeers = allNodes.filter(node =>
-      !this.isPeerConnected(node.id.toString())
-    );
-
-    if (unconnectedPeers.length === 0) {
-      console.log(`✅ All discovered peers already connected`);
-      return;
-    }
-
-    console.log(`🤝 Connecting to ${Math.min(3, unconnectedPeers.length)} recently discovered peers`);
-
-    // Limit concurrent connection attempts to avoid overwhelming
-    const maxConcurrent = 3;
-    const toConnect = unconnectedPeers.slice(0, maxConcurrent);
-
-    for (const node of toConnect) {
-      const peerId = node.id.toString();
-
-      // Quick validation only
-      if (!this.isValidDHTPeer(peerId)) {
-        continue;
-      }
-
-      // Check connection limits
-      if (!(await this.shouldConnectToPeer(peerId))) {
-        continue;
-      }
-
-      try {
-        // CRITICAL: Don't interfere with pending WebRTC coordination
-        if (this.pendingWebRTCOffers && this.pendingWebRTCOffers.has(peerId)) {
-          console.log(`🚫 Skipping emergency discovery for ${peerId.substring(0, 8)}... - WebRTC coordination in progress`);
-          continue;
-        }
-
-        console.log(`🔗 Connecting to discovered peer: ${peerId.substring(0, 8)}...`);
-        await this.connectToPeerViaDHT(peerId);
-      } catch (error) {
-        console.warn(`❌ Failed to connect to ${peerId.substring(0, 8)}...: ${error.message}`);
-      }
-    }
-
-    console.log('✅ Recent peer connection attempts completed');
+    // Use strategic connection maintenance instead of random selection
+    await this.maintainStrategicConnections();
   }
 
   /**
@@ -3693,8 +4122,17 @@ export class KademliaDHT extends EventEmitter {
    * Get DHT statistics
    */
   getStats() {
+    const connectedPeers = this.getConnectedPeers();
+    const bucketCoverage = this.analyzeBucketCoverage();
+    const activeBuckets = bucketCoverage.filter(b => b.connections > 0);
+
     return {
       nodeId: this.localNodeId.toString(),
+      platform: {
+        maxConnections: this.platformLimits.maxConnections,
+        maxBucketConnections: this.platformLimits.maxBucketConnections,
+        priorityBuckets: this.platformLimits.priorityBuckets
+      },
       isStarted: this.isStarted,
       isBootstrapped: this.isBootstrapped,
       useBootstrapForSignaling: this.useBootstrapForSignaling,
@@ -3703,8 +4141,63 @@ export class KademliaDHT extends EventEmitter {
         republishQueue: this.republishQueue.size
       },
       routing: this.routingTable.getStats(),
-      connections: { total: this.getConnectedPeers().length },
+      connections: {
+        total: connectedPeers.length,
+        limit: this.transportOptions.maxConnections,
+        utilization: `${(connectedPeers.length / this.transportOptions.maxConnections * 100).toFixed(1)}%`,
+        bucketDiversity: activeBuckets.length,
+        avgConnectionsPerBucket: activeBuckets.length > 0 ?
+          (connectedPeers.length / activeBuckets.length).toFixed(1) : 0
+      },
       bootstrap: this.bootstrap.getStatus()
+    };
+  }
+
+  /**
+   * Debug utility: Show strategic connection management status
+   */
+  debugStrategicConnections() {
+    const bucketCoverage = this.analyzeBucketCoverage();
+    const activeBuckets = bucketCoverage.filter(b => b.connections > 0);
+    const undercovered = bucketCoverage.filter(b => {
+      const target = this.maxBucketConnections || 2;
+      return b.connections < target && b.totalNodes > 0;
+    });
+
+    console.log('\n=== Strategic Connection Management ===');
+    console.log(`Platform: ${this.platformLimits.maxConnections} max connections, ${this.platformLimits.maxBucketConnections} per bucket`);
+    console.log(`Connections: ${this.getConnectedPeers().length}/${this.transportOptions.maxConnections} (${(this.getConnectedPeers().length / this.transportOptions.maxConnections * 100).toFixed(1)}%)`);
+    console.log(`Bucket diversity: ${activeBuckets.length}/160 buckets have connections`);
+    console.log(`Undercovered buckets: ${undercovered.length}`);
+
+    if (activeBuckets.length > 0) {
+      console.log('\n--- Active Buckets ---');
+      for (const bucket of activeBuckets.slice(0, 10)) {
+        console.log(`  Bucket ${bucket.index}: ${bucket.connections}/${bucket.totalNodes} connected`);
+      }
+      if (activeBuckets.length > 10) {
+        console.log(`  ... and ${activeBuckets.length - 10} more buckets`);
+      }
+    }
+
+    if (undercovered.length > 0) {
+      console.log('\n--- Undercovered Buckets (Growth Opportunities) ---');
+      for (const bucket of undercovered.slice(0, 5)) {
+        console.log(`  Bucket ${bucket.index}: ${bucket.connections}/${bucket.totalNodes} connected, ${bucket.availablePeers.length} available`);
+      }
+      if (undercovered.length > 5) {
+        console.log(`  ... and ${undercovered.length - 5} more undercovered buckets`);
+      }
+    }
+
+    console.log('=====================================\n');
+
+    return {
+      connections: this.getConnectedPeers().length,
+      limit: this.transportOptions.maxConnections,
+      bucketDiversity: activeBuckets.length,
+      undercoveredBuckets: undercovered.length,
+      activeBuckets: activeBuckets.length
     };
   }
 
@@ -3775,14 +4268,15 @@ export class KademliaDHT extends EventEmitter {
               continue;
             }
 
-            // SECURITY: Validate DHT token to ensure peer belongs in this DHT network
+            // SECURITY: Token validation moved to connection establishment
+            // Validating tokens here causes message queue deadlock:
+            // - find_node_response processing blocks while calling this.get() for each peer's token
+            // - this.get() sends find_value requests that need the message queue
+            // - Result: queue blocks waiting for itself = 30s+ delays on localhost
+            //
+            // Instead, tokens are validated during WebRTC handshake (see below)
             if (nodeInfo.metadata && nodeInfo.metadata.membershipToken) {
-              const tokenValidation = await this.validateMembershipToken(nodeInfo.metadata.membershipToken);
-              if (!tokenValidation.valid) {
-                console.warn(`🚨 Rejecting peer ${nodeInfo.id.substring(0, 8)}... - invalid DHT membership token: ${tokenValidation.reason}`);
-                continue;
-              }
-              console.log(`✅ DHT membership token validated for peer ${nodeInfo.id.substring(0, 8)}...`);
+              console.log(`📋 Peer ${nodeInfo.id.substring(0, 8)}... has membership token - will validate during handshake`);
             } else {
               // Check if this is a bridge node (has bridgeAuthToken or isBridgeNode metadata)
               const isBridgeNode = nodeInfo.metadata?.isBridgeNode || nodeInfo.metadata?.bridgeAuthToken;
@@ -3882,13 +4376,16 @@ export class KademliaDHT extends EventEmitter {
    * Handle find value response
    */
   async handleFindValueResponse(peerId, message) {
+    console.log(`📥 [${this.localNodeId.toString().substring(0, 8)}] Received find_value_response from ${peerId.substring(0, 8)}... (requestId: ${message.requestId}, found: ${message.found})`);
     const request = this.pendingRequests.get(message.requestId);
     if (request) {
+      console.log(`✅ [${this.localNodeId.toString().substring(0, 8)}] Matched pending request (requestId: ${message.requestId})`);
       this.pendingRequests.delete(message.requestId);
       request.resolve(message);
     } else {
       // MEMORY LEAK FIX: Log and ignore unsolicited responses
-      console.warn(`⚠️ Ignoring unsolicited find_value_response from ${peerId.substring(0, 8)}... (requestId: ${message.requestId})`);
+      console.warn(`⚠️ [${this.localNodeId.toString().substring(0, 8)}] Ignoring unsolicited find_value_response from ${peerId.substring(0, 8)}... (requestId: ${message.requestId})`);
+      console.warn(`   Pending requests: [${Array.from(this.pendingRequests.keys()).join(', ')}]`);
       this.trackUnsolicitedResponse(peerId);
     }
   }
