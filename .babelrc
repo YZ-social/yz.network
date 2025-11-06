@@ -6,9 +6,9 @@
         "targets": {
           "browsers": ["defaults"]
         },
-        "modules": false,
-        "sourceMaps": true
+        "modules": false
       }
     ]
-  ]
+  ],
+  "sourceMaps": true
 }
