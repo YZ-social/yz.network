@@ -2666,16 +2666,48 @@ export class KademliaDHT extends EventEmitter {
     const closestNodes = await this.findNode(keyId);
     console.log(`✅ GET: findNode returned ${closestNodes.length} closest nodes`);
 
-    // Query nodes for the value
+    // Query nodes for the value (connect on-demand with intelligent pruning if needed)
     let queriesAttempted = 0;
     for (const node of closestNodes) {
       try {
+        const peerId = node.id.toString();
+
+        // Connect to node if not already connected (Kademlia-compliant: routing table nodes should be queryable)
+        if (!this.isPeerConnected(peerId)) {
+          console.log(`🔗 GET: Node ${peerId.substring(0, 8)}... not connected, attempting connection...`);
+          try {
+            // First check if we can connect without pruning
+            const shouldConnect = await this.shouldConnectToPeer(peerId);
+
+            if (!shouldConnect) {
+              // At connection limit - use intelligent pruning to make room
+              console.log(`🔄 GET: At connection limit, evaluating pruning for query node ${peerId.substring(0, 8)}...`);
+              const slotFreed = await this.pruneConnectionForQuery(keyId, peerId);
+
+              if (!slotFreed) {
+                console.warn(`⚠️ GET: Cannot free a connection slot for ${peerId.substring(0, 8)}... (current connections more valuable)`);
+                continue; // Try next node
+              }
+            }
+
+            // Now connect to the query node
+            const peerNode = this.getOrCreatePeerNode(peerId);
+            await peerNode.connectionManager.createConnection(peerId, true);
+
+            // Give connection a moment to establish
+            await new Promise(resolve => setTimeout(resolve, 100));
+          } catch (connError) {
+            console.warn(`⚠️ GET: Failed to connect to ${peerId.substring(0, 8)}...: ${connError.message}`);
+            continue; // Skip to next node
+          }
+        }
+
         queriesAttempted++;
-        console.log(`📤 GET: Querying node ${node.id.toString().substring(0, 8)}... (${queriesAttempted}/${closestNodes.length})`);
-        const response = await this.sendFindValue(node.id.toString(), key);
-        console.log(`📥 GET: Response from ${node.id.toString().substring(0, 8)}...: found=${response.found}`);
+        console.log(`📤 GET: Querying node ${peerId.substring(0, 8)}... (${queriesAttempted}/${closestNodes.length})`);
+        const response = await this.sendFindValue(peerId, key);
+        console.log(`📥 GET: Response from ${peerId.substring(0, 8)}...: found=${response.found}`);
         if (response.found && response.value !== undefined) {
-          console.log(`✅ GET: Successfully retrieved "${key}" from ${node.id.toString().substring(0, 8)}...`);
+          console.log(`✅ GET: Successfully retrieved "${key}" from ${peerId.substring(0, 8)}...`);
           return response.value;
         }
       } catch (error) {
@@ -2851,6 +2883,12 @@ export class KademliaDHT extends EventEmitter {
     for (const node of allNodes) {
       try {
         const peerId = node.id.toString();
+
+        // Skip our own node ID before calling getBucketIndex
+        if (peerId === this.localNodeId.toString()) {
+          continue;
+        }
+
         const bucketIndex = this.routingTable.getBucketIndex(node.id);
         const bucket = buckets.get(bucketIndex);
 
@@ -2859,10 +2897,7 @@ export class KademliaDHT extends EventEmitter {
         if (connectedPeers.includes(peerId)) {
           bucket.connections++;
         } else {
-          // Skip our own node ID
-          if (peerId !== this.localNodeId.toString()) {
-            bucket.availablePeers.push(node);
-          }
+          bucket.availablePeers.push(node);
         }
       } catch (error) {
         // Ignore invalid nodes
@@ -3028,6 +3063,162 @@ export class KademliaDHT extends EventEmitter {
     }
 
     console.log(`✅ Keeping current connections - new peer (value: ${newPeerValue.toFixed(0)}) not valuable enough vs ${leastValuable.peerId.substring(0, 8)}... (value: ${leastValuable.value.toFixed(0)})`);
+    return false;
+  }
+
+  /**
+   * Prune a low-value connection to make room for a critical query node
+   *
+   * This method is used by get() to ensure nodes closest to a search key can always be queried,
+   * even when at max connections. It implements Kademlia-compliant behavior where routing table
+   * nodes closest to a key should be reachable for queries.
+   *
+   * VALUE CALCULATION FOR QUERY OPERATIONS:
+   * - Proximity to KEY (not to us): Nodes closest to the search key are highest priority
+   * - Long-lived + ACTIVE: Stable servers that respond regularly are MOST valuable
+   * - Long-lived + INACTIVE: Connected but idle - safe to temporarily disconnect
+   * - Bucket diversity: Avoid pruning connections that provide unique routing table coverage
+   *
+   * PRUNING STRATEGY:
+   * 1. Calculate XOR distance from each connected peer to the search KEY
+   * 2. Evaluate activity: recent messages/pings indicate healthy, valuable connections
+   * 3. Identify low-value candidates: far from key + inactive (no recent pings)
+   * 4. DISCONNECT but KEEP in routing table: healthy peers not needed for this query
+   * 5. DISCONNECT and REMOVE from routing table: truly stale/broken peers only
+   *
+   * This ensures get() operations succeed in large networks by temporarily prioritizing
+   * connections needed for the active query, while preserving stable long-lived connections
+   * in the routing table for future reconnection.
+   *
+   * @param {DHTNodeId} keyId - The key we're searching for (as DHTNodeId)
+   * @param {string} queryNodePeerId - Peer ID of the node we need to connect to for the query
+   * @returns {Promise<boolean>} True if a slot was freed, false if current connections are better
+   */
+  async pruneConnectionForQuery(keyId, queryNodePeerId) {
+    const currentConnections = this.getConnectedPeers();
+    const maxConnections = this.transportOptions.maxConnections;
+
+    // No pruning needed if we're under the limit
+    if (currentConnections.length < maxConnections) {
+      return true;
+    }
+
+    console.log(`🔍 Query pruning: At connection limit (${currentConnections.length}/${maxConnections}), evaluating if we should prune for query node ${queryNodePeerId.substring(0, 8)}...`);
+
+    const now = Date.now();
+    const ACTIVITY_THRESHOLD = 5 * 60 * 1000; // 5 minutes - recent activity
+    const STALE_THRESHOLD = 30 * 60 * 1000; // 30 minutes - truly stale
+
+    // Calculate value for each current connection relative to the search KEY
+    const connectionValues = currentConnections.map(peerId => {
+      const node = this.routingTable.getNode(peerId);
+      if (!node) return null;
+
+      try {
+        // CRITICAL: Value based on proximity to KEY (not to us)
+        const distanceToKey = node.id.xorDistance(keyId);
+        const bucketIndex = this.routingTable.getBucketIndex(node.id);
+        const lastSeen = node.lastSeen || 0;
+        const messageCount = node.messageCount || 0;
+        const connectionAge = now - (node.connectedAt || now);
+        const timeSinceActivity = now - lastSeen;
+
+        // Activity classification
+        const isActive = timeSinceActivity < ACTIVITY_THRESHOLD;
+        const isStale = timeSinceActivity > STALE_THRESHOLD;
+        const isLongLived = connectionAge > 10 * 60 * 1000; // 10+ minutes
+
+        // Value calculation for query operations:
+        // 1. Proximity to KEY (inverted distance = closer is higher value)
+        const proximityToKeyScore = 1000000 / (distanceToKey.toNumber() + 1);
+
+        // 2. Activity value (CORRECTED: long-lived + active = MOST valuable)
+        let activityValue;
+        if (isLongLived && isActive) {
+          // Stable server: long-lived with recent activity = HIGHEST value
+          activityValue = 50000 + messageCount * 100;
+        } else if (isActive) {
+          // Recently active but not long-lived yet = good value
+          activityValue = 20000 + messageCount * 50;
+        } else if (isStale) {
+          // Truly stale = negative value (should be removed)
+          activityValue = -10000;
+        } else {
+          // Connected but idle = neutral/low value (safe to temporarily disconnect)
+          activityValue = 1000;
+        }
+
+        // 3. Bucket diversity bonus
+        const diversityBonus = bucketIndex > 0 ? bucketIndex * 500 : 0;
+
+        return {
+          peerId,
+          distanceToKey: distanceToKey.toNumber(),
+          bucketIndex,
+          lastSeen,
+          messageCount,
+          connectionAge,
+          timeSinceActivity,
+          isActive,
+          isStale,
+          isLongLived,
+          value: proximityToKeyScore + activityValue + diversityBonus
+        };
+      } catch (error) {
+        return null;
+      }
+    }).filter(v => v !== null)
+      .sort((a, b) => a.value - b.value); // Lowest value first (far from key + inactive)
+
+    if (connectionValues.length === 0) {
+      return false;
+    }
+
+    // Calculate value of the query node (node we need to connect to)
+    const queryNode = this.routingTable.getNode(queryNodePeerId);
+    if (!queryNode) {
+      console.warn(`⚠️ Query node ${queryNodePeerId.substring(0, 8)}... not in routing table, cannot evaluate for pruning`);
+      return false;
+    }
+
+    const queryDistanceToKey = queryNode.id.xorDistance(keyId);
+    const queryProximityScore = 1000000 / (queryDistanceToKey.toNumber() + 1);
+    const queryValue = queryProximityScore + 20000; // New query connection gets good activity score
+
+    // Find least valuable existing connection
+    const leastValuable = connectionValues[0];
+
+    // Only prune if query node is significantly more valuable (2x threshold)
+    // This protects stable long-lived connections from being pruned unnecessarily
+    if (queryValue > leastValuable.value * 2.0) {
+      const shouldRemoveFromRoutingTable = leastValuable.isStale;
+
+      console.log(`🔄 Query pruning: Dropping ${leastValuable.peerId.substring(0, 8)}... (value: ${leastValuable.value.toFixed(0)}, ${leastValuable.isActive ? 'active' : 'inactive'}, ${leastValuable.isLongLived ? 'long-lived' : 'recent'}) for query node ${queryNodePeerId.substring(0, 8)}... (value: ${queryValue.toFixed(0)}, close to key)`);
+
+      // Gracefully close old connection
+      const node = this.routingTable.getNode(leastValuable.peerId);
+      if (node?.connectionManager) {
+        try {
+          await node.connectionManager.disconnect(leastValuable.peerId);
+
+          // IMPORTANT: Only remove from routing table if truly stale/broken
+          // Healthy peers that are just not needed for this query should stay in routing table
+          if (shouldRemoveFromRoutingTable) {
+            console.log(`📋 Removing ${leastValuable.peerId.substring(0, 8)}... from routing table (truly stale: ${(leastValuable.timeSinceActivity / 60000).toFixed(1)}min since activity)`);
+            this.routingTable.removeNode(leastValuable.peerId);
+          } else {
+            console.log(`📋 Keeping ${leastValuable.peerId.substring(0, 8)}... in routing table (healthy but idle, can reconnect later)`);
+          }
+
+          return true;
+        } catch (error) {
+          console.error(`Failed to prune connection to ${leastValuable.peerId}:`, error);
+          return false;
+        }
+      }
+    }
+
+    console.log(`✅ Query pruning: Keeping current connections - query node (value: ${queryValue.toFixed(0)}) not critical enough vs ${leastValuable.peerId.substring(0, 8)}... (value: ${leastValuable.value.toFixed(0)})`);
     return false;
   }
 
