@@ -134,10 +134,16 @@ export class WebSocketConnectionManager extends ConnectionManager {
         this.emit('error', error);
       });
 
-      console.log(`🌐 WebSocket server listening on ${this.wsOptions.host}:${this.wsOptions.port}`);
-      this.emit('serverStarted', {
-        host: this.wsOptions.host,
-        port: this.wsOptions.port
+      // CRITICAL: Wait for 'listening' event before emitting serverStarted
+      // This ensures server.address() returns the actual assigned port (important for port: 0)
+      this.server.on('listening', () => {
+        const actualAddress = this.server.address();
+        const actualPort = actualAddress?.port || this.wsOptions.port;
+        console.log(`🌐 WebSocket server listening on ${host}:${actualPort}`);
+        this.emit('serverStarted', {
+          host: host,
+          port: actualPort
+        });
       });
 
     } catch (error) {

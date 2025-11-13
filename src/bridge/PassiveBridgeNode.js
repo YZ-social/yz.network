@@ -146,11 +146,30 @@ export class PassiveBridgeNode extends DHTClient {
       this.handleConnectionMessage(data.peerId, data.message);
     });
 
-    // NOTE: dhtMessage handler is NOT set up here to avoid duplicate message processing.
-    // KademliaDHT.getOrCreatePeerNode() automatically sets up the dhtMessage handler
-    // when handleIncomingConnection() is called. Setting up a second handler here
-    // would cause every message to be processed twice.
-    // See: KademliaDHT.js lines 2755-2762 for the automatic dhtMessage handler setup.
+    // CRITICAL: Handle DHT messages (find_node, find_value, store, etc.) from connection manager
+    // Passive bridge nodes DO participate in find_node queries for routing/discovery,
+    // but DON'T participate in storage operations (handled by disableStorage flag).
+    // Connection manager emits DHT protocol messages as 'dhtMessage' events (ConnectionManager.js:191)
+    console.log(`🔧 Setting up dhtMessage event handler on bridge connection manager`);
+    this.connectionManager.on('dhtMessage', (data) => {
+      const { peerId, message } = data;
+      console.log(`📨 Bridge received dhtMessage event: ${message.type} from ${peerId.substring(0, 8)}...`);
+
+      // Skip bootstrap server messages
+      if (peerId.startsWith('bootstrap_')) {
+        console.log(`⏭️ Skipping bootstrap server message: ${message.type}`);
+        return;
+      }
+
+      // Forward DHT messages to DHT handler for processing
+      if (this.dht && message.type) {
+        console.log(`📨 Bridge forwarding DHT message ${message.type} from ${peerId.substring(0, 8)}... to DHT handler`);
+        this.dht.handlePeerMessage(peerId, message);
+      } else {
+        console.warn(`⚠️ Cannot forward DHT message: dht=${!!this.dht}, message.type=${message.type}`);
+      }
+    });
+    console.log(`✅ dhtMessage event handler set up successfully`);
   }
 
   /**
@@ -541,7 +560,8 @@ export class PassiveBridgeNode extends DHTClient {
       console.log(`🎲 Random target: ${randomId.toString().substring(0, 8)}...`);
 
       // 2. Find closest peer via DHT lookup (connection-agnostic)
-      const closestPeers = await this.dht.findNode(randomId);
+      // Use emergency bypass to skip rate limiting for onboarding queries
+      const closestPeers = await this.dht.findNode(randomId, { emergencyBypass: true });
 
       if (!closestPeers || closestPeers.length === 0) {
         throw new Error('No active peers found in DHT network');
@@ -592,8 +612,8 @@ export class PassiveBridgeNode extends DHTClient {
       };
 
       // Send request to helper peer via DHT routing (not direct connection)
-      // Use routeWebRTCMessage for connection-agnostic routing through DHT overlay
-      await this.dht.routeWebRTCMessage(helperPeer.id.toString(), invitationRequest);
+      // Use routeSignalingMessage for transport-agnostic routing through DHT overlay
+      await this.dht.routeSignalingMessage(helperPeer.id.toString(), invitationRequest);
       console.log(`📤 Routed invitation creation request to helper peer ${helperPeer.id.toString().substring(0, 8)} via DHT`);
 
       // 7. Bridge creates membership token (bridge issues this directly)

@@ -502,8 +502,15 @@ export class RoutingTable {
    */
   handlePeerConnected(peerId, connection, manager) {
     // Check if node already exists
-    if (this.getNode(peerId)) {
+    const existingNode = this.getNode(peerId);
+    if (existingNode) {
       console.log(`🔄 Node ${peerId.substring(0, 8)}... already exists in routing table`);
+
+      // CRITICAL: If node exists but doesn't have connection manager set up, set it up now
+      if (!existingNode.connectionManager || !existingNode.connection) {
+        console.log(`🔗 Setting up connection for existing node ${peerId.substring(0, 8)}...`);
+        existingNode.setupConnection(manager, connection);
+      }
       return;
     }
 

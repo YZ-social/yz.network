@@ -110,6 +110,9 @@ export class KademliaDHT extends EventEmitter {
     this.failedPeerQueries = new Map(); // Track peers that consistently fail queries
     this.peerFailureBackoff = new Map(); // Track backoff timers for failed peers
 
+    // Discovery Grace Period - prevent connecting to newly discovered nodes before they're ready
+    this.discoveryGracePeriod = 10000; // 10 seconds delay before attempting connections (uses node.lastSeen)
+
     // Peer connection queue for non-blocking connection attempts
     this.peerConnectionQueue = new Set();
     this.processingConnectionQueue = false;
@@ -305,6 +308,14 @@ export class KademliaDHT extends EventEmitter {
       // Delegate to routing table to create and manage the node
       this.routingTable.handlePeerConnected(peerId, connection, manager);
     };
+
+    // CRITICAL: Attach event handler to server connection manager immediately
+    // This ensures incoming connections trigger the handler BEFORE any messages arrive
+    if (this.serverConnectionManager && !this.serverEventHandlerAttached) {
+      console.log('🔗 Attaching peerConnected event handler to server connection manager');
+      this.serverConnectionManager.on('peerConnected', this.connectionManagerEventHandler);
+      this.serverEventHandlerAttached = true;
+    }
 
     console.log('✅ Routing table event handlers configured');
   }
@@ -1632,19 +1643,19 @@ export class KademliaDHT extends EventEmitter {
         case 'ice_response':
           await this.handleICEResponse(peerId, message);
           break;
-        case 'webrtc_offer':
+        case 'connection_offer':
           if (this.overlayNetwork) {
-            await this.overlayNetwork.handleWebRTCOffer(peerId, message);
+            await this.overlayNetwork.handleConnectionOffer(peerId, message);
           }
           break;
-        case 'webrtc_answer':
+        case 'connection_answer':
           if (this.overlayNetwork) {
-            await this.overlayNetwork.handleWebRTCAnswer(peerId, message);
+            await this.overlayNetwork.handleConnectionAnswer(peerId, message);
           }
           break;
-        case 'webrtc_ice':
+        case 'connection_candidate':
           if (this.overlayNetwork) {
-            await this.overlayNetwork.handleWebRTCIceCandidate(peerId, message);
+            await this.overlayNetwork.handleConnectionCandidate(peerId, message);
           }
           break;
         case 'peer_discovery_request':
@@ -3510,6 +3521,12 @@ export class KademliaDHT extends EventEmitter {
     setInterval(() => {
       this.pingNodes();
     }, this.options.pingInterval);
+
+    // Background maintenance: Connect to routing table entries (every 30 seconds)
+    // This ensures routing_table_size == active_connections (Kademlia compliance)
+    setInterval(() => {
+      this.maintainRoutingTableConnections();
+    }, 30 * 1000); // 30 seconds
   }
 
   /**
@@ -4055,6 +4072,59 @@ export class KademliaDHT extends EventEmitter {
   }
 
   /**
+   * Maintain connections to routing table entries (Kademlia compliance)
+   * Ensures routing_table_size == active_connections
+   * Called every 30 seconds from startMaintenanceTasks()
+   */
+  async maintainRoutingTableConnections() {
+    try {
+      const allNodes = this.routingTable.getAllNodes();
+      const connectedPeers = this.getConnectedPeers();
+      const unconnectedNodes = allNodes.filter(node => {
+        const peerId = node.id.toString();
+        return !connectedPeers.includes(peerId);
+      });
+
+      console.log(`🔧 Routing table maintenance: ${connectedPeers.length} connected, ${allNodes.length} in table, ${unconnectedNodes.length} unconnected`);
+
+      // Try to connect to unconnected nodes
+      for (const node of unconnectedNodes.slice(0, 5)) { // Limit to 5 per cycle
+        const peerId = node.id.toString();
+
+        // Initialize failure tracking
+        if (!this.connectionFailureCount) {
+          this.connectionFailureCount = new Map();
+        }
+
+        // Skip if already has too many failures
+        const failures = this.connectionFailureCount.get(peerId) || 0;
+        if (failures >= 3) {
+          console.log(`🗑️ Removing ${peerId.substring(0, 8)}... from routing table after ${failures} failed connection attempts`);
+          this.routingTable.removeNode(node.id);
+          this.connectionFailureCount.delete(peerId);
+          continue;
+        }
+
+        try {
+          // Check if we should connect (respects connection limits)
+          if (!this.isPeerConnected(peerId) && await this.shouldConnectToPeer(peerId)) {
+            console.log(`🔗 Attempting connection to routing table entry: ${peerId.substring(0, 8)}... (${failures} previous failures)`);
+            await this.connectToPeerViaDHT(peerId);
+            // Success - reset failure count
+            this.connectionFailureCount.delete(peerId);
+          }
+        } catch (error) {
+          // Track failure
+          this.connectionFailureCount.set(peerId, failures + 1);
+          console.warn(`⚠️ Connection attempt ${failures + 1}/3 failed for ${peerId.substring(0, 8)}...: ${error.message}`);
+        }
+      }
+    } catch (error) {
+      console.error('Error in routing table connection maintenance:', error);
+    }
+  }
+
+  /**
    * Background process to connect to unconnected nodes in routing table
    * This is called periodically during adaptive refresh
    */
@@ -4123,8 +4193,23 @@ export class KademliaDHT extends EventEmitter {
           return;
         }
 
+        // Check discovery grace period - give newly discovered nodes time to initialize
+        const timeSinceDiscovery = Date.now() - node.lastSeen;
+        if (timeSinceDiscovery < this.discoveryGracePeriod) {
+          const timeLeft = Math.ceil((this.discoveryGracePeriod - timeSinceDiscovery) / 1000);
+          console.log(`⏳ Skipping connection to ${peerId.substring(0, 8)}... - in discovery grace period (${timeLeft}s remaining)`);
+          return;
+        }
+
+        // Check if node has connection metadata before attempting connection
+        const metadata = node.metadata;
+        if (!metadata || (!metadata.listeningAddress && !metadata.endpoint)) {
+          console.log(`⚠️ Skipping background connection to ${peerId.substring(0, 8)}... - no connection metadata available`);
+          return;
+        }
+
         console.log(`🔗 Background connecting to routing table node: ${peerId.substring(0, 8)}...`);
-        const peerNode = this.getOrCreatePeerNode(peerId);
+        const peerNode = this.getOrCreatePeerNode(peerId, metadata);
         await peerNode.connectionManager.createConnection(peerId, true);
         console.log(`✅ Background connection successful: ${peerId.substring(0, 8)}...`);
       } catch (error) {
@@ -4743,7 +4828,7 @@ export class KademliaDHT extends EventEmitter {
     // Check if this offer is for us
     if (message.targetPeer !== this.localNodeId.toString()) {
       // This is a routed message - forward it to the target peer
-      await this.routeWebRTCMessage(message.targetPeer, message);
+      await this.routeSignalingMessage(message.targetPeer, message);
       return;
     }
 
@@ -4763,7 +4848,7 @@ export class KademliaDHT extends EventEmitter {
     // Check if this answer is for us
     if (message.targetPeer !== this.localNodeId.toString()) {
       // This is a routed message - forward it to the target peer
-      await this.routeWebRTCMessage(message.targetPeer, message);
+      await this.routeSignalingMessage(message.targetPeer, message);
       return;
     }
 
@@ -4783,7 +4868,7 @@ export class KademliaDHT extends EventEmitter {
     // Check if this ICE candidate is for us
     if (message.targetPeer !== this.localNodeId.toString()) {
       // This is a routed message - forward it to the target peer
-      await this.routeWebRTCMessage(message.targetPeer, message);
+      await this.routeSignalingMessage(message.targetPeer, message);
       return;
     }
 
@@ -4797,7 +4882,7 @@ export class KademliaDHT extends EventEmitter {
   /**
    * Route WebRTC message to target peer through DHT
    */
-  async routeWebRTCMessage(targetPeer, message) {
+  async routeSignalingMessage(targetPeer, message) {
     console.log(`🚀 Routing WebRTC message to ${targetPeer}: ${message.type}`);
 
     try {
@@ -4832,74 +4917,23 @@ export class KademliaDHT extends EventEmitter {
         const nextHop = node.id.toString();
         if (this.isPeerConnected(nextHop) && nextHop !== targetPeer) {
           await this.sendMessage(nextHop, message);
-          console.log(`✅ Routed WebRTC message via ${nextHop} (fallback) to ${targetPeer}`);
+          console.log(`✅ Routed signaling message via ${nextHop} (fallback) to ${targetPeer}`);
           return;
         }
       }
 
-      console.warn(`❌ No connected route found to forward WebRTC message to ${targetPeer}`);
+      console.warn(`❌ No connected route found to forward signaling message to ${targetPeer}`);
       console.warn(`   Routing table size: ${allNodes.length}, Connected peers: ${this.getConnectedPeers().length}`);
     } catch (error) {
-      console.error(`Failed to route WebRTC message to ${targetPeer}:`, error);
+      console.error(`Failed to route signaling message to ${targetPeer}:`, error);
     }
-  }
-
-  /**
-   * Send WebRTC offer via DHT messaging
-   */
-  async sendWebRTCOffer(targetPeer, offer) {
-    console.log(`📤 Sending WebRTC offer via DHT to ${targetPeer}`);
-
-    const message = {
-      type: 'webrtc_offer',
-      senderPeer: this.localNodeId.toString(),
-      targetPeer: targetPeer,
-      offer: offer,
-      timestamp: Date.now()
-    };
-
-    await this.routeWebRTCMessage(targetPeer, message);
-  }
-
-  /**
-   * Send WebRTC answer via DHT messaging
-   */
-  async sendWebRTCAnswer(targetPeer, answer) {
-    console.log(`📤 Sending WebRTC answer via DHT to ${targetPeer}`);
-
-    const message = {
-      type: 'webrtc_answer',
-      senderPeer: this.localNodeId.toString(),
-      targetPeer: targetPeer,
-      answer: answer,
-      timestamp: Date.now()
-    };
-
-    await this.routeWebRTCMessage(targetPeer, message);
-  }
-
-  /**
-   * Send WebRTC ICE candidate via DHT messaging
-   */
-  async sendWebRTCIceCandidate(targetPeer, candidate) {
-    console.log(`📤 Sending WebRTC ICE candidate via DHT to ${targetPeer}`);
-
-    const message = {
-      type: 'webrtc_ice',
-      senderPeer: this.localNodeId.toString(),
-      targetPeer: targetPeer,
-      candidate: candidate,
-      timestamp: Date.now()
-    };
-
-    await this.routeWebRTCMessage(targetPeer, message);
   }
 
   /**
    * Handle peer discovery request - respond with willingness to connect
    */
   async handlePeerDiscoveryRequest(fromPeer, message) {
-    console.log(`🔍 Received peer discovery request from ${fromPeer}`);
+    console.log(`🔍 Received peer discovery request from ${fromPeer.substring(0, 8)}...`);
 
     // Check if we want to connect to this peer
     const shouldConnect = await this.shouldConnectToPeer(fromPeer);
@@ -4913,7 +4947,16 @@ export class KademliaDHT extends EventEmitter {
       timestamp: Date.now()
     };
 
-    await this.sendMessage(fromPeer, response);
+    // Gracefully handle case where peer disconnected while processing
+    try {
+      await this.sendMessage(fromPeer, response);
+    } catch (error) {
+      if (error.message.includes('No connection to peer')) {
+        console.log(`⚠️ Could not send peer_discovery_response to ${fromPeer.substring(0, 8)}... - peer disconnected`);
+      } else {
+        throw error; // Re-throw unexpected errors
+      }
+    }
 
     if (shouldConnect && !this.isPeerConnected(fromPeer)) {
       // Initiate connection using connection-agnostic approach
@@ -4974,7 +5017,7 @@ export class KademliaDHT extends EventEmitter {
     // Check if this request is for us
     if (message.targetPeer !== this.localNodeId.toString()) {
       // This is a routed message - forward it to the target peer
-      await this.routeWebRTCMessage(message.targetPeer, message);
+      await this.routeSignalingMessage(message.targetPeer, message);
       return;
     }
 
@@ -5061,7 +5104,7 @@ export class KademliaDHT extends EventEmitter {
     // Check if this response is for us
     if (message.targetPeer && message.targetPeer !== this.localNodeId.toString()) {
       // This is a routed message - forward it to the target peer
-      await this.routeWebRTCMessage(message.targetPeer, message);
+      await this.routeSignalingMessage(message.targetPeer, message);
       return;
     }
 
@@ -5196,7 +5239,7 @@ export class KademliaDHT extends EventEmitter {
       timestamp: Date.now()
     };
 
-    await this.routeWebRTCMessage(targetPeer, message);
+    await this.routeSignalingMessage(targetPeer, message);
   }
 
   /**
@@ -5216,7 +5259,7 @@ export class KademliaDHT extends EventEmitter {
       timestamp: Date.now()
     };
 
-    await this.routeWebRTCMessage(targetPeer, message);
+    await this.routeSignalingMessage(targetPeer, message);
   }
 
 
@@ -5266,7 +5309,7 @@ export class KademliaDHT extends EventEmitter {
       timestamp: Date.now()
     };
 
-    await this.routeWebRTCMessage(targetPeer, message);
+    await this.routeSignalingMessage(targetPeer, message);
     return requestId;
   }
 

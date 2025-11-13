@@ -237,22 +237,28 @@ export class NodeDHTClient extends DHTClient {
     // Set up event handlers
     this.setupEventHandlers();
 
+    // CRITICAL: Get actual listening address after server is fully started
+    const actualListeningAddress = this.connectionManager.getServerAddress();
+    if (!actualListeningAddress) {
+      throw new Error('WebSocket server did not provide listening address');
+    }
+
     // Add node capabilities to DHT metadata
     this.dht.nodeType = 'nodejs';
     this.dht.nodeCapabilities = new Set(['websocket', 'relay']);
     this.dht.canRelay = true; // Node.js nodes can relay between protocols
-    this.dht.listeningAddress = this.connectionManager.getServerAddress();
+    this.dht.listeningAddress = actualListeningAddress;
 
     // Prepare bootstrap metadata with WebSocket information
     this.dht.bootstrapMetadata = {
       nodeType: 'nodejs',
-      listeningAddress: this.connectionManager.getServerAddress(),
+      listeningAddress: actualListeningAddress,
       capabilities: ['websocket', 'relay'],
       canRelay: true
     };
 
     console.log('📡 Prepared WebSocket coordination metadata for bootstrap registration');
-    console.log(`   Listening Address: ${this.connectionManager.getServerAddress()}`);
+    console.log(`   Listening Address: ${actualListeningAddress}`);
 
     // Start the DHT
     await this.dht.start();

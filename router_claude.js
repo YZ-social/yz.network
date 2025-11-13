@@ -118,6 +118,7 @@ async function configureBootstrap({port = BOOTSTRAP_PORT, auth = 'default-bridge
   server = new EnhancedBootstrapServer({
     port,
     createNewDHT: true,
+    openNetwork: true, // Enable open network mode for faster testing (no invitations required)
     bridgeAuth: auth,
     bridgeNodes: bridges.map(bridge => `${bridge.bridgeHost}:${bridge.bridgePort}`)
   });
@@ -140,25 +141,32 @@ let testResults = {
 async function configureNodes({number = 10} = {}) {
   console.log(`\n👥 Starting ${number} Node.js DHT client(s)...`);
 
-  // Start a number of bots. The first is authorized as the genesis, and it invites all the rest.
+  // With open network mode enabled, nodes auto-join via bridge coordination
+  // No manual invitations needed - much faster!
+  // For 100+ nodes, use warmup period to ensure enough active DHT members for onboarding
+  const WARMUP_SIZE = 15; // First batch gets extra time to stabilize
+  const WARMUP_DELAY = 10000; // 10 second stabilization delay after warmup batch
+  const STARTUP_DELAY = number > 20 ? 1500 : 500; // Longer delay for large networks
+
   for (let i = 0; i < number; i++) {
     console.log(`📍 Starting Node.js client ${i + 1}/${number}...`);
 
     const client = new NodeDHTClient({bootstrapServers: BOOTSTRAP_SERVERS, port: 0});
     await client.start();
 
-    if (nodes.length) { // First node in is authorized.
-      console.log(`📨 Node 0 inviting Node ${i}...`);
-      await nodes[0].inviteNewClient(client.nodeId.toString());
-      await delay(2e3); // Increased delay to ensure invitation completes
-    }
-
     nodes.push(client);
     console.log(`✅ Node.js client ${i + 1} started (ID: ${client.nodeId.toString().substring(0, 8)}...)`);
 
-    // Add small delay between starting clients
+    // Warmup period: Let first batch fully connect before starting remaining nodes
+    if (i === WARMUP_SIZE - 1 && number > WARMUP_SIZE) {
+      console.log(`⏳ Warmup complete (${WARMUP_SIZE} nodes). Waiting ${WARMUP_DELAY/1000}s for DHT stabilization...`);
+      await delay(WARMUP_DELAY);
+      console.log(`✅ DHT network stabilized. Continuing with remaining ${number - WARMUP_SIZE} nodes...`);
+    }
+
+    // Adaptive delay based on network size
     if (i < number - 1) {
-      await delay(1e3);
+      await delay(STARTUP_DELAY);
     }
   }
 

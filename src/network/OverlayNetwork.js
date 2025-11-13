@@ -657,7 +657,7 @@ export class OverlayNetwork extends EventEmitter {
   /**
    * Route WebRTC message to target peer through DHT
    */
-  async routeWebRTCMessage(targetPeer, message) {
+  async routeSignalingMessage(targetPeer, message) {
     console.log(`🚀 Routing WebRTC message to ${targetPeer}: ${message.type}`);
 
     try {
@@ -701,65 +701,65 @@ export class OverlayNetwork extends EventEmitter {
         }
       }
 
-      console.warn(`No connected route found to forward WebRTC message to ${targetPeer.substring(0, 8)}... (tried ${connectedPeers.length} peers)`);
+      console.warn(`No connected route found to forward signaling message to ${targetPeer.substring(0, 8)}... (tried ${connectedPeers.length} peers)`);
     } catch (error) {
-      console.error(`Failed to route WebRTC message to ${targetPeer}:`, error);
+      console.error(`Failed to route signaling message to ${targetPeer}:`, error);
     }
   }
 
   /**
-   * Send WebRTC offer via DHT messaging
+   * Send connection offer via DHT messaging
    */
-  async sendWebRTCOffer(targetPeer, offer) {
-    console.log(`📤 Sending WebRTC offer via DHT to ${targetPeer}`);
+  async sendConnectionOffer(targetPeer, offer) {
+    console.log(`📤 Sending connection offer via DHT to ${targetPeer}`);
 
     const message = {
-      type: 'webrtc_offer',
+      type: 'connection_offer',
       senderPeer: this.dht.localNodeId.toString(),
       targetPeer: targetPeer,
       offer: offer,
       timestamp: Date.now()
     };
-    await this.routeWebRTCMessage(targetPeer, message);
+    await this.routeSignalingMessage(targetPeer, message);
   }
 
   /**
-   * Send WebRTC answer via DHT messaging
+   * Send connection answer via DHT messaging
    */
-  async sendWebRTCAnswer(targetPeer, answer) {
-    console.log(`📤 Sending WebRTC answer via DHT to ${targetPeer}`);
+  async sendConnectionAnswer(targetPeer, answer) {
+    console.log(`📤 Sending connection answer via DHT to ${targetPeer}`);
 
     const message = {
-      type: 'webrtc_answer',
+      type: 'connection_answer',
       senderPeer: this.dht.localNodeId.toString(),
       targetPeer: targetPeer,
       answer: answer,
       timestamp: Date.now()
     };
-    await this.routeWebRTCMessage(targetPeer, message);
+    await this.routeSignalingMessage(targetPeer, message);
   }
 
   /**
-   * Send WebRTC ICE candidate via DHT messaging
+   * Send connection ICE candidate via DHT messaging
    */
-  async sendWebRTCIceCandidate(targetPeer, candidate) {
-    console.log(`📤 Sending WebRTC ICE candidate via DHT to ${targetPeer}`);
+  async sendConnectionCandidate(targetPeer, candidate) {
+    console.log(`📤 Sending connection ICE candidate via DHT to ${targetPeer}`);
 
     const message = {
-      type: 'webrtc_ice',
+      type: 'connection_candidate',
       senderPeer: this.dht.localNodeId.toString(),
       targetPeer: targetPeer,
       candidate: candidate,
       timestamp: Date.now()
     };
-    await this.routeWebRTCMessage(targetPeer, message);
+    await this.routeSignalingMessage(targetPeer, message);
   }
 
   /**
-   * Handle WebRTC offer message via DHT
+   * Handle connection offer message via DHT
    */
-  async handleWebRTCOffer(fromPeer, message) {
-    console.log(`🔄 DHT WebRTC: Received offer from ${fromPeer} for peer ${message.targetPeer}`);
+  async handleConnectionOffer(fromPeer, message) {
+    console.log(`🔄 DHT: Received connection offer from ${fromPeer} for peer ${message.targetPeer}`);
 
     // Check if this offer is for us
     if (message.targetPeer !== this.dht.localNodeId.toString()) {
@@ -787,7 +787,7 @@ export class OverlayNetwork extends EventEmitter {
       message.hops.push(this.dht.localNodeId.toString());
 
       // This is a routed message - forward it to the target peer
-      await this.routeWebRTCMessage(message.targetPeer, message);
+      await this.routeSignalingMessage(message.targetPeer, message);
       return;
     }
     // This offer is for us - delegate to connection manager
@@ -817,10 +817,10 @@ export class OverlayNetwork extends EventEmitter {
   }
 
   /**
-   * Handle WebRTC answer message via DHT
+   * Handle connection answer message via DHT
    */
-  async handleWebRTCAnswer(fromPeer, message) {
-    console.log(`🔄 DHT WebRTC: Received answer from ${fromPeer} for peer ${message.targetPeer}`);
+  async handleConnectionAnswer(fromPeer, message) {
+    console.log(`🔄 DHT: Received connection answer from ${fromPeer} for peer ${message.targetPeer}`);
 
     // Check if this answer is for us
     if (message.targetPeer !== this.dht.localNodeId.toString()) {
@@ -848,7 +848,7 @@ export class OverlayNetwork extends EventEmitter {
       message.hops.push(this.dht.localNodeId.toString());
 
       // This is a routed message - forward it to the target peer
-      await this.routeWebRTCMessage(message.targetPeer, message);
+      await this.routeSignalingMessage(message.targetPeer, message);
       return;
     }
     // This answer is for us - delegate to connection manager
@@ -878,10 +878,10 @@ export class OverlayNetwork extends EventEmitter {
   }
 
   /**
-   * Handle WebRTC ICE candidate message via DHT
+   * Handle connection ICE candidate message via DHT
    */
-  async handleWebRTCIceCandidate(fromPeer, message) {
-    console.log(`🔄 DHT WebRTC: Received ICE candidate from ${fromPeer} for peer ${message.targetPeer}`);
+  async handleConnectionCandidate(fromPeer, message) {
+    console.log(`🔄 DHT: Received connection ICE candidate from ${fromPeer} for peer ${message.targetPeer}`);
 
     // Check if this ICE candidate is for us
     if (message.targetPeer !== this.dht.localNodeId.toString()) {
@@ -909,7 +909,7 @@ export class OverlayNetwork extends EventEmitter {
       message.hops.push(this.dht.localNodeId.toString());
 
       // This is a routed message - forward it to the target peer
-      await this.routeWebRTCMessage(message.targetPeer, message);
+      await this.routeSignalingMessage(message.targetPeer, message);
       return;
     }
     // This ICE candidate is for us - delegate to connection manager

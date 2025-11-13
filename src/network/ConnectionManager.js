@@ -183,9 +183,9 @@ export class ConnectionManager extends EventEmitter {
         case 'store_response':
         case 'peer_discovery_request':
         case 'peer_discovery_response':
-        case 'webrtc_offer':
-        case 'webrtc_answer':
-        case 'webrtc_ice':
+        case 'connection_offer':
+        case 'connection_answer':
+        case 'connection_candidate':
         case 'create_invitation_for_peer':
         case 'forward_invitation':
           // Emit to DHT for handling
