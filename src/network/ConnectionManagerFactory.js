@@ -85,6 +85,9 @@ export class ConnectionManagerFactory {
       }
     }
 
+    // DEBUG: Log each time we create a new manager (should help track the multiple-instance bug)
+    console.log(`⚠️ ConnectionManagerFactory creating NEW manager for ${peerId.substring(0, 8)}... (no caching enabled)`);
+
     // Create manager on-demand based on connection requirements
     const manager = ConnectionManagerFactory.createForConnection(
       ConnectionManagerFactory.localNodeType,
@@ -92,10 +95,11 @@ export class ConnectionManagerFactory {
       ConnectionManagerFactory.defaultOptions
     );
 
-    // Apply any existing global metadata to the new manager
-    for (const [metaPeerId, metadata] of ConnectionManagerFactory.globalMetadata.entries()) {
-      if (manager.setPeerMetadata) {
-        manager.setPeerMetadata(metaPeerId, metadata);
+    // Apply any existing global metadata to the new manager's local store
+    // This is for handshake coordination before DHTNode exists
+    if (manager.localMetadataStore) {
+      for (const [metaPeerId, metadata] of ConnectionManagerFactory.globalMetadata.entries()) {
+        manager.localMetadataStore.set(metaPeerId, metadata);
       }
     }
 
@@ -168,17 +172,20 @@ export class ConnectionManagerFactory {
   }
 
   /**
-   * Set global metadata for a peer ID (applies to all connection managers)
-   * @param {string} peerId - Peer ID
+   * Set global metadata for a peer ID (typically used for LOCAL node metadata)
+   * This is especially important for storing metadata about THIS node that needs
+   * to be shared during handshakes (e.g., listeningAddress, nodeType, isBridgeNode)
+   * @param {string} peerId - Peer ID (typically local node ID)
    * @param {object} metadata - Metadata to set
    */
   static setPeerMetadata(peerId, metadata) {
     ConnectionManagerFactory.globalMetadata.set(peerId, metadata);
 
-    // Apply metadata to all cached managers
+    // Apply metadata to all cached managers' local stores
+    // This ensures the metadata is available during handshakes
     for (const manager of ConnectionManagerFactory.managerCache.values()) {
-      if (manager.setPeerMetadata) {
-        manager.setPeerMetadata(peerId, metadata);
+      if (manager.localMetadataStore) {
+        manager.localMetadataStore.set(peerId, metadata);
       }
     }
   }

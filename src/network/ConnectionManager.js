@@ -14,15 +14,17 @@ export class ConnectionManager extends EventEmitter {
       ...options
     };
 
-    // Core peer management
-    this.connections = new Map(); // peerId -> connection object
-    this.connectionStates = new Map(); // peerId -> connection state
-    this.peerMetadata = new Map(); // peerId -> metadata
+    // REFACTORED: Single connection per manager (per-node architecture)
+    // Each ConnectionManager instance manages exactly ONE connection to ONE peer
+    this.peerId = null; // The peer this manager connects to
+    this.connection = null; // Single connection object (not a Map)
+    this.connectionState = 'disconnected'; // Connection state
+    // NOTE: Peer metadata now stored on DHTNode.metadata, not in connection manager
 
-    // Message handling
+    // Message handling (keep queue structure for the single peer)
     this.pendingRequests = new Map(); // requestId -> { resolve, reject, timeout }
-    this.messageQueues = new Map(); // peerId -> Array<message>
-    this.messageProcessingFlags = new Map(); // peerId -> boolean
+    this.messageQueue = []; // Array of messages for the single peer
+    this.messageProcessing = false; // Flag for the single peer
 
     this.isDestroyed = false;
     this.localNodeId = null;
@@ -67,11 +69,10 @@ export class ConnectionManager extends EventEmitter {
   }
 
   /**
-   * Check if peer is connected (transport-specific)
-   * @param {string} peerId - Peer ID to check
+   * Check if connected (no peerId needed - manager handles single peer)
    * @returns {boolean}
    */
-  isConnected(peerId) {
+  isConnected() {
     throw new Error('isConnected() must be implemented by subclass');
   }
 
@@ -150,8 +151,7 @@ export class ConnectionManager extends EventEmitter {
    */
   handleMessage(peerId, message) {
     try {
-      // Update peer metadata
-      this.updatePeerActivity(peerId);
+      // NOTE: Peer activity tracking moved to DHTNode.updateLastSeen()
 
       // Handle responses to pending requests
       if (message.requestId && this.pendingRequests.has(message.requestId)) {
@@ -255,42 +255,18 @@ export class ConnectionManager extends EventEmitter {
   // ===========================================
   // PEER MANAGEMENT (Implemented in base class)
   // ===========================================
+  // NOTE: Peer metadata now stored on DHTNode instances via node.setMetadata()
+  // Connection managers no longer maintain peer metadata
 
   /**
-   * Set metadata for a peer
-   */
-  setPeerMetadata(peerId, metadata) {
-    this.peerMetadata.set(peerId, { ...metadata, lastUpdated: Date.now() });
-    console.log(`📋 Updated metadata for ${peerId.substring(0, 8)}...:`, metadata);
-  }
-
-  /**
-   * Get metadata for a peer
-   */
-  getPeerMetadata(peerId) {
-    return this.peerMetadata.get(peerId);
-  }
-
-  /**
-   * Update peer activity timestamp
-   */
-  updatePeerActivity(peerId) {
-    const metadata = this.peerMetadata.get(peerId) || {};
-    metadata.lastActivity = Date.now();
-    this.peerMetadata.set(peerId, metadata);
-  }
-
-  /**
-   * Get all connected peer IDs
+   * Get connected peer ID (single connection architecture)
+   * Returns array for API compatibility (will contain 0 or 1 peer)
    */
   getConnectedPeers() {
-    const connected = [];
-    for (const [peerId] of this.connections.entries()) {
-      if (this.isConnected(peerId)) {
-        connected.push(peerId);
-      }
+    if (this.peerId && this.isConnected()) {
+      return [this.peerId];
     }
-    return connected;
+    return [];
   }
 
   /**
@@ -320,10 +296,14 @@ export class ConnectionManager extends EventEmitter {
 
   /**
    * Get peers map (for OverlayNetwork compatibility)
-   * Returns a Map where value is the connection object
+   * Returns a Map with single connection (or empty if not connected)
    */
   get peers() {
-    return this.connections;
+    const map = new Map();
+    if (this.peerId && this.connection) {
+      map.set(this.peerId, this.connection);
+    }
+    return map;
   }
 
   // ===========================================
@@ -338,26 +318,17 @@ export class ConnectionManager extends EventEmitter {
   }
 
   /**
-   * Clean up stale connections
+   * Clean up stale connection (single connection architecture)
+   * NOTE: Staleness is now tracked on DHTNode instances, not in connection manager
    */
   cleanupStaleConnections(maxAge = 300000) { // 5 minutes default
-    const now = Date.now();
-    let cleaned = 0;
-
-    for (const [peerId, metadata] of this.peerMetadata.entries()) {
-      const lastActivity = metadata.lastActivity || metadata.lastUpdated || 0;
-      if (now - lastActivity > maxAge && this.isConnected(peerId)) {
-        console.log(`🧹 Cleaning up stale connection to ${peerId.substring(0, 8)}...`);
-        this.destroyConnection(peerId, 'stale');
-        cleaned++;
-      }
-    }
-
-    return cleaned;
+    // This method is deprecated - staleness tracking moved to DHTNode
+    // Kept for API compatibility but does nothing
+    return 0;
   }
 
   /**
-   * Destroy all connections and cleanup
+   * Destroy connection and cleanup (single connection architecture)
    */
   destroy() {
     if (this.isDestroyed) return;
@@ -372,18 +343,17 @@ export class ConnectionManager extends EventEmitter {
     }
     this.pendingRequests.clear();
 
-    // Clean up all connections (subclass responsibility)
-    const peerIds = Array.from(this.connections.keys());
-    for (const peerId of peerIds) {
-      this.destroyConnection(peerId, 'manager_destroyed');
+    // Clean up single connection (subclass responsibility)
+    if (this.peerId) {
+      this.destroyConnection(this.peerId, 'manager_destroyed');
     }
 
     // Clear data structures
-    this.connections.clear();
-    this.connectionStates.clear();
-    this.peerMetadata.clear();
-    this.messageQueues.clear();
-    this.messageProcessingFlags.clear();
+    this.connection = null;
+    this.connectionState = 'disconnected';
+    this.messageQueue = [];
+    this.messageProcessing = false;
+    this.peerId = null;
 
     this.removeAllListeners();
     this.emit('destroyed');

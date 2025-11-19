@@ -1,0 +1,458 @@
+🎬 Starting router_claude.js test script...
+
+🌐 PassiveBridgeNode initializing
+🌐 Creating WebSocketConnectionManager for nodejs→browser
+🌐 Initialized Node.js WebSocket support
+🌐 WebSocket server listening on 127.0.0.1:8083
+⚠️ Unable to confidently detect environment, defaulting to nodejs
+🔗 Setting up routing table connection event handlers...
+🔗 Attaching peerConnected event handler to server connection manager
+🌐 Initializing overlay network for WebRTC signaling...
+🔗 WebSocketConnectionManager initialized with node ID: aa94e13d768ddb33a96967be32cde974ffb216ae
+⏳ Waiting for WebSocket initialization to complete...
+🌐 WebSocket server ready at ws://localhost:8083
+🌐 PassiveBridgeNode initializing
+🌐 Creating WebSocketConnectionManager for nodejs→browser
+⚠️ Unable to confidently detect environment, defaulting to nodejs
+🔗 Setting up routing table connection event handlers...
+🔗 Attaching peerConnected event handler to server connection manager
+🌐 Initialized Node.js WebSocket support
+🌐 Initializing overlay network for WebRTC signaling...
+🔗 WebSocketConnectionManager initialized with node ID: ee6bdbeb3a64fa2b9ffad282f683dcaf57641b1a
+⏳ Waiting for WebSocket initialization to complete...
+🌐 WebSocket server ready at ws://localhost:8084
+🌐 WebSocket server listening on 127.0.0.1:8084
+🔗 Public server: 0.0.0.0:8080
+🌐 Open network mode: ENABLED (no invitations required)
+✅ Bootstrap server started on port 8080
+
+🌐 NodeDHTClient initializing
+🌐 Creating WebSocketConnectionManager for nodejs→browser
+🌐 Initialized Node.js WebSocket support
+🌐 WebSocket server listening on 127.0.0.1:64057
+⚠️ Unable to confidently detect environment, defaulting to nodejs
+🔗 Setting up routing table connection event handlers...
+🔗 Attaching peerConnected event handler to server connection manager
+🔗 New client connection (total: 1)
+🔗 Connecting to bridge node: localhost:8083
+🔗 Connecting to bridge node: localhost:8084
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Bootstrap server connected: bootstrap_1763346596613
+🔗 DHT received peerConnected: bootstra... (via WebSocketConnectionManager)
+🔗 Bootstrap server connection detected - skipping DHT operations for bootstrap_176334...
+🔗 Incoming connection from bootstra... via connection manager
+🔗 Bootstrap server connection established: bootstrap_1763346596613
+🔗 Bootstrap server connected: bootstrap_1763346596613
+🔗 DHT received peerConnected: bootstra... (via WebSocketConnectionManager)
+🔗 Bootstrap server connection detected - skipping DHT operations for bootstrap_176334...
+🔗 Incoming connection from bootstra... via connection manager
+🔗 Bootstrap server connection established: bootstrap_1763346596613
+🔍 Validating disconnected peer aa94e13d: not in routing table yet
+🔗 Creating CLIENT connection manager for outgoing connection to aa94e13d...
+⚠️ ConnectionManagerFactory creating NEW manager for aa94e13d... (no caching enabled)
+🌐 Creating WebSocketConnectionManager for nodejs→nodejs
+🔗 WebSocketConnectionManager initialized with node ID: 47866ddd5263b361992af23220e9b44c527fb4be
+🔗 Event handler attached to WebSocketConnectionManager for aa94e13d
+🔍 Validating disconnected peer ee6bdbeb: not in routing table yet
+🔗 Creating CLIENT connection manager for outgoing connection to ee6bdbeb...
+⚠️ ConnectionManagerFactory creating NEW manager for ee6bdbeb... (no caching enabled)
+🌐 Creating WebSocketConnectionManager for nodejs→nodejs
+🔗 WebSocketConnectionManager initialized with node ID: 47866ddd5263b361992af23220e9b44c527fb4be
+🔗 Event handler attached to WebSocketConnectionManager for ee6bdbeb
+🔗 Connecting to bridge node aa94e13d... at ws://localhost:8083
+⏳ Waiting for WebSocket initialization...
+🔗 Connecting to bridge node ee6bdbeb... at ws://localhost:8084
+⏳ Waiting for WebSocket initialization...
+🔗 Connecting to bridge node aa94e13d... at ws://localhost:8083
+⏳ Waiting for WebSocket initialization...
+🔗 Connecting to bridge node ee6bdbeb... at ws://localhost:8084
+⏳ Waiting for WebSocket initialization...
+[DHT] 📝 Storing key: public_key:47866ddd5263b361992af23220e9b44c527fb4be
+🔗 Skipping find_node query to non-connected node: aa94e13d...
+🔗 Skipping find_node query to non-connected node: ee6bdbeb...
+🌐 Initialized Node.js WebSocket support
+🌐 Initialized Node.js WebSocket support
+🌐 Initializing overlay network for WebRTC signaling...
+🔗 WebSocket connection: nodejs → bridge
+🌐 Creating WebSocket connection to aa94e13d... at ws://localhost:8083
+🔗 WebSocket connection: nodejs → bridge
+🌐 Creating WebSocket connection to ee6bdbeb... at ws://localhost:8084
+🔗 WebSocket connection: nodejs → bridge
+🌐 Creating WebSocket connection to aa94e13d... at ws://localhost:8083
+🔗 WebSocket connection: nodejs → bridge
+🌐 Creating WebSocket connection to ee6bdbeb... at ws://localhost:8084
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Incoming WebSocket connection from 127.0.0.1
+⚠️ Server manager already handling bootstra, ignoring setup for 47866ddd (should have own manager)
+⚠️ Server manager already handling bootstra, ignoring setup for 47866ddd (should have own manager)
+⚠️ Server manager already handling bootstra, ignoring setup for 47866ddd (should have own manager)
+🔗 DHT received peerConnected: aa94e13d... (via WebSocketConnectionManager)
+🔄 Node aa94e13d... already exists in routing table
+🔗 Setting up connection for existing node aa94e13d...
+⚠️ Server manager already handling bootstra, ignoring setup for 47866ddd (should have own manager)
+🔗 DHT received peerConnected: ee6bdbeb... (via WebSocketConnectionManager)
+🔄 Node ee6bdbeb... already exists in routing table
+🔗 Setting up connection for existing node ee6bdbeb...
+🔗 DHT received peerConnected: aa94e13d... (via WebSocketConnectionManager)
+🔄 Node aa94e13d... already exists in routing table
+🔗 DHT received peerConnected: ee6bdbeb... (via WebSocketConnectionManager)
+🔄 Node ee6bdbeb... already exists in routing table
+🌐 NodeDHTClient initializing
+🌐 Creating WebSocketConnectionManager for nodejs→browser
+🌐 Initialized Node.js WebSocket support
+🌐 WebSocket server listening on 127.0.0.1:64073
+⚠️ Unable to confidently detect environment, defaulting to nodejs
+🔗 Setting up routing table connection event handlers...
+🔗 Attaching peerConnected event handler to server connection manager
+🔗 New client connection (total: 2)
+🌐 Open network mode: Finding random onboarding peer for ec3c039b...
+🔄 Checking stale buckets: 2 connected, 2 routing
+🔄 Checking stale buckets: 2 connected, 2 routing
+🔄 Checking stale buckets: 2 connected, 2 routing
+🔗 Connecting to bridge node: localhost:8083
+🔗 Connecting to bridge node: localhost:8084
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Bootstrap server connected: bootstrap_1763346597772
+⚠️ Server manager already handling bootstra, ignoring setup for bootstra (should have own manager)
+🔗 Bootstrap server connected: bootstrap_1763346597772
+⚠️ Server manager already handling bootstra, ignoring setup for bootstra (should have own manager)
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Reconnecting to bootstrap server for network recovery...
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Reconnecting to bootstrap server for network recovery...
+Error requesting peers or genesis status: Error: Request timeout
+    at Timeout._onTimeout (file:///C:/git/yz.network/src/bootstrap/BootstrapClient.js:303:16)
+    at listOnTimeout (node:internal/timers:594:17)
+    at process.processTimers (node:internal/timers:529:7)
+🌐 Initializing overlay network for WebRTC signaling...
+Find node query failed for ee6bdbeb3a64fa2b9ffad282f683dcaf57641b1a: Error: Request timeout for find_node
+    at Timeout._onTimeout (file:///C:/git/yz.network/src/dht/KademliaDHT.js:3503:16)
+    at listOnTimeout (node:internal/timers:594:17)
+    at process.processTimers (node:internal/timers:529:7)
+Find node query failed for aa94e13d768ddb33a96967be32cde974ffb216ae: Error: Request timeout for find_node
+    at Timeout._onTimeout (file:///C:/git/yz.network/src/dht/KademliaDHT.js:3503:16)
+    at listOnTimeout (node:internal/timers:594:17)
+    at process.processTimers (node:internal/timers:529:7)
+⚠️ No bridge nodes connected - reconnection services unavailable
+🌐 NodeDHTClient initializing
+🌐 Creating WebSocketConnectionManager for nodejs→browser
+🌐 Initialized Node.js WebSocket support
+🌐 WebSocket server listening on 127.0.0.1:64083
+⚠️ Unable to confidently detect environment, defaulting to nodejs
+🔗 Setting up routing table connection event handlers...
+🔗 Attaching peerConnected event handler to server connection manager
+🔗 New client connection (total: 3)
+🌐 Open network mode: Finding random onboarding peer for ed850478...
+🔗 Connecting to bridge node: localhost:8083
+🔗 Connecting to bridge node: localhost:8084
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Bootstrap server connected: bootstrap_1763346608404
+⚠️ Server manager already handling bootstra, ignoring setup for bootstra (should have own manager)
+🔗 Bootstrap server connected: bootstrap_1763346608404
+⚠️ Server manager already handling bootstra, ignoring setup for bootstra (should have own manager)
+🔄 Checking stale buckets: 2 connected, 2 routing
+Error requesting peers or genesis status: Error: Request timeout
+    at Timeout._onTimeout (file:///C:/git/yz.network/src/bootstrap/BootstrapClient.js:303:16)
+    at listOnTimeout (node:internal/timers:594:17)
+    at process.processTimers (node:internal/timers:529:7)
+🌐 Initializing overlay network for WebRTC signaling...
+⚠️ No bridge nodes connected - reconnection services unavailable
+🌐 NodeDHTClient initializing
+🌐 Creating WebSocketConnectionManager for nodejs→browser
+🌐 Initialized Node.js WebSocket support
+🌐 WebSocket server listening on 127.0.0.1:64091
+⚠️ Unable to confidently detect environment, defaulting to nodejs
+🔗 Setting up routing table connection event handlers...
+🔗 Attaching peerConnected event handler to server connection manager
+🔗 New client connection (total: 4)
+🌐 Open network mode: Finding random onboarding peer for 8bfb63fc...
+🔗 Connecting to bridge node: localhost:8083
+🔗 Connecting to bridge node: localhost:8084
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Bootstrap server connected: bootstrap_1763346619046
+⚠️ Server manager already handling bootstra, ignoring setup for bootstra (should have own manager)
+🔗 Bootstrap server connected: bootstrap_1763346619046
+⚠️ Server manager already handling bootstra, ignoring setup for bootstra (should have own manager)
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Reconnecting to bootstrap server for network recovery...
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Reconnecting to bootstrap server for network recovery...
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Checking stale buckets: 2 connected, 2 routing
+Error requesting peers or genesis status: Error: Request timeout
+    at Timeout._onTimeout (file:///C:/git/yz.network/src/bootstrap/BootstrapClient.js:303:16)
+    at listOnTimeout (node:internal/timers:594:17)
+    at process.processTimers (node:internal/timers:529:7)
+🌐 Initializing overlay network for WebRTC signaling...
+🌐 NodeDHTClient initializing
+🌐 Creating WebSocketConnectionManager for nodejs→browser
+🌐 Initialized Node.js WebSocket support
+🌐 WebSocket server listening on 127.0.0.1:64098
+⚠️ No bridge nodes connected - reconnection services unavailable
+⚠️ Unable to confidently detect environment, defaulting to nodejs
+🔗 Setting up routing table connection event handlers...
+🔗 Attaching peerConnected event handler to server connection manager
+🔗 New client connection (total: 5)
+🌐 Open network mode: Finding random onboarding peer for 5ddee318...
+🔗 Connecting to bridge node: localhost:8083
+🔗 Connecting to bridge node: localhost:8084
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Bootstrap server connected: bootstrap_1763346629677
+⚠️ Server manager already handling bootstra, ignoring setup for bootstra (should have own manager)
+🔗 Bootstrap server connected: bootstrap_1763346629677
+⚠️ Server manager already handling bootstra, ignoring setup for bootstra (should have own manager)
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Reconnecting to bootstrap server for network recovery...
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Reconnecting to bootstrap server for network recovery...
+❌ Failed to get onboarding peer from bridge: Error: Onboarding peer query timeout
+    at Timeout._onTimeout (file:///C:/git/yz.network/src/bridge/EnhancedBootstrapServer.js:1015:18)
+    at listOnTimeout (node:internal/timers:594:17)
+    at process.processTimers (node:internal/timers:529:7)
+❌ Failed to get onboarding peer from bridge: Onboarding peer query timeout
+Error requesting peers or genesis status: Error: Request timeout
+    at Timeout._onTimeout (file:///C:/git/yz.network/src/bootstrap/BootstrapClient.js:303:16)
+    at listOnTimeout (node:internal/timers:594:17)
+    at process.processTimers (node:internal/timers:529:7)
+🌐 Initializing overlay network for WebRTC signaling...
+⚠️ No bridge nodes connected - reconnection services unavailable
+🌐 NodeDHTClient initializing
+🌐 Creating WebSocketConnectionManager for nodejs→browser
+🌐 Initialized Node.js WebSocket support
+🌐 WebSocket server listening on 127.0.0.1:51393
+⚠️ Unable to confidently detect environment, defaulting to nodejs
+🔗 Setting up routing table connection event handlers...
+🔗 Attaching peerConnected event handler to server connection manager
+🔗 New client connection (total: 6)
+🌐 Open network mode: Finding random onboarding peer for 05c8e54a...
+🔗 Connecting to bridge node: localhost:8083
+🔗 Connecting to bridge node: localhost:8084
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Bootstrap server connected: bootstrap_1763346640315
+⚠️ Server manager already handling bootstra, ignoring setup for bootstra (should have own manager)
+🔗 Bootstrap server connected: bootstrap_1763346640315
+⚠️ Server manager already handling bootstra, ignoring setup for bootstra (should have own manager)
+🔄 Checking stale buckets: 2 connected, 2 routing
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Checking stale buckets: 0 connected, 0 routing
+❌ Failed to get onboarding peer from bridge: Error: Onboarding peer query timeout
+    at Timeout._onTimeout (file:///C:/git/yz.network/src/bridge/EnhancedBootstrapServer.js:1015:18)
+    at listOnTimeout (node:internal/timers:594:17)
+    at process.processTimers (node:internal/timers:529:7)
+❌ Failed to get onboarding peer from bridge: Onboarding peer query timeout
+Error requesting peers or genesis status: Error: Request timeout
+    at Timeout._onTimeout (file:///C:/git/yz.network/src/bootstrap/BootstrapClient.js:303:16)
+    at listOnTimeout (node:internal/timers:594:17)
+    at process.processTimers (node:internal/timers:529:7)
+🌐 Initializing overlay network for WebRTC signaling...
+🌐 NodeDHTClient initializing
+🌐 Creating WebSocketConnectionManager for nodejs→browser
+🌐 Initialized Node.js WebSocket support
+🌐 WebSocket server listening on 127.0.0.1:51401
+⚠️ No bridge nodes connected - reconnection services unavailable
+⚠️ Unable to confidently detect environment, defaulting to nodejs
+🔗 Setting up routing table connection event handlers...
+🔗 Attaching peerConnected event handler to server connection manager
+🔗 New client connection (total: 7)
+🌐 Open network mode: Finding random onboarding peer for 39bdc281...
+🔗 Connecting to bridge node: localhost:8083
+🔗 Connecting to bridge node: localhost:8084
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Bootstrap server connected: bootstrap_1763346650944
+⚠️ Server manager already handling bootstra, ignoring setup for bootstra (should have own manager)
+🔗 Bootstrap server connected: bootstrap_1763346650944
+⚠️ Server manager already handling bootstra, ignoring setup for bootstra (should have own manager)
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Reconnecting to bootstrap server for network recovery...
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Reconnecting to bootstrap server for network recovery...
+🔄 Checking stale buckets: 2 connected, 2 routing
+🔄 Checking stale buckets: 0 connected, 0 routing
+❌ Failed to get onboarding peer from bridge: Error: Onboarding peer query timeout
+    at Timeout._onTimeout (file:///C:/git/yz.network/src/bridge/EnhancedBootstrapServer.js:1015:18)
+    at listOnTimeout (node:internal/timers:594:17)
+    at process.processTimers (node:internal/timers:529:7)
+❌ Failed to get onboarding peer from bridge: Onboarding peer query timeout
+Error requesting peers or genesis status: Error: Request timeout
+    at Timeout._onTimeout (file:///C:/git/yz.network/src/bootstrap/BootstrapClient.js:303:16)
+    at listOnTimeout (node:internal/timers:594:17)
+    at process.processTimers (node:internal/timers:529:7)
+🌐 Initializing overlay network for WebRTC signaling...
+🌐 NodeDHTClient initializing
+🌐 Creating WebSocketConnectionManager for nodejs→browser
+🌐 Initialized Node.js WebSocket support
+🌐 WebSocket server listening on 127.0.0.1:51468
+⚠️ No bridge nodes connected - reconnection services unavailable
+⚠️ Unable to confidently detect environment, defaulting to nodejs
+🔗 Setting up routing table connection event handlers...
+🔗 Attaching peerConnected event handler to server connection manager
+🔗 New client connection (total: 8)
+🌐 Open network mode: Finding random onboarding peer for 0393279e...
+🔗 Connecting to bridge node: localhost:8083
+🔗 Connecting to bridge node: localhost:8084
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Bootstrap server connected: bootstrap_1763346661570
+⚠️ Server manager already handling bootstra, ignoring setup for bootstra (should have own manager)
+🔗 Bootstrap server connected: bootstrap_1763346661570
+⚠️ Server manager already handling bootstra, ignoring setup for bootstra (should have own manager)
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Checking stale buckets: 0 connected, 0 routing
+❌ Failed to get onboarding peer from bridge: Error: Onboarding peer query timeout
+    at Timeout._onTimeout (file:///C:/git/yz.network/src/bridge/EnhancedBootstrapServer.js:1015:18)
+    at listOnTimeout (node:internal/timers:594:17)
+    at process.processTimers (node:internal/timers:529:7)
+❌ Failed to get onboarding peer from bridge: Onboarding peer query timeout
+Error requesting peers or genesis status: Error: Request timeout
+    at Timeout._onTimeout (file:///C:/git/yz.network/src/bootstrap/BootstrapClient.js:303:16)
+    at listOnTimeout (node:internal/timers:594:17)
+    at process.processTimers (node:internal/timers:529:7)
+🌐 Initializing overlay network for WebRTC signaling...
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Reconnecting to bootstrap server for network recovery...
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Reconnecting to bootstrap server for network recovery...
+⚠️ No bridge nodes connected - reconnection services unavailable
+🌐 NodeDHTClient initializing
+🌐 Creating WebSocketConnectionManager for nodejs→browser
+🌐 Initialized Node.js WebSocket support
+🌐 WebSocket server listening on 127.0.0.1:51477
+⚠️ Unable to confidently detect environment, defaulting to nodejs
+🔗 Setting up routing table connection event handlers...
+🔗 Attaching peerConnected event handler to server connection manager
+🔄 Checking stale buckets: 2 connected, 2 routing
+🔗 New client connection (total: 9)
+🌐 Open network mode: Finding random onboarding peer for d674cd1a...
+🔗 Connecting to bridge node: localhost:8083
+🔗 Connecting to bridge node: localhost:8084
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Bootstrap server connected: bootstrap_1763346672201
+⚠️ Server manager already handling bootstra, ignoring setup for bootstra (should have own manager)
+🔗 Bootstrap server connected: bootstrap_1763346672201
+⚠️ Server manager already handling bootstra, ignoring setup for bootstra (should have own manager)
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Checking stale buckets: 0 connected, 0 routing
+❌ Failed to get onboarding peer from bridge: Error: Onboarding peer query timeout
+    at Timeout._onTimeout (file:///C:/git/yz.network/src/bridge/EnhancedBootstrapServer.js:1015:18)
+    at listOnTimeout (node:internal/timers:594:17)
+    at process.processTimers (node:internal/timers:529:7)
+❌ Failed to get onboarding peer from bridge: Onboarding peer query timeout
+Error requesting peers or genesis status: Error: Request timeout
+    at Timeout._onTimeout (file:///C:/git/yz.network/src/bootstrap/BootstrapClient.js:303:16)
+    at listOnTimeout (node:internal/timers:594:17)
+    at process.processTimers (node:internal/timers:529:7)
+🌐 Initializing overlay network for WebRTC signaling...
+🌐 NodeDHTClient initializing
+🌐 Creating WebSocketConnectionManager for nodejs→browser
+🌐 Initialized Node.js WebSocket support
+🌐 WebSocket server listening on 127.0.0.1:51485
+⚠️ No bridge nodes connected - reconnection services unavailable
+🔄 Checking stale buckets: 0 connected, 0 routing
+⚠️ Unable to confidently detect environment, defaulting to nodejs
+🔗 Setting up routing table connection event handlers...
+🔗 Attaching peerConnected event handler to server connection manager
+🔗 New client connection (total: 10)
+🌐 Open network mode: Finding random onboarding peer for 3f541888...
+🔗 Connecting to bridge node: localhost:8083
+🔗 Connecting to bridge node: localhost:8084
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Bootstrap server connected: bootstrap_1763346682830
+⚠️ Server manager already handling bootstra, ignoring setup for bootstra (should have own manager)
+🔗 Bootstrap server connected: bootstrap_1763346682830
+⚠️ Server manager already handling bootstra, ignoring setup for bootstra (should have own manager)
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Checking stale buckets: 2 connected, 2 routing
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Reconnecting to bootstrap server for network recovery...
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Reconnecting to bootstrap server for network recovery...
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Checking stale buckets: 0 connected, 0 routing
+❌ Failed to get onboarding peer from bridge: Error: Onboarding peer query timeout
+    at Timeout._onTimeout (file:///C:/git/yz.network/src/bridge/EnhancedBootstrapServer.js:1015:18)
+    at listOnTimeout (node:internal/timers:594:17)
+    at process.processTimers (node:internal/timers:529:7)
+❌ Failed to get onboarding peer from bridge: Onboarding peer query timeout
+Error requesting peers or genesis status: Error: Request timeout
+    at Timeout._onTimeout (file:///C:/git/yz.network/src/bootstrap/BootstrapClient.js:303:16)
+    at listOnTimeout (node:internal/timers:594:17)
+    at process.processTimers (node:internal/timers:529:7)
+🌐 Initializing overlay network for WebRTC signaling...
+⏳ Waiting 5s for network stabilization...
+⚠️ No bridge nodes connected - reconnection services unavailable
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Checking stale buckets: 0 connected, 0 routing
+   Node 0: 2 connected, 2 in routing table
+   Node 1: 0 connected, 0 in routing table
+   Node 2: 0 connected, 0 in routing table
+   Node 3: 0 connected, 0 in routing table
+   Node 4: 0 connected, 0 in routing table
+   Node 5: 0 connected, 0 in routing table
+   Node 6: 0 connected, 0 in routing table
+   Node 7: 0 connected, 0 in routing table
+   Node 8: 0 connected, 0 in routing table
+   Node 9: 0 connected, 0 in routing table
+Test 1: Node 0 storing "test-key"...
+[DHT] 📝 Storing key: test-key
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Checking stale buckets: 0 connected, 0 routing
+❌ Failed to get onboarding peer from bridge: Error: Onboarding peer query timeout
+    at Timeout._onTimeout (file:///C:/git/yz.network/src/bridge/EnhancedBootstrapServer.js:1015:18)
+    at listOnTimeout (node:internal/timers:594:17)
+    at process.processTimers (node:internal/timers:529:7)
+❌ Failed to get onboarding peer from bridge: Onboarding peer query timeout
+🔄 Checking stale buckets: 2 connected, 2 routing
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Reconnecting to bootstrap server for network recovery...
+🔄 Checking stale buckets: 0 connected, 0 routing
+🔄 Reconnecting to bootstrap server for network recovery...
+🔄 Checking stale buckets: 0 connected, 0 routing
+Find node query failed for aa94e13d768ddb33a96967be32cde974ffb216ae: Error: Request timeout for find_node
+    at Timeout._onTimeout (file:///C:/git/yz.network/src/dht/KademliaDHT.js:3503:16)
+    at listOnTimeout (node:internal/timers:594:17)
+    at process.processTimers (node:internal/timers:529:7)
+Find node query failed for ee6bdbeb3a64fa2b9ffad282f683dcaf57641b1a: Error: Request timeout for find_node
+    at Timeout._onTimeout (file:///C:/git/yz.network/src/dht/KademliaDHT.js:3503:16)
+    at listOnTimeout (node:internal/timers:594:17)
+    at process.processTimers (node:internal/timers:529:7)
+✅ Node 0 retrieved value: Hello from Node 0
+
+Test 2: Node 1 retrieving "test-key" (stored by Node 0)...
+❌ GET: "test-key" not in local storage, searching DHT...
+❌ GET: Failed to find "test-key" after querying 0 nodes
+✅ Node 1 retrieved value: null
+
+❌ DHT operation failed: Error: test returned false
+    at runTest (file:///C:/git/yz.network/router_claude.js:184:26)
+    at async testDHTOperations (file:///C:/git/yz.network/router_claude.js:223:25)
+    at async main (file:///C:/git/yz.network/router_claude.js:434:5)
+
+❌ Test script failed: Error: test returned false
+    at runTest (file:///C:/git/yz.network/router_claude.js:184:26)
+    at async testDHTOperations (file:///C:/git/yz.network/router_claude.js:223:25)
+    at async main (file:///C:/git/yz.network/router_claude.js:434:5)
+🔄 Checking stale buckets: 0 connected, 0 routing

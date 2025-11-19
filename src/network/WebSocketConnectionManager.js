@@ -1,4 +1,5 @@
 import { ConnectionManager } from './ConnectionManager.js';
+import { ConnectionManagerFactory } from './ConnectionManagerFactory.js';
 
 /**
  * WebSocket-based connection manager for Node.js peers
@@ -33,11 +34,14 @@ export class WebSocketConnectionManager extends ConnectionManager {
       ...options
     };
 
-    // WebSocket-specific state
+    // WebSocket-specific state (REFACTORED: Single connection per manager)
     this.server = null; // WebSocket server for incoming connections
-    this.connectionTimeouts = new Map(); // peerId -> timeout handle
-    this.reconnectAttempts = new Map(); // peerId -> attempt count
+    this.connectionTimeouts = new Map(); // Keep Map for timeout management
+    this.reconnectAttempts = new Map(); // Keep Map for reconnect tracking
     this.maxReconnectAttempts = 3;
+
+    // NOTE: Metadata now passed directly in peerConnected events to RoutingTable
+    // No intermediate storage needed - clean architecture!
 
     // Initialize WebSocket classes asynchronously
     this.initializeWebSocketClasses().then(() => {
@@ -179,13 +183,35 @@ export class WebSocketConnectionManager extends ConnectionManager {
           const bootstrapPeerId = 'bootstrap_' + Date.now();
           console.log(`🔗 Bootstrap server connected: ${bootstrapPeerId}`);
 
-          // Set up the connection with bootstrap identifier
-          this.setupConnection(bootstrapPeerId, ws, false);
+          // CRITICAL FIX: Create NEW manager for bootstrap connection (single-connection architecture)
+          console.log(`🏭 Creating dedicated connection manager for bootstrap ${bootstrapPeerId.substring(0, 16)}...`);
+          const bootstrapManager = new WebSocketConnectionManager({
+            localNodeType: this.localNodeType,  // Use server manager's node type
+            targetNodeType: 'nodejs',  // Bootstrap servers are always nodejs
+            enableServer: false  // Not a server - just handles this one connection
+          });
 
-          // Forward the auth message to the connection handler after setup
-          // Use setTimeout to ensure connection setup is complete
+          // Initialize the new manager with our node ID
+          bootstrapManager.initialize(this.localNodeId);
+
+          // Set up the connection on the NEW manager
+          bootstrapManager.setupConnection(bootstrapPeerId, ws, false);
+
+          // Emit peerConnected with the NEW manager and metadata
+          console.log(`📤 Emitting peerConnected event with dedicated manager for bootstrap`);
+          this.emit('peerConnected', {
+            peerId: bootstrapPeerId,
+            connection: ws,
+            manager: bootstrapManager,
+            initiator: false,
+            metadata: null  // Bootstrap connections don't have peer metadata
+          });
+
+          // Forward the bootstrap_auth message to the dedicated manager after setup
+          // This allows PassiveBridgeNode to handle authentication and add bootstrap to authorized list
           setTimeout(() => {
-            this.handleMessage(bootstrapPeerId, message);
+            console.log(`📤 Forwarding bootstrap_auth message to dedicated manager for processing`);
+            bootstrapManager.handleMessage(bootstrapPeerId, message);
           }, 10);
 
         } else if (message.type === 'dht_peer_hello' && message.peerId) {
@@ -196,14 +222,14 @@ export class WebSocketConnectionManager extends ConnectionManager {
           const peerId = message.peerId;
           console.log(`✅ DHT peer connected: ${peerId.substring(0, 8)}...`);
 
-          // Store peer metadata from handshake
-          if (message.metadata) {
-            console.log(`📋 Received peer metadata from ${peerId.substring(0, 8)}:`, message.metadata);
-            this.setPeerMetadata(peerId, message.metadata);
+          // Extract peer metadata from handshake (will be passed to RoutingTable)
+          const peerMetadata = message.metadata || null;
+          if (peerMetadata) {
+            console.log(`📋 Received peer metadata from ${peerId.substring(0, 8)}:`, peerMetadata);
           }
 
           // Get this node's metadata (especially isBridgeNode flag and listeningAddress)
-          const myMetadata = this.getPeerMetadata(this.localNodeId);
+          const myMetadata = ConnectionManagerFactory.getPeerMetadata(this.localNodeId);
 
           // Send confirmation with our metadata
           ws.send(JSON.stringify({
@@ -214,8 +240,30 @@ export class WebSocketConnectionManager extends ConnectionManager {
             metadata: myMetadata  // Include our node metadata
           }));
 
-          // Set up the connection
-          this.setupConnection(peerId, ws, false); // false = not initiator
+          // CRITICAL FIX: Create NEW manager for this peer (single-connection architecture)
+          // Server manager is just a listener/factory - each peer gets dedicated manager
+          console.log(`🏭 Creating dedicated connection manager for incoming peer ${peerId.substring(0, 8)}...`);
+          const peerManager = new WebSocketConnectionManager({
+            localNodeType: this.localNodeType,  // Use server manager's node type
+            targetNodeType: peerMetadata?.nodeType || 'nodejs',
+            enableServer: false  // Not a server - just handles this one connection
+          });
+
+          // Initialize the new manager with our node ID
+          peerManager.initialize(this.localNodeId);
+
+          // Set up the connection on the NEW manager
+          peerManager.setupConnection(peerId, ws, false); // false = not initiator
+
+          // Emit peerConnected with the NEW manager and metadata
+          console.log(`📤 Emitting peerConnected event with dedicated manager and metadata for ${peerId.substring(0, 8)}...`);
+          this.emit('peerConnected', {
+            peerId,
+            connection: ws,
+            manager: peerManager,
+            initiator: false,
+            metadata: peerMetadata  // Pass metadata directly to RoutingTable
+          });
 
         } else {
           console.warn('Invalid handshake message:', message.type);
@@ -238,20 +286,32 @@ export class WebSocketConnectionManager extends ConnectionManager {
 
   /**
    * Create WebSocket connection to peer
+   * @param {string} peerId - Target peer ID
+   * @param {boolean} initiator - Whether we're initiating the connection
+   * @param {Object} metadata - Peer metadata (nodeType, listeningAddress, etc.)
    */
-  async createConnection(peerId, initiator = true) {
+  async createConnection(peerId, initiator = true, metadata = null) {
     if (this.isDestroyed) {
       throw new Error('WebSocketConnectionManager is destroyed');
     }
 
-    if (this.connections.size >= this.options.maxConnections) {
-      throw new Error('Maximum connections reached');
+    // Store peerId for this manager
+    if (!this.peerId) {
+      this.peerId = peerId;
+    } else if (this.peerId !== peerId) {
+      throw new Error(`Manager is for ${this.peerId}, cannot create connection to ${peerId}`);
+    }
+
+    // Check if we already have a connection
+    if (this.connection) {
+      throw new Error(`Manager already has connection to ${this.peerId}`);
     }
 
     // Perfect Negotiation Pattern for WebSocket (similar to WebRTC)
     // When both peers try to connect simultaneously (glare condition), use node ID comparison
-    const peerMetadata = this.getPeerMetadata(peerId);
-    const existingConnection = this.connections.get(peerId);
+    // CRITICAL: Use passed metadata parameter first, fallback to global metadata for backwards compatibility
+    const peerMetadata = metadata || ConnectionManagerFactory.getPeerMetadata(peerId);
+    const existingConnection = this.connection;
     if (existingConnection) {
       // Glare condition detected - both peers trying to connect
       const localNodeId = this.localNodeId || '';
@@ -267,16 +327,16 @@ export class WebSocketConnectionManager extends ConnectionManager {
         if (existingConnection.close) {
           existingConnection.close(1000, 'Perfect Negotiation - polite peer yielding');
         }
-        this.connections.delete(peerId);
-        this.connectionStates.delete(peerId);
+        this.connection = null;
+        this.connectionState = 'disconnected';
 
         // Wait a moment for the other side's connection to arrive
         await new Promise(resolve => setTimeout(resolve, 500));
 
         // Check if incoming connection was established
-        if (this.connections.has(peerId)) {
+        if (this.connection) {
           console.log(`✅ Polite peer accepted incoming connection from ${peerId.substring(0, 8)}...`);
-          return this.connections.get(peerId);
+          return this.connection;
         }
         // If no incoming connection, continue with our outgoing attempt below
         console.log(`⚠️ No incoming connection received, continuing with outgoing attempt`);
@@ -293,13 +353,12 @@ export class WebSocketConnectionManager extends ConnectionManager {
       await this.waitForWebSocketInitialization();
     }
 
-    // Get WebSocket address from peer metadata
-    const metadata = peerMetadata || this.getPeerMetadata(peerId);
-    const wsAddress = metadata?.listeningAddress;
+    // Get WebSocket address from peer metadata (peerMetadata already set above from parameter or global)
+    const wsAddress = peerMetadata?.listeningAddress;
 
     // Determine node types for connection handling
     const localNodeType = this.localNodeType;
-    const targetNodeType = metadata?.nodeType;
+    const targetNodeType = peerMetadata?.nodeType;
     const finalTargetNodeType = targetNodeType || this.targetNodeType || 'browser';
 
     console.log(`🔗 WebSocket connection: ${localNodeType} → ${finalTargetNodeType}`);
@@ -332,7 +391,7 @@ export class WebSocketConnectionManager extends ConnectionManager {
           console.log(`✅ WebSocket connection established to ${peerId.substring(0, 8)}...`);
 
           // Send handshake to identify ourselves with metadata
-          const myMetadata = this.getPeerMetadata(this.localNodeId);
+          const myMetadata = ConnectionManagerFactory.getPeerMetadata(this.localNodeId);
           const handshakeMessage = {
             type: 'dht_peer_hello',
             peerId: this.localNodeId,
@@ -357,15 +416,15 @@ export class WebSocketConnectionManager extends ConnectionManager {
                 clearTimeout(handshakeTimeout);
                 ws.onmessage = null;
 
-                // Store peer metadata from handshake
-                if (message.metadata) {
-                  console.log(`📋 Received peer metadata from ${message.bridgeNodeId.substring(0, 8)}:`, message.metadata);
-                  this.setPeerMetadata(peerId, message.metadata);
+                // Extract peer metadata from handshake (will be passed in peerConnected event)
+                const peerMetadata = message.metadata || null;
+                if (peerMetadata) {
+                  console.log(`📋 Received peer metadata from ${message.bridgeNodeId.substring(0, 8)}:`, peerMetadata);
                 }
 
                 console.log(`✅ Successfully connected to peer ${message.bridgeNodeId.substring(0, 8)}`);
 
-                this.setupConnection(peerId, ws, initiator);
+                this.setupConnection(peerId, ws, initiator, peerMetadata);
                 resolve();
 
               } else {
@@ -433,7 +492,7 @@ export class WebSocketConnectionManager extends ConnectionManager {
 
         return new Promise((resolve, reject) => {
           const checkConnection = () => {
-            if (this.connections.has(peerId)) {
+            if (this.connection && this.peerId === peerId) {
               console.log(`✅ Browser ${peerId.substring(0, 8)}... connected back successfully`);
               resolve();
             } else if ((Date.now() - startTime) >= connectionWaitTime) {
@@ -478,10 +537,18 @@ export class WebSocketConnectionManager extends ConnectionManager {
   /**
    * Set up WebSocket connection after handshake
    */
-  setupConnection(peerId, ws, initiator) {
-    // Store connection
-    this.connections.set(peerId, ws);
-    this.connectionStates.set(peerId, 'connected');
+  setupConnection(peerId, ws, initiator, metadata = null) {
+    // NOTE: In single-connection architecture, server managers accept first incoming connection
+    // Subsequent connections from different peers should get their own managers (handled by routing table)
+    if (this.peerId && this.peerId !== peerId) {
+      console.warn(`⚠️ Server manager already handling ${this.peerId.substring(0,8)}, ignoring setup for ${peerId.substring(0,8)} (should have own manager)`);
+      return; // Skip setup for different peer - routing table should create separate manager
+    }
+
+    // Store peerId and connection (first connection for this manager)
+    this.peerId = peerId;
+    this.connection = ws;
+    this.connectionState = 'connected';
 
     console.log(`📋 WebSocket connection setup complete for ${peerId.substring(0, 8)}...`);
 
@@ -529,15 +596,22 @@ export class WebSocketConnectionManager extends ConnectionManager {
       };
     }
 
-    // Emit connection event with connection details
-    this.emit('peerConnected', { peerId, initiator, connection: ws, manager: this });
+    // Emit connection event with connection details and metadata
+    this.emit('peerConnected', { peerId, initiator, connection: ws, manager: this, metadata });
   }
 
   /**
    * Send raw message via WebSocket
    */
   async sendRawMessage(peerId, message) {
-    const ws = this.connections.get(peerId);
+    // NOTE: In single-connection architecture, manager handles one peer
+    // If trying to send to different peer, skip (routing table should use correct manager)
+    if (this.peerId && this.peerId !== peerId) {
+      // Skip silently - caller should use correct manager for the peer
+      return; // Wrong manager for this peer
+    }
+
+    const ws = this.connection;
 
     if (!ws || ws.readyState !== this.WebSocket.OPEN) {
       throw new Error(`No open WebSocket connection to peer ${peerId}`);
@@ -556,25 +630,30 @@ export class WebSocketConnectionManager extends ConnectionManager {
   /**
    * Check if peer is connected
    */
-  isConnected(peerId) {
-    const ws = this.connections.get(peerId);
-    if (!ws) return false;
+  isConnected() {
+    if (!this.connection) return false;
 
     // Handle case where WebSocket classes aren't initialized yet
     if (!this.webSocketInitialized || !this.WebSocket) {
       return false;
     }
 
-    return ws.readyState === this.WebSocket.OPEN;
+    return this.connection.readyState === this.WebSocket.OPEN;
   }
 
   /**
    * Destroy connection to peer
    */
   destroyConnection(peerId, reason = 'manual') {
+    // Validate peerId matches expected peer
+    if (this.peerId && this.peerId !== peerId) {
+      console.warn(`⚠️ destroyConnection called with unexpected peer ${peerId}, expected ${this.peerId}`);
+      return;
+    }
+
     console.log(`🔌 Destroying WebSocket connection to ${peerId} (${reason})`);
 
-    const ws = this.connections.get(peerId);
+    const ws = this.connection;
     if (ws) {
       ws.close(1000, reason);
     }
@@ -586,7 +665,7 @@ export class WebSocketConnectionManager extends ConnectionManager {
       this.connectionTimeouts.delete(peerId);
     }
 
-    this.cleanupConnection(peerId);
+    this.cleanupConnection();
     this.emit('peerDisconnected', { peerId, reason });
   }
 
@@ -595,19 +674,22 @@ export class WebSocketConnectionManager extends ConnectionManager {
    */
   handleConnectionClose(peerId, event) {
     console.log(`🔌 WebSocket connection closed to ${peerId.substring(0, 8)}...: ${event.code} ${event.reason}`);
-    this.connectionStates.set(peerId, 'disconnected');
-    this.cleanupConnection(peerId);
+    this.connectionState = 'disconnected';
+    this.cleanupConnection();
     this.emit('peerDisconnected', { peerId, reason: `close_${event.code}` });
   }
 
   /**
    * Clean up connection data
    */
-  cleanupConnection(peerId) {
-    this.connections.delete(peerId);
-    this.connectionStates.delete(peerId);
-    this.connectionTimeouts.delete(peerId);
-    this.reconnectAttempts.delete(peerId);
+  cleanupConnection() {
+    this.connection = null;
+    this.connectionState = 'disconnected';
+    if (this.peerId) {
+      this.connectionTimeouts.delete(this.peerId);
+      this.reconnectAttempts.delete(this.peerId);
+    }
+    // Note: Don't clear this.peerId here - it identifies which peer this manager was for
   }
 
   /**
@@ -663,9 +745,9 @@ export class WebSocketConnectionManager extends ConnectionManager {
     }
     this.connectionTimeouts.clear();
 
-    // Close all WebSocket connections
-    for (const [peerId, ws] of this.connections.entries()) {
-      ws.close(1000, 'Manager destroyed');
+    // Close the WebSocket connection
+    if (this.connection) {
+      this.connection.close(1000, 'Manager destroyed');
     }
 
     this.reconnectAttempts.clear();

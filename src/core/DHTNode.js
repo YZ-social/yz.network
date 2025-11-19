@@ -105,7 +105,9 @@ export class DHTNode {
    */
   isConnected() {
     if (this.connectionManager) {
-      return this.connectionManager.isConnected(this.id.toString());
+      // REFACTORED: Connection managers now use single-connection architecture
+      // isConnected() no longer takes peerId parameter
+      return this.connectionManager.isConnected();
     }
 
     // If no connection manager, we're not connected

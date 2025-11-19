@@ -1,0 +1,94 @@
+version: '3.8'
+
+services:
+  # Bootstrap Server - Entry point for DHT network
+  # This should be publicly accessible on your server
+  bootstrap:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yz-bootstrap
+    command: node src/bridge/start-enhanced-bootstrap.js -createNewDHT -openNetwork
+    ports:
+      - "${BOOTSTRAP_PORT:-8080}:8080"  # Public WebSocket endpoint
+      - "9091:9090"  # Metrics endpoint
+    environment:
+      - BOOTSTRAP_MODE=true
+      - CREATE_NEW_DHT=true
+      - OPEN_NETWORK=true
+      - MAX_PEERS=10000
+      - METRICS_PORT=9090
+    networks:
+      - dht-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # DHT Nodes - Scale to 1000 instances
+  # Internal nodes that form the DHT mesh
+  dht-node:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: node src/docker/start-dht-node.js
+    environment:
+      - BOOTSTRAP_URL=ws://bootstrap:8080
+      - OPEN_NETWORK=true
+      - METRICS_PORT=9090
+    networks:
+      - dht-network
+    depends_on:
+      - bootstrap
+    restart: unless-stopped
+    deploy:
+      replicas: 10  # Start with 10, scale up with: docker-compose up -d --scale dht-node=1000
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s  # Give nodes more time to connect
+
+  # Monitoring Dashboard - Web UI to monitor the DHT network
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    container_name: yz-dashboard
+    ports:
+      - "${DASHBOARD_PORT:-3001}:3000"  # Public dashboard interface
+    environment:
+      - BOOTSTRAP_URL=http://bootstrap:9090
+      - METRICS_SCRAPE_INTERVAL=10000  # Scrape metrics every 10 seconds
+    networks:
+      - dht-network
+    depends_on:
+      - bootstrap
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  dht-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+# Volumes for persistent data (optional - currently DHT is ephemeral)
+# volumes:
+#   dht-data:

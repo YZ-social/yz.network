@@ -1,6 +1,7 @@
 import { DHTNodeId } from '../core/DHTNodeId.js';
 import { DHTNode } from '../core/DHTNode.js';
 import { KBucket } from '../core/KBucket.js';
+import { ConnectionManagerFactory } from '../network/ConnectionManagerFactory.js';
 
 /**
  * Kademlia routing table implementation
@@ -480,9 +481,12 @@ export class RoutingTable {
     this.onNodeAdded = nodeAddedCallback;
 
     // Create shared event handler - same for all connection managers
-    this.peerConnectedHandler = ({ peerId, connection, manager, initiator }) => {
+    this.peerConnectedHandler = ({ peerId, connection, manager, initiator, metadata }) => {
       console.log(`🔗 RoutingTable received peerConnected: ${peerId.substring(0, 8)}... (via ${manager.constructor.name})`);
-      this.handlePeerConnected(peerId, connection, manager);
+      if (metadata) {
+        console.log(`📋 RoutingTable received metadata for ${peerId.substring(0, 8)}:`, metadata);
+      }
+      this.handlePeerConnected(peerId, connection, manager, metadata);
     };
 
     // Set up the same handler on all connection managers
@@ -498,9 +502,31 @@ export class RoutingTable {
   }
 
   /**
+   * Set up connection manager handlers (WebRTC signals, etc.)
+   * Called by KademliaDHT when connection manager is created
+   * TIMING CRITICAL: Must be called BEFORE createConnection() to catch signals
+   */
+  setupConnectionManagerHandlers(connectionManager, peerId) {
+    if (!connectionManager) {
+      console.warn('⚠️ setupConnectionManagerHandlers called with null manager');
+      return;
+    }
+
+    // CRITICAL FIX: Attach WebRTC signal routing handler for WebRTC connections
+    // This must be attached BEFORE any signals are emitted (timing critical!)
+    if (connectionManager.constructor.name === 'WebRTCConnectionManager' && this.webrtcSignalHandler) {
+      console.log(`🔗 RoutingTable: Attaching WebRTC signal handler to ${connectionManager.constructor.name} for ${peerId.substring(0, 8)}...`);
+      connectionManager.on('signal', this.webrtcSignalHandler);
+      connectionManager._webrtcSignalHandlerAttached = true;
+    } else if (connectionManager.constructor.name === 'WebRTCConnectionManager') {
+      console.warn(`⚠️ WebRTC signal handler not available for ${peerId.substring(0, 8)} - signals will not be routed`);
+    }
+  }
+
+  /**
    * Handle peerConnected event by creating and configuring DHTNode
    */
-  handlePeerConnected(peerId, connection, manager) {
+  handlePeerConnected(peerId, connection, manager, metadata = null) {
     // Check if node already exists
     const existingNode = this.getNode(peerId);
     if (existingNode) {
@@ -510,6 +536,15 @@ export class RoutingTable {
       if (!existingNode.connectionManager || !existingNode.connection) {
         console.log(`🔗 Setting up connection for existing node ${peerId.substring(0, 8)}...`);
         existingNode.setupConnection(manager, connection);
+        // Note: Signal handlers should already be attached via setupConnectionManagerHandlers()
+      }
+
+      // Update metadata if provided
+      if (metadata && Object.keys(metadata).length > 0) {
+        console.log(`📋 Updating metadata for existing node ${peerId.substring(0, 8)}:`, metadata);
+        for (const [key, value] of Object.entries(metadata)) {
+          existingNode.setMetadata(key, value);
+        }
       }
       return;
     }
@@ -521,49 +556,31 @@ export class RoutingTable {
 
     // Set up the node's connection and manager
     node.setupConnection(manager, connection);
+    // Note: Signal handlers should already be attached via setupConnectionManagerHandlers()
 
-    // Transfer metadata from connection manager to node
-    if (manager && manager.getPeerMetadata) {
-      console.log(`📋 DEBUG: Getting metadata from ${manager.constructor.name} for ${peerId.substring(0, 8)}`);
-      const peerMetadata = manager.getPeerMetadata(peerId);
-      console.log(`📋 DEBUG: Manager metadata result:`, peerMetadata);
-
-      // CRITICAL: Also check the main DHT connection manager for metadata
-      // The bridge metadata might be stored there instead of the specific transport manager
-      let combinedMetadata = peerMetadata || {};
-
-      // Try to get DHT connection manager metadata from the DHT instance
-      // Access through the nodeAdded callback context
-      if (this.onNodeAdded) {
-        // The onNodeAdded callback should have access to DHT context
-        // Let's try a different approach - use ConnectionManagerFactory to get metadata
-        try {
-          const ConnectionManagerFactory = globalThis.ConnectionManagerFactory ||
-                                           (typeof require !== 'undefined' ? require('../network/ConnectionManagerFactory.js').ConnectionManagerFactory : null);
-          if (ConnectionManagerFactory && ConnectionManagerFactory.getPeerMetadata) {
-            const factoryMetadata = ConnectionManagerFactory.getPeerMetadata(peerId);
-            console.log(`📋 DEBUG: ConnectionManagerFactory metadata:`, factoryMetadata);
-            if (factoryMetadata) {
-              combinedMetadata = { ...factoryMetadata, ...combinedMetadata };
-            }
-          }
-        } catch (error) {
-          console.log(`📋 DEBUG: Could not access ConnectionManagerFactory:`, error.message);
-        }
+    // Set metadata directly on node (clean architecture - no intermediate storage)
+    if (metadata && Object.keys(metadata).length > 0) {
+      console.log(`📋 Setting metadata on DHTNode ${peerId.substring(0, 8)}:`, metadata);
+      for (const [key, value] of Object.entries(metadata)) {
+        node.setMetadata(key, value);
+        console.log(`📋 Set metadata ${key}=${value} for ${peerId.substring(0, 8)}`);
       }
 
-      if (Object.keys(combinedMetadata).length > 0) {
-        console.log(`📋 Transferring combined metadata to DHTNode ${peerId.substring(0, 8)}:`, combinedMetadata);
-        // Copy each metadata property to the node
-        for (const [key, value] of Object.entries(combinedMetadata)) {
-          node.setMetadata(key, value);
-          console.log(`📋 Set metadata ${key}=${value} for ${peerId.substring(0, 8)}`);
+      // Verify the metadata was set
+      const bridgeCheck = node.getMetadata('isBridgeNode');
+      console.log(`📋 Verification: isBridgeNode=${bridgeCheck} for ${peerId.substring(0, 8)}`);
+    } else {
+      console.log(`📋 No metadata provided for ${peerId.substring(0, 8)}`);
+
+      // Fallback: Check ConnectionManagerFactory for global metadata (for existing code compatibility)
+      if (ConnectionManagerFactory && ConnectionManagerFactory.getPeerMetadata) {
+        const factoryMetadata = ConnectionManagerFactory.getPeerMetadata(peerId);
+        if (factoryMetadata && Object.keys(factoryMetadata).length > 0) {
+          console.log(`📋 Found fallback metadata in ConnectionManagerFactory for ${peerId.substring(0, 8)}:`, factoryMetadata);
+          for (const [key, value] of Object.entries(factoryMetadata)) {
+            node.setMetadata(key, value);
+          }
         }
-        // Verify the metadata was set
-        const bridgeCheck = node.getMetadata('isBridgeNode');
-        console.log(`📋 Verification: isBridgeNode=${bridgeCheck} for ${peerId.substring(0, 8)}`);
-      } else {
-        console.log(`⚠️ No metadata found for ${peerId.substring(0, 8)} in either manager`);
       }
     }
 

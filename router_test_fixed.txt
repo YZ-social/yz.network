@@ -1,0 +1,150 @@
+🎬 Starting router_claude.js test script...
+
+🌐 PassiveBridgeNode initializing
+🌐 Creating WebSocketConnectionManager for nodejs→browser
+🌐 Initialized Node.js WebSocket support
+🌐 WebSocket server listening on 127.0.0.1:8083
+⚠️ Unable to confidently detect environment, defaulting to nodejs
+🔗 Setting up routing table connection event handlers...
+🔗 Attaching peerConnected event handler to server connection manager
+🌐 Initializing overlay network for WebRTC signaling...
+🔗 WebSocketConnectionManager initialized with node ID: 11088421a4f176af920c83cbc03e2bf7b2dda7cb
+⏳ Waiting for WebSocket initialization to complete...
+🌐 WebSocket server ready at ws://localhost:8083
+🌐 PassiveBridgeNode initializing
+🌐 Creating WebSocketConnectionManager for nodejs→browser
+⚠️ Unable to confidently detect environment, defaulting to nodejs
+🔗 Setting up routing table connection event handlers...
+🔗 Attaching peerConnected event handler to server connection manager
+🌐 Initialized Node.js WebSocket support
+🌐 Initializing overlay network for WebRTC signaling...
+🔗 WebSocketConnectionManager initialized with node ID: 6b72119445716745368c817175813cd287a045fc
+⏳ Waiting for WebSocket initialization to complete...
+🌐 WebSocket server ready at ws://localhost:8084
+🌐 WebSocket server listening on 127.0.0.1:8084
+🔗 Public server: 0.0.0.0:8080
+🌐 Open network mode: ENABLED (no invitations required)
+✅ Bootstrap server started on port 8080
+
+🌐 NodeDHTClient initializing
+🌐 Creating WebSocketConnectionManager for nodejs→browser
+🌐 Initialized Node.js WebSocket support
+🌐 WebSocket server listening on 127.0.0.1:52948
+⚠️ Unable to confidently detect environment, defaulting to nodejs
+🔗 Setting up routing table connection event handlers...
+🔗 Attaching peerConnected event handler to server connection manager
+🔗 New client connection (total: 1)
+🔗 Connecting to bridge node: localhost:8083
+🔗 Connecting to bridge node: localhost:8084
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Bootstrap server connected: bootstrap_1763346421802
+🔗 DHT received peerConnected: bootstra... (via WebSocketConnectionManager)
+🔗 Bootstrap server connection detected - skipping DHT operations for bootstrap_176334...
+🔗 Incoming connection from bootstra... via connection manager
+🔗 Bootstrap server connection established: bootstrap_1763346421802
+🔗 Bootstrap server connected: bootstrap_1763346421802
+🔗 DHT received peerConnected: bootstra... (via WebSocketConnectionManager)
+🔗 Bootstrap server connection detected - skipping DHT operations for bootstrap_176334...
+🔗 Incoming connection from bootstra... via connection manager
+🔗 Bootstrap server connection established: bootstrap_1763346421802
+🔍 Validating disconnected peer 11088421: not in routing table yet
+🔗 Creating CLIENT connection manager for outgoing connection to 11088421...
+⚠️ ConnectionManagerFactory creating NEW manager for 11088421... (no caching enabled)
+🌐 Creating WebSocketConnectionManager for nodejs→nodejs
+🔗 WebSocketConnectionManager initialized with node ID: 8fd8ab88cafcaa61cfa7d90fe88bef58e3a01d50
+🔗 Event handler attached to WebSocketConnectionManager for 11088421
+🔍 Validating disconnected peer 6b721194: not in routing table yet
+🔗 Creating CLIENT connection manager for outgoing connection to 6b721194...
+⚠️ ConnectionManagerFactory creating NEW manager for 6b721194... (no caching enabled)
+🌐 Creating WebSocketConnectionManager for nodejs→nodejs
+🔗 WebSocketConnectionManager initialized with node ID: 8fd8ab88cafcaa61cfa7d90fe88bef58e3a01d50
+🔗 Event handler attached to WebSocketConnectionManager for 6b721194
+🔗 Connecting to bridge node 11088421... at ws://localhost:8083
+⏳ Waiting for WebSocket initialization...
+🔗 Connecting to bridge node 6b721194... at ws://localhost:8084
+⏳ Waiting for WebSocket initialization...
+🔗 Connecting to bridge node 11088421... at ws://localhost:8083
+⏳ Waiting for WebSocket initialization...
+🔗 Connecting to bridge node 6b721194... at ws://localhost:8084
+⏳ Waiting for WebSocket initialization...
+[DHT] 📝 Storing key: public_key:8fd8ab88cafcaa61cfa7d90fe88bef58e3a01d50
+🔗 Skipping find_node query to non-connected node: 6b721194...
+🔗 Skipping find_node query to non-connected node: 11088421...
+🌐 Initialized Node.js WebSocket support
+🌐 Initialized Node.js WebSocket support
+🌐 Initializing overlay network for WebRTC signaling...
+🔗 WebSocket connection: nodejs → bridge
+🌐 Creating WebSocket connection to 11088421... at ws://localhost:8083
+🔗 WebSocket connection: nodejs → bridge
+🌐 Creating WebSocket connection to 6b721194... at ws://localhost:8084
+🔗 WebSocket connection: nodejs → bridge
+🌐 Creating WebSocket connection to 11088421... at ws://localhost:8083
+🔗 WebSocket connection: nodejs → bridge
+🌐 Creating WebSocket connection to 6b721194... at ws://localhost:8084
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Incoming WebSocket connection from 127.0.0.1
+⚠️ Server manager already handling bootstra, ignoring setup for 8fd8ab88 (should have own manager)
+⚠️ Server manager already handling bootstra, ignoring setup for 8fd8ab88 (should have own manager)
+⚠️ Server manager already handling bootstra, ignoring setup for 8fd8ab88 (should have own manager)
+⚠️ Server manager already handling bootstra, ignoring setup for 8fd8ab88 (should have own manager)
+🔗 DHT received peerConnected: 11088421... (via WebSocketConnectionManager)
+🔄 Node 11088421... already exists in routing table
+🔗 Setting up connection for existing node 11088421...
+🔗 DHT received peerConnected: 6b721194... (via WebSocketConnectionManager)
+🔄 Node 6b721194... already exists in routing table
+🔗 Setting up connection for existing node 6b721194...
+🔗 DHT received peerConnected: 11088421... (via WebSocketConnectionManager)
+🔄 Node 11088421... already exists in routing table
+🔗 DHT received peerConnected: 6b721194... (via WebSocketConnectionManager)
+🔄 Node 6b721194... already exists in routing table
+🌐 NodeDHTClient initializing
+🌐 Creating WebSocketConnectionManager for nodejs→browser
+🌐 Initialized Node.js WebSocket support
+🌐 WebSocket server listening on 127.0.0.1:52963
+⚠️ Unable to confidently detect environment, defaulting to nodejs
+🔗 Setting up routing table connection event handlers...
+🔗 Attaching peerConnected event handler to server connection manager
+🔗 New client connection (total: 2)
+🌐 Open network mode: Finding random onboarding peer for f069d5ad...
+🔄 Checking stale buckets: 2 connected, 2 routing
+🔄 Checking stale buckets: 2 connected, 2 routing
+🔄 Checking stale buckets: 2 connected, 2 routing
+🔗 Connecting to bridge node: localhost:8083
+🔗 Connecting to bridge node: localhost:8084
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Incoming WebSocket connection from 127.0.0.1
+🔗 Bootstrap server connected: bootstrap_1763346422968
+⚠️ Server manager already handling bootstra, ignoring setup for bootstra (should have own manager)
+🔗 Bootstrap server connected: bootstrap_1763346422968
+⚠️ Server manager already handling bootstra, ignoring setup for bootstra (should have own manager)
+Failed to send message to bootstrap_1763346422968: Error: Manager is for bootstrap_1763346421802, cannot send to bootstrap_1763346422968
+    at WebSocketConnectionManager.sendRawMessage (file:///C:/git/yz.network/src/network/WebSocketConnectionManager.js:569:13)
+    at WebSocketConnectionManager.sendMessage (file:///C:/git/yz.network/src/network/ConnectionManager.js:112:18)
+    at PassiveBridgeNode.handleBootstrapAuth (file:///C:/git/yz.network/src/bridge/PassiveBridgeNode.js:924:36)
+    at PassiveBridgeNode.handleConnectionMessage (file:///C:/git/yz.network/src/bridge/PassiveBridgeNode.js:894:12)
+    at WebSocketConnectionManager.<anonymous> (file:///C:/git/yz.network/src/bridge/PassiveBridgeNode.js:146:12)
+    at WebSocketConnectionManager.emit (node:events:518:28)
+    at WebSocketConnectionManager.handleMessage (file:///C:/git/yz.network/src/network/ConnectionManager.js:202:16)
+    at Timeout._onTimeout (file:///C:/git/yz.network/src/network/WebSocketConnectionManager.js:194:18)
+    at listOnTimeout (node:internal/timers:594:17)
+    at process.processTimers (node:internal/timers:529:7)
+node:internal/process/promises:394
+    triggerUncaughtException(err, true /* fromPromise */);
+    ^
+
+Error: Manager is for bootstrap_1763346421802, cannot send to bootstrap_1763346422968
+    at WebSocketConnectionManager.sendRawMessage (file:///C:/git/yz.network/src/network/WebSocketConnectionManager.js:569:13)
+    at WebSocketConnectionManager.sendMessage (file:///C:/git/yz.network/src/network/ConnectionManager.js:112:18)
+    at PassiveBridgeNode.handleBootstrapAuth (file:///C:/git/yz.network/src/bridge/PassiveBridgeNode.js:924:36)
+    at PassiveBridgeNode.handleConnectionMessage (file:///C:/git/yz.network/src/bridge/PassiveBridgeNode.js:894:12)
+    at WebSocketConnectionManager.<anonymous> (file:///C:/git/yz.network/src/bridge/PassiveBridgeNode.js:146:12)
+    at WebSocketConnectionManager.emit (node:events:518:28)
+    at WebSocketConnectionManager.handleMessage (file:///C:/git/yz.network/src/network/ConnectionManager.js:202:16)
+    at Timeout._onTimeout (file:///C:/git/yz.network/src/network/WebSocketConnectionManager.js:194:18)
+    at listOnTimeout (node:internal/timers:594:17)
+    at process.processTimers (node:internal/timers:529:7)
+
+Node.js v22.14.0

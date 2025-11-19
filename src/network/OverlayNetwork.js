@@ -633,11 +633,11 @@ export class OverlayNetwork extends EventEmitter {
 
     try {
       if (signal.type === 'offer') {
-        await this.sendWebRTCOffer(peerId, signal.sdp);
+        await this.sendConnectionOffer(peerId, signal.sdp);
       } else if (signal.type === 'answer') {
-        await this.sendWebRTCAnswer(peerId, signal.sdp);
+        await this.sendConnectionAnswer(peerId, signal.sdp);
       } else if (signal.type === 'candidate') {
-        await this.sendWebRTCIceCandidate(peerId, {
+        await this.sendConnectionCandidate(peerId, {
           candidate: signal.candidate,
           sdpMLineIndex: signal.sdpMLineIndex,
           sdpMid: signal.sdpMid

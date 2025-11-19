@@ -211,6 +211,15 @@ export class BrowserDHTClient extends DHTClient {
   }
 
   /**
+   * Proxy keyInfo to internal DHT for pub/sub
+   */
+  get keyInfo() {
+    // Return Ed25519 keys from internal DHT for pub/sub message signing
+    // Note: KademliaDHT stores keys in 'keyPair' property
+    return this.dht ? this.dht.keyPair : null;
+  }
+
+  /**
    * Proxy routingTable to internal DHT for UI access
    */
   get routingTable() {

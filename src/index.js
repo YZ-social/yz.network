@@ -1,6 +1,7 @@
 import { BrowserDHTClient } from './browser/BrowserDHTClient.js';
 import { DHTVisualizer } from './ui/DHTVisualizer.js';
 import { DHTNode } from './core/DHTNode.js';
+import { PubSubClient } from './pubsub/PubSubClient.js';
 
 /**
  * Main application entry point
@@ -14,6 +15,7 @@ class App {
     this.instanceId = instanceId;
 
     this.dht = null;
+    this.pubsub = null;
     this.visualizer = null;
     this.isInitialized = false;
   }
@@ -58,8 +60,11 @@ class App {
         console.log('🔑 Tab-specific identity mode: DISABLED (shared identity across tabs)');
       }
 
-      // Create UI visualizer
-      this.visualizer = new DHTVisualizer(this.dht);
+      // Note: PubSubClient will be initialized after DHT starts (in startDHT())
+      // because it requires cryptographic identity which is loaded asynchronously
+
+      // Create UI visualizer (pubsub will be null initially)
+      this.visualizer = new DHTVisualizer(this.dht, null);
 
       // Initialize WebAssembly components
       await this.visualizer.initializeWASM();
@@ -437,6 +442,28 @@ class App {
           console.log('Starting DHT...');
           await this.dht.start();
           console.log('DHT started successfully');
+
+          // Create PubSubClient now that identity and Ed25519 keys are loaded
+          if (!this.pubsub && this.dht.identity && this.dht.keyInfo) {
+            console.log('📬 Initializing PubSub client with loaded identity...');
+            this.pubsub = new PubSubClient(
+              this.dht,
+              this.dht.identity.nodeId,
+              this.dht.keyInfo, // Use Ed25519 keys for pub/sub message signing
+              {
+                enableBatching: true,
+                batchSize: 10,
+                batchTime: 100
+              }
+            );
+            console.log('📬 PubSub client initialized successfully');
+
+            // Update visualizer with pubsub client
+            if (this.visualizer) {
+              this.visualizer.pubsub = this.pubsub;
+              console.log('📬 PubSub client connected to visualizer');
+            }
+          }
 
           // Update identity UI after identity is loaded
           if (this.visualizer && typeof this.visualizer.updateIdentityUI === 'function') {

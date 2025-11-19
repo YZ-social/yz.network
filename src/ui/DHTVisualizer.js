@@ -1,13 +1,20 @@
+import { PubSubClient } from '../pubsub/PubSubClient.js';
+
 /**
  * DHT Network Visualizer and UI Controller
  */
 export class DHTVisualizer {
-  constructor(dht) {
+  constructor(dht, pubsub) {
     this.dht = dht;
+    this.pubsub = pubsub;
     this.logContainer = null;
     this.isLogging = true;
     this.maxLogEntries = 1000;
     this.updateInterval = null;
+
+    // Chat state
+    this.subscribedChannels = new Map(); // channelId -> { messages: [], element: DOMElement }
+    this.activeChannel = null;
 
     this.setupUI();
     this.setupEventHandlers();
@@ -82,7 +89,19 @@ export class DHTVisualizer {
       peerList: document.getElementById('peer-list'),
       logOutput: document.getElementById('log-output'),
       startLoading: document.getElementById('start-loading'),
-      wasmContainer: document.getElementById('wasm-container')
+      wasmContainer: document.getElementById('wasm-container'),
+
+      // Chat elements
+      createChannelBtn: document.getElementById('create-channel-btn'),
+      subscribeChannelBtn: document.getElementById('subscribe-channel-btn'),
+      subscribeChannelInput: document.getElementById('subscribe-channel-input'),
+      currentChannelDisplay: document.getElementById('current-channel-display'),
+      currentChannelId: document.getElementById('current-channel-id'),
+      copyChannelBtn: document.getElementById('copy-channel-btn'),
+      channelsList: document.getElementById('channels-list'),
+      chatMessages: document.getElementById('chat-messages'),
+      chatMessageInput: document.getElementById('chat-message-input'),
+      sendMessageBtn: document.getElementById('send-message-btn')
     };
 
     this.logContainer = this.elements.logOutput;
@@ -167,6 +186,32 @@ export class DHTVisualizer {
     }
     if (this.elements.identityFileInput) {
       this.elements.identityFileInput.addEventListener('change', (e) => this.handleIdentityFileUpload(e));
+    }
+
+    // Chat buttons
+    if (this.elements.createChannelBtn) {
+      this.elements.createChannelBtn.addEventListener('click', () => this.createChannel());
+    }
+    if (this.elements.subscribeChannelBtn) {
+      this.elements.subscribeChannelBtn.addEventListener('click', () => this.subscribeToChannel());
+    }
+    if (this.elements.copyChannelBtn) {
+      this.elements.copyChannelBtn.addEventListener('click', () => this.copyChannelId());
+    }
+    if (this.elements.sendMessageBtn) {
+      this.elements.sendMessageBtn.addEventListener('click', () => this.sendMessage());
+    }
+
+    // Chat enter key handlers
+    if (this.elements.subscribeChannelInput) {
+      this.elements.subscribeChannelInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') this.subscribeToChannel();
+      });
+    }
+    if (this.elements.chatMessageInput) {
+      this.elements.chatMessageInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') this.sendMessage();
+      });
     }
 
     // Setup DHT event handlers
@@ -318,6 +363,35 @@ export class DHTVisualizer {
       this.updateStatus('Running');
       this.elements.stopBtn.disabled = false;
       this.log('DHT started successfully', 'success');
+
+      // Debug: Check PubSub initialization prerequisites
+      console.log('🔍 PubSub Prerequisites Check:');
+      console.log('  - hasPubsub:', !!this.pubsub);
+      console.log('  - hasIdentity:', !!this.dht.identity);
+      console.log('  - hasKeyInfo:', !!this.dht.keyInfo);
+      console.log('  - identity:', this.dht.identity);
+      console.log('  - keyInfo:', this.dht.keyInfo);
+
+      // Initialize PubSubClient now that identity and Ed25519 keys are loaded
+      if (!this.pubsub && this.dht.identity && this.dht.keyInfo) {
+        this.log('[DHT UI] Initializing PubSub client with loaded identity...', 'info');
+        try {
+          this.pubsub = new PubSubClient(
+            this.dht,
+            this.dht.identity.nodeId,
+            this.dht.keyInfo, // Use Ed25519 keys for pub/sub message signing
+            {
+              enableBatching: true,
+              batchSize: 10,
+              batchTime: 100
+            }
+          );
+          this.log('[DHT UI] PubSub client initialized successfully', 'success');
+        } catch (error) {
+          this.log(`[DHT UI] Failed to initialize PubSub: ${error.message}`, 'error');
+          console.error('PubSub initialization error:', error);
+        }
+      }
 
       // Update node ID display with correct identity-based ID
       if (this.dht && this.dht.localNodeId) {
@@ -1265,5 +1339,287 @@ export class DHTVisualizer {
       this.updateTestStatus('Reconnection', 'failed');
       this.log(`Reconnection test failed: ${error.message}`, 'error');
     }
+  }
+
+  // ====================================================================
+  // CHAT METHODS
+  // ====================================================================
+
+  /**
+   * Create a new channel
+   */
+  async createChannel() {
+    if (!this.pubsub) {
+      this.log('PubSub not initialized', 'error');
+      return;
+    }
+
+    try {
+      // Generate a unique channel ID (use crypto for better randomness)
+      const channelId = `channel-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+
+      // CRITICAL FIX: Set up message listener BEFORE subscribing
+      // This ensures we catch historical messages delivered during subscription
+      this.pubsub.on(channelId, (message) => {
+        this.displayMessage(channelId, message);
+      });
+
+      // Add to our tracked channels (before subscribe so displayMessage can use it)
+      this.subscribedChannels.set(channelId, { messages: [] });
+
+      // Subscribe to the channel (this will deliver historical messages to the listener we just registered)
+      await this.pubsub.subscribe(channelId);
+
+      // Update UI
+      this.updateChannelsList();
+      this.switchChannel(channelId);
+
+      // Show the current channel display
+      this.elements.currentChannelDisplay.style.display = 'block';
+      this.elements.currentChannelId.value = channelId;
+
+      // Enable chat input
+      this.elements.chatMessageInput.disabled = false;
+      this.elements.sendMessageBtn.disabled = false;
+
+      this.log(`Created and joined channel: ${channelId.substring(0, 20)}...`, 'success');
+
+      // Start polling for messages
+      if (!this.pubsub.pollingInterval) {
+        this.pubsub.startPolling(5000); // Poll every 5 seconds
+      }
+
+    } catch (error) {
+      this.log(`Failed to create channel: ${error.message}`, 'error');
+    }
+  }
+
+  /**
+   * Subscribe to an existing channel
+   */
+  async subscribeToChannel() {
+    if (!this.pubsub) {
+      this.log('PubSub not initialized', 'error');
+      return;
+    }
+
+    const channelId = this.elements.subscribeChannelInput.value.trim();
+    if (!channelId) {
+      this.log('Please enter a channel ID', 'warn');
+      return;
+    }
+
+    if (this.subscribedChannels.has(channelId)) {
+      this.log('Already subscribed to this channel', 'warn');
+      this.switchChannel(channelId);
+      return;
+    }
+
+    try {
+      // CRITICAL FIX: Set up message listener BEFORE subscribing
+      // This ensures we catch historical messages delivered during subscription
+      this.pubsub.on(channelId, (message) => {
+        this.displayMessage(channelId, message);
+      });
+
+      // Add to our tracked channels (before subscribe so displayMessage can use it)
+      this.subscribedChannels.set(channelId, { messages: [] });
+
+      // Subscribe to the channel (this will deliver historical messages to the listener we just registered)
+      await this.pubsub.subscribe(channelId);
+
+      // Update UI
+      this.updateChannelsList();
+      this.switchChannel(channelId);
+
+      // Clear input
+      this.elements.subscribeChannelInput.value = '';
+
+      // Enable chat input
+      this.elements.chatMessageInput.disabled = false;
+      this.elements.sendMessageBtn.disabled = false;
+
+      this.log(`Joined channel: ${channelId.substring(0, 20)}...`, 'success');
+
+      // Start polling if not already started
+      if (!this.pubsub.pollingInterval) {
+        this.pubsub.startPolling(5000);
+      }
+
+    } catch (error) {
+      this.log(`Failed to join channel: ${error.message}`, 'error');
+    }
+  }
+
+  /**
+   * Copy current channel ID to clipboard
+   */
+  async copyChannelId() {
+    const channelId = this.elements.currentChannelId.value;
+    if (!channelId) return;
+
+    try {
+      await navigator.clipboard.writeText(channelId);
+      this.log('Channel ID copied to clipboard', 'success');
+
+      // Visual feedback
+      const btn = this.elements.copyChannelBtn;
+      const originalText = btn.textContent;
+      btn.textContent = 'Copied!';
+      btn.style.background = 'linear-gradient(135deg, #28a745, #1e7e34)';
+      setTimeout(() => {
+        btn.textContent = originalText;
+        btn.style.background = '';
+      }, 2000);
+
+    } catch (error) {
+      this.log('Failed to copy channel ID', 'error');
+    }
+  }
+
+  /**
+   * Send a message to the active channel
+   */
+  async sendMessage() {
+    if (!this.pubsub || !this.activeChannel) {
+      this.log('No active channel', 'warn');
+      return;
+    }
+
+    const messageText = this.elements.chatMessageInput.value.trim();
+    if (!messageText) {
+      return;
+    }
+
+    try {
+      // Publish message to the channel
+      const result = await this.pubsub.publish(this.activeChannel, {
+        text: messageText,
+        sender: this.dht.localNodeId.toString().substring(0, 8), // Short node ID
+        timestamp: Date.now()
+      });
+
+      if (result.success) {
+        // Clear input
+        this.elements.chatMessageInput.value = '';
+
+        this.log(`Message sent to ${this.activeChannel.substring(0, 20)}...`, 'info');
+      } else {
+        this.log('Failed to send message', 'error');
+      }
+
+    } catch (error) {
+      this.log(`Failed to send message: ${error.message}`, 'error');
+    }
+  }
+
+  /**
+   * Display a message in the chat
+   */
+  displayMessage(channelId, message) {
+    // Store message in channel history
+    const channel = this.subscribedChannels.get(channelId);
+    if (!channel) return;
+
+    channel.messages.push(message);
+
+    // Only display if this is the active channel
+    if (channelId !== this.activeChannel) return;
+
+    // Create message element
+    const messageEl = document.createElement('div');
+    messageEl.className = 'chat-message';
+
+    const headerEl = document.createElement('div');
+    headerEl.className = 'chat-message-header';
+
+    const senderEl = document.createElement('span');
+    senderEl.className = 'chat-sender';
+    senderEl.textContent = message.data.sender || 'Unknown';
+
+    const timestampEl = document.createElement('span');
+    timestampEl.className = 'chat-timestamp';
+    const date = new Date(message.data.timestamp || Date.now());
+    timestampEl.textContent = date.toLocaleTimeString();
+
+    headerEl.appendChild(senderEl);
+    headerEl.appendChild(timestampEl);
+
+    const textEl = document.createElement('div');
+    textEl.className = 'chat-text';
+    textEl.textContent = message.data.text || '';
+
+    messageEl.appendChild(headerEl);
+    messageEl.appendChild(textEl);
+
+    // Add to chat display
+    this.elements.chatMessages.appendChild(messageEl);
+
+    // Scroll to bottom
+    this.elements.chatMessages.scrollTop = this.elements.chatMessages.scrollHeight;
+  }
+
+  /**
+   * Switch to a different channel
+   */
+  switchChannel(channelId) {
+    this.activeChannel = channelId;
+
+    // Update current channel display
+    this.elements.currentChannelDisplay.style.display = 'block';
+    this.elements.currentChannelId.value = channelId;
+
+    // Clear chat display
+    this.elements.chatMessages.innerHTML = '';
+
+    // Display all messages for this channel
+    const channel = this.subscribedChannels.get(channelId);
+    if (channel && channel.messages.length > 0) {
+      channel.messages.forEach(msg => {
+        this.displayMessage(channelId, msg);
+      });
+    } else {
+      const placeholderEl = document.createElement('div');
+      placeholderEl.style.cssText = 'color: #a0aec0; font-style: italic; text-align: center; padding: 20px;';
+      placeholderEl.textContent = 'No messages yet. Start the conversation!';
+      this.elements.chatMessages.appendChild(placeholderEl);
+    }
+
+    // Update active state in channels list
+    this.updateChannelsList();
+  }
+
+  /**
+   * Update the channels list UI
+   */
+  updateChannelsList() {
+    if (!this.elements.channelsList) return;
+
+    this.elements.channelsList.innerHTML = '';
+
+    if (this.subscribedChannels.size === 0) {
+      const placeholderEl = document.createElement('div');
+      placeholderEl.style.cssText = 'color: #6c757d; font-style: italic; text-align: center; padding: 10px;';
+      placeholderEl.textContent = 'No channels yet';
+      this.elements.channelsList.appendChild(placeholderEl);
+      return;
+    }
+
+    this.subscribedChannels.forEach((channelData, channelId) => {
+      const badgeEl = document.createElement('div');
+      badgeEl.className = 'channel-badge';
+      if (channelId === this.activeChannel) {
+        badgeEl.classList.add('active');
+      }
+
+      const shortId = channelId.length > 20 ? channelId.substring(0, 20) + '...' : channelId;
+      badgeEl.textContent = shortId;
+
+      badgeEl.addEventListener('click', () => {
+        this.switchChannel(channelId);
+      });
+
+      this.elements.channelsList.appendChild(badgeEl);
+    });
   }
 }

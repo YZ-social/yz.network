@@ -852,8 +852,9 @@ export class WebRTCManager extends EventEmitter {
 
           // Send handshake to identify ourselves
           // Check if this is a bridge node connection based on metadata
-          const peerMetadata = this.peerMetadata?.get(peerId);
-          const messageType = (peerMetadata && peerMetadata.isBridgeNode) ? 'dht_peer_hello' : 'handshake';
+          // NOTE: This file is LEGACY and not currently used. Peer metadata should be on DHTNode.
+          const peerMetadata = null; // Legacy code - metadata no longer stored on connection manager
+          const messageType = 'handshake'; // Default to handshake since we don't have metadata
 
           ws.send(JSON.stringify({
             type: messageType,
