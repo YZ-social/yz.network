@@ -1,6 +1,8 @@
 # YZ Network - Docker Deployment Guide
 
-Complete guide for deploying 1000 DHT nodes with monitoring dashboard.
+Complete guide for deploying optimized DHT nodes with monitoring dashboard.
+
+**Optimized Configuration**: 15-18 nodes per server (c6i.large / 2 vCPU, 4 GB RAM)
 
 ## 📋 Table of Contents
 - [Overview](#overview)
@@ -18,31 +20,36 @@ Complete guide for deploying 1000 DHT nodes with monitoring dashboard.
 
 This deployment creates a complete DHT network with:
 - **Bootstrap Server**: Public entry point for DHT network
-- **1000 DHT Nodes**: Full participants in DHT storage and PubSub
+- **15-18 DHT Nodes**: Full participants in DHT storage and PubSub (optimized for c6i.large)
 - **Monitoring Dashboard**: Real-time metrics and health monitoring
 - **Auto-healing**: Docker health checks and automatic restarts
 
 **Architecture:**
 ```
-Internet → Bootstrap (port 8080) → DHT Mesh Network (1000 nodes)
+Internet → Bootstrap (port 8080) → DHT Mesh Network (15-18 nodes optimized)
               ↓
      Monitoring Dashboard (port 3001) → Metrics API
 ```
+
+**For larger deployments:** See `deployments/PLATFORM-COMPARISON.md` for multi-server options (60-72 nodes on Oracle Free Tier!)
 
 ---
 
 ## 🔧 Prerequisites
 
-**Server Requirements:**
-- **RAM**: 256 GB recommended (256 MB per node × 1000)
-- **CPU**: 64+ cores (0.5 core per node × 1000 / 8 threads)
-- **Disk**: 50 GB minimum
+**Server Requirements (Optimized for 15 nodes):**
+- **RAM**: 4 GB (c6i.large or equivalent)
+- **CPU**: 2 vCPUs
+- **Disk**: 20 GB minimum
 - **OS**: Linux (Ubuntu 20.04+ recommended)
+
+**For larger deployments:**
+- 60-72 nodes: 4× Oracle Free Tier VMs (FREE!)
+- 100+ nodes: See `deployments/PLATFORM-COMPARISON.md`
 
 **Software:**
 - Docker 20.10+
 - Docker Compose 1.29+
-- 10 Gbps network recommended
 
 **System Tuning:**
 ```bash
@@ -81,9 +88,9 @@ BOOTSTRAP_PORT=8080
 # Dashboard
 DASHBOARD_PORT=3001
 
-# Optional: Set resource limits
-NODE_CPU_LIMIT=0.5
-NODE_MEM_LIMIT=256M
+# Optimized resource limits
+NODE_CPU_LIMIT=0.15
+NODE_MEM_LIMIT=128M
 EOF
 ```
 
@@ -112,18 +119,17 @@ open http://localhost:3001
 # Dashboard should show 10 healthy nodes
 ```
 
-### 5. Scale to 1000 Nodes
+### 5. Scale to 15 Nodes (Optimized for c6i.large)
 ```bash
-# Scale gradually
-docker-compose up -d --scale dht-node=100
-# Wait 2 minutes, verify in dashboard
+# Scale to optimized capacity
+docker-compose up -d --scale dht-node=15
+# Wait 2-3 minutes for full mesh formation
 
-docker-compose up -d --scale dht-node=500
-# Wait 5 minutes, verify in dashboard
-
-docker-compose up -d --scale dht-node=1000
-# Wait 10-15 minutes for full mesh formation
+# Verify in dashboard
+open http://localhost:3001
 ```
+
+**For 100+ nodes:** Deploy across multiple servers - see `deployments/PLATFORM-COMPARISON.md`
 
 ---
 
@@ -154,38 +160,44 @@ METRICS_SCRAPE_INTERVAL=10000  # 10 seconds
 
 ### Resource Limits
 
-Edit `docker-compose.yml`:
+Edit `docker-compose.yml` (already optimized):
 ```yaml
 deploy:
   resources:
     limits:
-      cpus: '0.5'      # Max CPU per node
-      memory: 256M      # Max RAM per node
+      cpus: '0.15'      # Optimized: Max CPU per node
+      memory: 128M      # Optimized: Max RAM per node (reduced from 256M)
     reservations:
-      cpus: '0.1'       # Reserved CPU
-      memory: 128M      # Reserved RAM
+      cpus: '0.05'      # Optimized: Reserved CPU
+      memory: 64M       # Optimized: Reserved RAM (reduced from 128M)
 ```
 
 ---
 
 ## 📈 Scaling
 
-### Gradual Scaling (Recommended)
+### Single Server Scaling (c6i.large - 2 vCPU, 4 GB)
 ```bash
 # Start small
 docker-compose up -d --scale dht-node=10
 
-# Incremental scaling
-docker-compose up -d --scale dht-node=50
-docker-compose up -d --scale dht-node=100
-docker-compose up -d --scale dht-node=500
-docker-compose up -d --scale dht-node=1000
+# Scale to optimized capacity (MAXIMUM for c6i.large)
+docker-compose up -d --scale dht-node=15
+
+# For 18 nodes (aggressive, monitor performance)
+docker-compose up -d --scale dht-node=18
 ```
+
+### Multi-Server Scaling
+For 100+ nodes, deploy across multiple servers:
+- **Oracle Free Tier**: 60-72 nodes ($0/month)
+- **Hetzner CPX11**: 15-18 nodes ($5/month)
+- **See**: `deployments/PLATFORM-COMPARISON.md`
 
 ### Scaling Down
 ```bash
 # Reduce node count
-docker-compose up -d --scale dht-node=500
+docker-compose up -d --scale dht-node=10
 
 # Stop all nodes
 docker-compose down

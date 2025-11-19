@@ -14,11 +14,11 @@ Privacy-focused hosting in Iceland with strong legal protections.
 
 | Plan | vCPU | RAM | Storage | Price/month | DHT Nodes |
 |------|------|-----|---------|-------------|-----------|
-| **Einherji** | 1 | 1 GB | 25 GB | ISK 1,799 (~$13) | 4-8 |
-| **Bifrost** | 2 | 2 GB | 50 GB | ISK 3,499 (~$25) | 12-15 |
-| **Sleipnir** | 4 | 4 GB | 100 GB | ISK 6,999 (~$50) | 25-30 |
+| **Einherji** | 1 | 1 GB | 25 GB | ISK 1,799 (~$13) | 6-8 |
+| **Bifrost** | 2 | 2 GB | 50 GB | ISK 3,499 (~$25) | 15-18 |
+| **Sleipnir** | 4 | 4 GB | 100 GB | ISK 6,999 (~$50) | 30-36 |
 
-**Recommendation: Bifrost for 12-15 nodes**
+**Recommendation: Bifrost for 15-18 nodes (optimized)**
 
 ## Step 1: Order VPS
 
@@ -125,16 +125,16 @@ cat > .env <<EOF
 BOOTSTRAP_PORT=8080
 DASHBOARD_PORT=3001
 PUBLIC_IP=${PUBLIC_IP}
-NODE_COUNT=12
+NODE_COUNT=15
 OPEN_NETWORK=true
 EOF
 
 # Build Docker images
 docker-compose build
 
-# Start services
+# Start services (optimized: 15 nodes on Bifrost)
 docker-compose up -d
-docker-compose up -d --scale dht-node=12
+docker-compose up -d --scale dht-node=15
 
 # Verify deployment
 docker-compose ps
@@ -266,12 +266,13 @@ restic backup /root/yz.network
 ## Performance
 
 **Bifrost (2 vCPU, 2 GB) Performance:**
-- 12-15 DHT nodes
-- ~140 MB per node
+- 15-18 DHT nodes (optimized)
+- ~80-100 MB per node (optimized from 140 MB)
 - 10-20ms inter-node latency (within Iceland)
 - 80-120ms latency to US East Coast
 - 150-200ms latency to US West Coast
 - 20-40ms latency to Europe
+- ~60-80 DHT ops/sec per node
 
 **Network:** Iceland - Europe fiber, good connectivity
 
@@ -279,8 +280,8 @@ restic backup /root/yz.network
 
 | Plan | Nodes | Monthly | Annually | Savings |
 |------|-------|---------|----------|---------|
-| Bifrost | 12-15 | $25 | $300 | Pay monthly |
-| Bifrost (annual) | 12-15 | ~$21 | $250 | 16% discount |
+| Bifrost | 15-18 | $25 | $300 | Pay monthly |
+| Bifrost (annual) | 15-18 | ~$21 | $250 | 16% discount |
 
 **Plus:** Bitcoin payments accepted (no KYC trail)
 
@@ -288,9 +289,9 @@ restic backup /root/yz.network
 
 | Provider | Location | Privacy | Price | DHT Nodes |
 |----------|----------|---------|-------|-----------|
-| **1984.is** | 🇮🇸 Iceland | ⭐⭐⭐⭐⭐ | $25/mo | 12-15 |
-| **Hetzner** | 🇩🇪 Germany | ⭐⭐⭐ | $5/mo | 12-15 |
-| **Oracle** | 🌍 Global | ⭐⭐ | FREE | 40-60 |
+| **1984.is** | 🇮🇸 Iceland | ⭐⭐⭐⭐⭐ | $25/mo | 15-18 |
+| **Hetzner** | 🇩🇪 Germany | ⭐⭐⭐ | $5/mo | 15-18 |
+| **Oracle** | 🌍 Global | ⭐⭐ | FREE | 60-72 |
 
 **Choose 1984.is if:**
 - Privacy is top priority

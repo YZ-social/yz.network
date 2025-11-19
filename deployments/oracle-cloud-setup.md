@@ -23,13 +23,13 @@ Deploy 40-60 DHT nodes across 4 free ARM instances.
 
 **Option A: Balanced (Recommended)**
 - 4 instances × 1 OCPU, 6 GB each
-- Run 10-15 nodes per instance
-- **Total: 40-60 nodes**
+- Run 15-18 nodes per instance (optimized)
+- **Total: 60-72 nodes**
 
 **Option B: Concentrated**
 - 2 instances × 2 OCPU, 12 GB each
-- Run 20-30 nodes per instance
-- **Total: 40-60 nodes**
+- Run 30-36 nodes per instance (optimized)
+- **Total: 60-72 nodes**
 
 ### Create via OCI CLI
 
@@ -116,15 +116,15 @@ cat > .env <<EOF
 BOOTSTRAP_PORT=8080
 DASHBOARD_PORT=3001
 PUBLIC_IP=$(curl -s ifconfig.me)
-NODE_COUNT=15
+NODE_COUNT=18
 EOF
 
 # Build ARM images
 docker-compose build
 
-# Start bootstrap + 15 nodes
+# Start bootstrap + 18 nodes (optimized)
 docker-compose up -d
-docker-compose up -d --scale dht-node=15
+docker-compose up -d --scale dht-node=18
 ```
 
 ### On Instances 2-4 (Nodes Only)
@@ -139,12 +139,12 @@ BOOTSTRAP_IP="<instance-1-public-ip>"
 
 cat > .env <<EOF
 BOOTSTRAP_URL=ws://${BOOTSTRAP_IP}:8080
-NODE_COUNT=15
+NODE_COUNT=18
 EOF
 
-# Build and start nodes only
+# Build and start nodes only (optimized: 18 nodes)
 docker-compose build
-docker-compose -f docker-compose.nodes-only.yml up -d --scale dht-node=15
+docker-compose -f docker-compose.nodes-only.yml up -d --scale dht-node=18
 ```
 
 ## Step 5: Verify Deployment
@@ -254,9 +254,10 @@ docker-compose up -d
 ## Estimated Performance
 
 **4 × VM.Standard.A1.Flex (1 OCPU, 6 GB):**
-- 15 nodes per instance = **60 total nodes**
-- Each node: ~140 MB RAM
+- 18 nodes per instance = **72 total nodes** (optimized)
+- Each node: ~80-100 MB RAM (optimized from 140 MB)
 - Avg 15-20 DHT connections per node
 - ~5-10ms inter-node latency
+- ~60-80 DHT ops/sec per node
 
 **Cost: $0/month (FREE!)**

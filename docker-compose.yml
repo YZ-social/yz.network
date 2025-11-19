@@ -28,7 +28,7 @@ services:
       retries: 3
       start_period: 40s
 
-  # DHT Nodes - Scale to 1000 instances
+  # DHT Nodes - Optimized for maximum density
   # Internal nodes that form the DHT mesh
   dht-node:
     build:
@@ -45,14 +45,14 @@ services:
       - bootstrap
     restart: unless-stopped
     deploy:
-      replicas: 10  # Start with 10, scale up with: docker-compose up -d --scale dht-node=1000
+      replicas: 15  # Optimized: 15 nodes on c6i.large (2 vCPU, 4 GB)
       resources:
         limits:
-          cpus: '0.5'
-          memory: 256M
+          cpus: '0.15'      # Optimized: reduced from 0.5
+          memory: 128M      # Optimized: reduced from 256M
         reservations:
-          cpus: '0.1'
-          memory: 128M
+          cpus: '0.05'      # Optimized: reduced from 0.1
+          memory: 64M       # Optimized: reduced from 128M
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/health"]
       interval: 30s

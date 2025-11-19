@@ -24,15 +24,15 @@ services:
       - dht-network
     restart: unless-stopped
     deploy:
-      # Adjust replicas based on server capacity
+      # Optimized for maximum density: 15 nodes on c6i.large (2 vCPU, 4 GB)
       replicas: ${NODE_COUNT:-15}
       resources:
         limits:
-          cpus: '0.15'
-          memory: 192M
+          cpus: '0.15'      # Optimized for 15 nodes
+          memory: 128M      # Optimized: reduced from 192M
         reservations:
-          cpus: '0.05'
-          memory: 96M
+          cpus: '0.05'      # Minimum per node
+          memory: 64M       # Optimized: reduced from 96M
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/health"]
       interval: 30s

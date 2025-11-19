@@ -6,10 +6,10 @@ Quick reference for choosing the best hosting platform.
 
 | Use Case | Platform | Cost | Nodes |
 |----------|----------|------|-------|
-| **Testing/Learning** | Oracle Free Tier | $0 | 40-60 |
-| **Budget Production** | Hetzner CPX11 | $5/mo | 12-15 |
-| **Privacy-Critical** | 1984.is Bifrost | $25/mo | 12-15 |
-| **Stay in AWS** | Fargate Spot | $26/mo | 12-15 |
+| **Testing/Learning** | Oracle Free Tier | $0 | 60-72 |
+| **Budget Production** | Hetzner CPX11 | $5/mo | 15-18 |
+| **Privacy-Critical** | 1984.is Bifrost | $25/mo | 15-18 |
+| **Stay in AWS** | Fargate Spot | $26/mo | 15-18 |
 
 ---
 
@@ -24,7 +24,7 @@ Quick reference for choosing the best hosting platform.
 - 200 GB total storage
 - 10 TB monthly transfer
 
-**DHT Capacity: 40-60 nodes across 4 instances**
+**DHT Capacity: 60-72 nodes across 4 instances (optimized)**
 
 **Pros:**
 - ✅ Completely free
@@ -61,7 +61,7 @@ Quick reference for choosing the best hosting platform.
 - 40 GB SSD
 - 20 TB traffic
 
-**DHT Capacity: 12-15 nodes**
+**DHT Capacity: 15-18 nodes (optimized)**
 
 **Pros:**
 - ✅ Extremely cheap
@@ -97,7 +97,7 @@ Quick reference for choosing the best hosting platform.
 - 2 GB RAM
 - 50 GB SSD
 
-**DHT Capacity: 12-15 nodes**
+**DHT Capacity: 15-18 nodes (optimized)**
 
 **Pros:**
 - ✅ Strong privacy laws (Iceland)
@@ -134,7 +134,7 @@ Quick reference for choosing the best hosting platform.
 - 0.5 GB RAM × 12 containers
 - Variable resources
 
-**DHT Capacity: 12-15 nodes**
+**DHT Capacity: 15-18 nodes (optimized)**
 
 **Pros:**
 - ✅ AWS ecosystem integration
@@ -166,11 +166,11 @@ Quick reference for choosing the best hosting platform.
 
 | Nodes | Oracle | Hetzner | 1984.is | AWS Spot |
 |-------|--------|---------|---------|----------|
-| 12-15 | $0 | $5 | $25 | $26 |
-| 40-60 | $0 | $20 | $100 | $104 |
-| 100 | $0* | $50 | $200 | $208 |
+| 15-18 | $0 | $5 | $25 | $26 |
+| 60-72 | $0 | $20 | $100 | $104 |
+| 100 | $0* | $42 | $167 | $174 |
 
-*Oracle free tier capped at ~60 nodes
+*Oracle free tier capped at ~72 nodes
 
 ### Annual Costs
 
@@ -215,10 +215,10 @@ Quick reference for choosing the best hosting platform.
 
 ### Configuration A: Free + Cheap
 ```
-Oracle Free Tier:  40 nodes  ($0/mo)
-Hetzner CPX11:     12 nodes  ($5/mo)
+Oracle Free Tier:  60 nodes  ($0/mo)
+Hetzner CPX11:     15 nodes  ($5/mo)
 ──────────────────────────────────────
-Total:             52 nodes  ($5/mo)
+Total:             75 nodes  ($5/mo)
 ```
 
 **Benefits:**
@@ -229,10 +229,10 @@ Total:             52 nodes  ($5/mo)
 
 ### Configuration B: Privacy + Performance
 ```
-1984.is Bifrost:   12 nodes  ($25/mo)
-Hetzner CPX11:     12 nodes  ($5/mo)
+1984.is Bifrost:   15 nodes  ($25/mo)
+Hetzner CPX11:     15 nodes  ($5/mo)
 ──────────────────────────────────────
-Total:             24 nodes  ($30/mo)
+Total:             30 nodes  ($30/mo)
 ```
 
 **Benefits:**
@@ -263,25 +263,25 @@ START: Where should I host?
 
 ## Quick Start Commands
 
-### Oracle Cloud (4 instances, 60 nodes)
+### Oracle Cloud (4 instances, 72 nodes optimized)
 ```bash
 # Follow oracle-cloud-setup.md
 ```
 
-### Hetzner (12 nodes)
+### Hetzner (15 nodes optimized)
 ```bash
 hcloud server create --type cpx11 --name yz-dht --image ubuntu-22.04
 ssh root@<ip>
 git clone <repo> && cd yz.network
-docker-compose up -d --scale dht-node=12
+docker-compose up -d --scale dht-node=15
 ```
 
-### 1984.is (12 nodes)
+### 1984.is (15 nodes optimized)
 ```bash
 # Order Bifrost plan
 ssh root@<server>
 git clone <repo> && cd yz.network
-docker-compose up -d --scale dht-node=12
+docker-compose up -d --scale dht-node=15
 ```
 
 ---
@@ -299,20 +299,20 @@ docker-compose up -d --scale dht-node=12
 
 **For your situation:**
 
-1. **Start with Oracle Free Tier** (4 instances, 40 nodes, FREE)
+1. **Start with Oracle Free Tier** (4 instances, 60-72 nodes, FREE)
    - Test everything
    - Learn the system
    - Run for free indefinitely
 
-2. **Add Hetzner if needed** ($5/mo, 12 more nodes)
+2. **Add Hetzner if needed** ($5/mo, 15 more nodes)
    - EU presence
    - Paid backup
    - Easy to scale
 
-3. **Consider 1984.is for sensitive data** ($25/mo, 12 nodes)
+3. **Consider 1984.is for sensitive data** ($25/mo, 15 nodes)
    - Only if privacy critical
    - Or for ethical reasons
 
-**Total: 52-60 nodes for $0-5/month**
+**Total: 75-87 nodes for $0-5/month**
 
 This beats AWS by a mile and gives you a robust, distributed DHT network!
