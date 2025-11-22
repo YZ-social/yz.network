@@ -1,0 +1,25 @@
+# YZ Network Web Client - Production Deployment
+# Serves the browser-based DHT client for testing and community access
+
+services:
+  webserver:
+    image: nginx:alpine
+    container_name: yz-webserver
+    ports:
+      - "3000:80"
+    volumes:
+      - ./dist:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - yz-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  yz-network:
+    external: true
+    name: yznetwork_yz-network
