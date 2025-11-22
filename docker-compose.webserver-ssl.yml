@@ -1,0 +1,28 @@
+# YZ Network Web Client - HTTPS Production Deployment
+# Serves the browser-based DHT client over HTTPS with Let's Encrypt
+
+services:
+  webserver:
+    image: nginx:alpine
+    container_name: yz-webserver
+    ports:
+      - "80:80"    # HTTP (redirects to HTTPS)
+      - "443:443"  # HTTPS
+    volumes:
+      - ./dist:/usr/share/nginx/html:ro
+      - ./nginx-ssl.conf:/etc/nginx/conf.d/default.conf:ro
+      # Mount Let's Encrypt certificates
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    networks:
+      - yz-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "https://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  yz-network:
+    external: true
+    name: yznetwork_yz-network
