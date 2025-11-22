@@ -15,6 +15,8 @@ services:
       - CREATE_NEW_DHT=true
       - OPEN_NETWORK=true
       - BRIDGE_AUTH=${BRIDGE_AUTH:-default-bridge-auth-key}
+      - BRIDGE_NODE_1=bridge-node-1:8083
+      - BRIDGE_NODE_2=bridge-node-2:8084
       - METRICS_PORT=9090
     networks:
       - yz-network
