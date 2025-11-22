@@ -147,6 +147,34 @@ services:
           cpus: '0.2'
           memory: 256M
 
+  # HTTPS Web Server (Browser Client)
+  webserver:
+    image: nginx:alpine
+    container_name: yz-webserver
+    ports:
+      - "80:80"    # HTTP (redirects to HTTPS)
+      - "443:443"  # HTTPS
+    volumes:
+      - ./dist:/usr/share/nginx/html:ro
+      - ./nginx-ssl.conf:/etc/nginx/conf.d/default.conf:ro
+      # Mount Let's Encrypt certificates
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    networks:
+      - yz-network
+    restart: unless-stopped
+    depends_on:
+      - bootstrap
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "https://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 128M
+
 networks:
   yz-network:
     driver: bridge
