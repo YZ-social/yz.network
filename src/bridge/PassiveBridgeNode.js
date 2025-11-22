@@ -1,6 +1,7 @@
 import { DHTClient } from '../core/DHTClient.js';
 import { ConnectionManagerFactory } from '../network/ConnectionManagerFactory.js';
 import { DHTNodeId } from '../core/DHTNodeId.js';
+import http from 'http';
 
 /**
  * Passive Bridge Node - DHT Observer for Reconnection Services
@@ -24,6 +25,11 @@ export class PassiveBridgeNode extends DHTClient {
     this.bridgeAuth = options.bridgeAuth || 'default-bridge-auth-key';
     this.bridgePort = options.bridgePort || 8083;
     this.bridgeHost = options.bridgeHost || 'localhost';
+
+    // Metrics server for health checks
+    this.metricsPort = options.metricsPort || parseInt(process.env.METRICS_PORT) || 9090;
+    this.metricsServer = null;
+    this.startTime = Date.now();
 
     // Create connection manager using factory (connection-agnostic)
     // Bridge nodes are Node.js servers accepting browser and Node.js client connections
@@ -178,6 +184,9 @@ export class PassiveBridgeNode extends DHTClient {
    */
   async start() {
     console.log('🌉 Starting Passive Bridge Node');
+
+    // Start metrics server first
+    await this.startMetricsServer();
 
     // Call superclass start to create DHT
     await super.start();
@@ -1168,5 +1177,123 @@ export class PassiveBridgeNode extends DHTClient {
       console.error('Failed to generate bridge signature:', error);
       return null;
     }
+  }
+
+  /**
+   * Start HTTP server for metrics and health checks
+   */
+  async startMetricsServer() {
+    this.metricsServer = http.createServer((req, res) => {
+      // CORS headers for dashboard
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+      res.setHeader('Content-Type', 'application/json');
+
+      if (req.method === 'OPTIONS') {
+        res.writeHead(200);
+        res.end();
+        return;
+      }
+
+      if (req.url === '/health') {
+        this.handleHealthCheck(req, res);
+      } else if (req.url === '/metrics') {
+        this.handleMetrics(req, res);
+      } else if (req.url === '/status') {
+        this.handleStatus(req, res);
+      } else {
+        res.writeHead(404);
+        res.end(JSON.stringify({ error: 'Not found' }));
+      }
+    });
+
+    return new Promise((resolve, reject) => {
+      this.metricsServer.listen(this.metricsPort, '0.0.0.0', (err) => {
+        if (err) {
+          reject(err);
+        } else {
+          console.log(`📊 Metrics server listening on port ${this.metricsPort}`);
+          resolve();
+        }
+      });
+    });
+  }
+
+  /**
+   * Health check endpoint
+   */
+  handleHealthCheck(req, res) {
+    const uptime = Date.now() - this.startTime;
+    const connectedPeers = this.connectedPeers.size;
+
+    // Bridge node is healthy if:
+    // 1. DHT is running
+    // 2. Has been up for at least 5 seconds (startup grace period)
+    const isHealthy = this.dht && (uptime > 5000);
+
+    res.writeHead(isHealthy ? 200 : 503);
+    res.end(JSON.stringify({
+      healthy: isHealthy,
+      uptime,
+      connectedPeers,
+      timestamp: Date.now(),
+      nodeType: 'bridge'
+    }));
+  }
+
+  /**
+   * Metrics endpoint
+   */
+  handleMetrics(req, res) {
+    const metrics = {
+      uptime: Date.now() - this.startTime,
+      connectedPeers: this.connectedPeers.size,
+      peerAnnouncements: this.peerAnnouncements.size,
+      authorizedBootstrap: this.authorizedBootstrap.size,
+      timestamp: Date.now()
+    };
+
+    res.writeHead(200);
+    res.end(JSON.stringify(metrics, null, 2));
+  }
+
+  /**
+   * Status endpoint
+   */
+  handleStatus(req, res) {
+    const status = {
+      nodeType: 'bridge',
+      nodeId: this.dht ? this.dht.localNodeId.toString() : null,
+      uptime: Date.now() - this.startTime,
+      connectedPeers: this.connectedPeers.size,
+      peerAnnouncements: this.peerAnnouncements.size,
+      authorizedBootstrap: this.authorizedBootstrap.size,
+      bridgePort: this.bridgePort,
+      metricsPort: this.metricsPort,
+      isHealthy: this.dht && ((Date.now() - this.startTime) > 5000)
+    };
+
+    res.writeHead(200);
+    res.end(JSON.stringify(status, null, 2));
+  }
+
+  /**
+   * Shutdown the bridge node and metrics server
+   */
+  async shutdown() {
+    console.log('🛑 Shutting down bridge node...');
+
+    // Close metrics server
+    if (this.metricsServer) {
+      await new Promise(resolve => this.metricsServer.close(resolve));
+      console.log('✅ Metrics server closed');
+    }
+
+    // Call parent shutdown
+    if (super.shutdown) {
+      await super.shutdown();
+    }
+
+    console.log('✅ Bridge node shutdown complete');
   }
 }
