@@ -1,5 +1,3 @@
-version: '3.8'
-
 # Production deployment for Oracle Cloud (or any server)
 # Bootstrap + Bridge Nodes + Dashboard
 
@@ -85,6 +83,9 @@ services:
 
   # Monitoring Dashboard
   dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
     image: itsmeront/yz-dashboard:latest
     container_name: yz-dashboard
     ports:
