@@ -40,7 +40,7 @@ class App {
         replicateK: 20,
         useTabIdentity: useTabIdentity, // Enable tab-specific identities for testing multiple clients
         bootstrapServers: [
-          'ws://localhost:8080'
+          `ws://${window.location.hostname}:8080`
         ],
         webrtc: {
           iceServers: [
