@@ -12,6 +12,27 @@ Quick reference for choosing the best hosting platform.
 | **Stay in AWS** | Fargate Spot | $26/mo | 15-18 |
 
 ---
+## Memory Requirements
+Real Memory Usage per Node:
+
+Base Requirements:
+- Node.js runtime: 20-30 MB
+- Loaded code (DHT + PubSub modules): 10-20 MB
+- Routing table (k=20 nodes, ~1KB each): ~20 KB
+- WebSocket connections (15-20 active): 1-2 MB
+- DHT storage (cached data): 5-20 MB (variable)
+- PubSub state (subscriptions, messages): 1-5 MB
+- HTTP server (metrics API): 5 MB
+- Buffers + overhead: 10-20 MB
+
+Actual usage: 50-80 MB typically
+
+Why We Set 192-256 MB:
+1. Safety margin - Prevents OOM kills
+2. DHT storage spikes - Node stores data, can vary
+3. PubSub messages - Message queues can grow
+4. V8 garbage collection - Needs headroom
+5. Connection bursts - Temporary spikes during peer discovery
 
 ## Detailed Comparison
 

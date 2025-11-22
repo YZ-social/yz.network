@@ -52,14 +52,23 @@ async function discoverNodes() {
   try {
     // Find all containers running DHT nodes
     const { stdout } = await execAsync(
-      `docker ps --filter "name=yz-network[-_]dht-node" --format "{{.Names}}:{{.Ports}}"`
+      `docker ps --filter "name=yznetwork[-_]dht-node" --format "{{.Names}}:{{.Ports}}"`
     );
 
+    console.log('DEBUG: stdout =', JSON.stringify(stdout));
+    console.log('DEBUG: stdout length =', stdout.length);
+    console.log('DEBUG: stdout trimmed length =', stdout.trim().length);
+
     const containers = stdout.trim().split('\n').filter(Boolean);
+    console.log('DEBUG: containers array =', containers);
+    console.log('DEBUG: containers count =', containers.length);
+
     const nodes = [];
 
     for (const container of containers) {
+      console.log('DEBUG: processing container =', container);
       const [name, ports] = container.split(':');
+      console.log('DEBUG: name =', name, ', ports =', ports);
 
       // Extract metrics port (defaults to 9090)
       const portMatch = ports.match(/0\.0\.0\.0:(\d+)->9090/);
@@ -73,9 +82,11 @@ async function discoverNodes() {
       });
     }
 
+    console.log('DEBUG: final nodes array =', nodes);
     return nodes;
   } catch (error) {
     console.error('Error discovering nodes:', error.message);
+    console.error('Error stack:', error.stack);
     return [];
   }
 }

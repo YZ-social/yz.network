@@ -1,0 +1,112 @@
+version: '3.8'
+
+# Production deployment for Oracle Cloud (or any server)
+# Bootstrap + Bridge Nodes + Dashboard
+
+services:
+  # Enhanced Bootstrap Server (Public-facing)
+  bootstrap:
+    image: itsmeront/yz-dht-node:latest
+    container_name: yz-bootstrap-server
+    ports:
+      - "8080:8080"  # Public bootstrap/WebSocket server
+    environment:
+      - NODE_TYPE=bootstrap
+      - WEBSOCKET_PORT=8080
+      - WEBSOCKET_HOST=0.0.0.0
+      - CREATE_NEW_DHT=true
+      - OPEN_NETWORK=true
+      - BRIDGE_AUTH=${BRIDGE_AUTH:-default-bridge-auth-key}
+    networks:
+      - yz-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:8080/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Bridge Node 1 (Internal only)
+  bridge-node-1:
+    image: itsmeront/yz-dht-node:latest
+    container_name: yz-bridge-node-1
+    ports:
+      - "8083:8083"
+      - "9083:9090"
+    environment:
+      - NODE_TYPE=bridge
+      - WEBSOCKET_PORT=8083
+      - WEBSOCKET_HOST=0.0.0.0
+      - BOOTSTRAP_URL=ws://bootstrap:8080
+      - NODE_NAME=bridge-node-1
+      - METRICS_PORT=9090
+      - BRIDGE_AUTH=${BRIDGE_AUTH:-default-bridge-auth-key}
+    networks:
+      - yz-network
+    restart: unless-stopped
+    depends_on:
+      - bootstrap
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+
+  # Bridge Node 2 (Internal only)
+  bridge-node-2:
+    image: itsmeront/yz-dht-node:latest
+    container_name: yz-bridge-node-2
+    ports:
+      - "8084:8084"
+      - "9084:9090"
+    environment:
+      - NODE_TYPE=bridge
+      - WEBSOCKET_PORT=8084
+      - WEBSOCKET_HOST=0.0.0.0
+      - BOOTSTRAP_URL=ws://bootstrap:8080
+      - NODE_NAME=bridge-node-2
+      - METRICS_PORT=9090
+      - BRIDGE_AUTH=${BRIDGE_AUTH:-default-bridge-auth-key}
+    networks:
+      - yz-network
+    restart: unless-stopped
+    depends_on:
+      - bootstrap
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+
+  # Monitoring Dashboard
+  dashboard:
+    image: itsmeront/yz-dashboard:latest
+    container_name: yz-dashboard
+    ports:
+      - "3001:3000"
+    environment:
+      - BOOTSTRAP_URL=http://bootstrap:8080
+      - BRIDGE_NODE_1_URL=http://bridge-node-1:9090
+      - BRIDGE_NODE_2_URL=http://bridge-node-2:9090
+      - METRICS_SCRAPE_INTERVAL=10000
+    networks:
+      - yz-network
+    restart: unless-stopped
+    depends_on:
+      - bootstrap
+      - bridge-node-1
+      - bridge-node-2
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 256M
+
+networks:
+  yz-network:
+    driver: bridge

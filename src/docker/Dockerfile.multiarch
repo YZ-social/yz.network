@@ -1,0 +1,45 @@
+# Multi-architecture Dockerfile for YZ Network DHT Nodes
+# Supports: linux/amd64, linux/arm64
+
+FROM node:20-alpine
+
+LABEL maintainer="YZ Network Team"
+LABEL description="YZ Network DHT Node - Multi-architecture support"
+
+# Install required packages
+RUN apk add --no-cache \
+    python3 \
+    make \
+    g++ \
+    git
+
+# Create app directory
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN npm ci --only=production && npm cache clean --force
+
+# Copy source code
+COPY src/ ./src/
+
+# Environment variables with defaults
+ENV BOOTSTRAP_URL=ws://bootstrap.yz.network:8080
+ENV NODE_NAME=community-node
+ENV WEBSOCKET_PORT=8100
+ENV WEBSOCKET_HOST=0.0.0.0
+ENV METRICS_PORT=9090
+ENV OPEN_NETWORK=false
+ENV UPNP_ENABLED=false
+
+# Expose ports
+EXPOSE 8100 9090
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:9090/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"
+
+# Start the DHT node
+CMD ["node", "src/docker/start-dht-node.js"]

@@ -21,6 +21,7 @@
     "bridge:genesis": "node src/bridge/start-bridge-system.js -createNewDHT",
     "bridge:genesis:openNetwork": "node src/bridge/start-bridge-system.js -createNewDHT -openNetwork",
     "bridge:openNetwork": "node src/bridge/start-bridge-system.js -openNetwork",
+    "install-node": "node src/installer/install-node.js",
     "lint": "eslint src/**/*.js",
     "clean": "rm -rf dist node_modules",
     "shutdown": "node scripts/shutdown.js",
@@ -40,7 +41,8 @@
   "dependencies": {
     "@noble/ed25519": "^2.0.0",
     "crypto-js": "^4.2.0",
-    "events": "^3.3.0"
+    "events": "^3.3.0",
+    "ws": "^8.14.2"
   },
   "devDependencies": {
     "@babel/core": "^7.23.0",
@@ -60,8 +62,7 @@
     "util": "^0.12.5",
     "webpack": "^5.89.0",
     "webpack-cli": "^5.1.4",
-    "webpack-dev-server": "^5.2.2",
-    "ws": "^8.14.2"
+    "webpack-dev-server": "^5.2.2"
   },
   "keywords": [
     "dht",
@@ -72,5 +73,8 @@
     "decentralized"
   ],
   "author": "YZSocialC Team",
-  "license": "MIT"
+  "license": "MIT",
+  "optionalDependencies": {
+    "nat-upnp": "^1.1.1"
+  }
 }

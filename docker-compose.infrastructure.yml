@@ -1,5 +1,9 @@
 version: '3.8'
 
+# Infrastructure Services - PRIMARY SERVER ONLY
+# Run this FIRST on your main server to set up bootstrap and bridge nodes
+# Usage: docker-compose -f docker-compose.infrastructure.yml up -d
+
 services:
   # Bootstrap Server - Entry point for DHT network
   # This should be publicly accessible on your server
@@ -50,6 +54,7 @@ services:
       - BRIDGE_AUTH=${BRIDGE_AUTH:-default-bridge-auth-key}
       - BOOTSTRAP_URL=ws://bootstrap:8080
       - METRICS_PORT=9090
+      - PUBLIC_ADDRESS=bridge-node-1:8083
     networks:
       - dht-network
     restart: unless-stopped
@@ -82,6 +87,7 @@ services:
       - BRIDGE_AUTH=${BRIDGE_AUTH:-default-bridge-auth-key}
       - BOOTSTRAP_URL=ws://bootstrap:8080
       - METRICS_PORT=9090
+      - PUBLIC_ADDRESS=bridge-node-2:8084
     networks:
       - dht-network
     restart: unless-stopped
@@ -99,38 +105,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-
-  # DHT Nodes - Optimized for maximum density
-  # Internal nodes that form the DHT mesh
-  dht-node:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    command: node src/docker/start-dht-node.js
-    environment:
-      - BOOTSTRAP_URL=ws://bootstrap:8080
-      - OPEN_NETWORK=true
-      - METRICS_PORT=9090
-    networks:
-      - dht-network
-    depends_on:
-      - bootstrap
-    restart: unless-stopped
-    deploy:
-      replicas: 15  # Optimized: 15 nodes on c6i.large (2 vCPU, 4 GB)
-      resources:
-        limits:
-          cpus: '0.15'      # Optimized: reduced from 0.5
-          memory: 128M      # Optimized: reduced from 256M
-        reservations:
-          cpus: '0.05'      # Optimized: reduced from 0.1
-          memory: 64M       # Optimized: reduced from 128M
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s  # Give nodes more time to connect
 
   # Monitoring Dashboard - Web UI to monitor the DHT network
   dashboard:
@@ -163,7 +137,3 @@ networks:
     ipam:
       config:
         - subnet: 172.28.0.0/16
-
-# Volumes for persistent data (optional - currently DHT is ephemeral)
-# volumes:
-#   dht-data:

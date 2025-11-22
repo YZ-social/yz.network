@@ -10,6 +10,7 @@
  */
 
 import { EventEmitter } from 'events';
+import crypto from 'crypto';
 import { KademliaDHT } from '../dht/KademliaDHT.js';
 import { BootstrapClient } from '../bootstrap/BootstrapClient.js';
 import { DHTNodeId } from './DHTNodeId.js';
@@ -47,8 +48,8 @@ export class DHTClient extends EventEmitter {
    * Generate node ID - can be overridden by subclasses
    */
   generateNodeId() {
-    const seed = new Uint8Array(20);
-    crypto.getRandomValues(seed);
+    // Use Node.js crypto for random bytes (browser subclasses will override)
+    const seed = crypto.randomBytes(20);
     return new DHTNodeId(seed);
   }
 

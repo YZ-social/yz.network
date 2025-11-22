@@ -21,8 +21,8 @@ const DEFAULT_CONFIG = {
   openNetwork: process.argv.includes('-openNetwork') || process.argv.includes('--open-network'),
   bridgeAuth: process.env.BRIDGE_AUTH || 'default-bridge-auth-key',
   bridgeNodes: [
-    'localhost:8083',  // Primary bridge node
-    'localhost:8084',  // Secondary bridge node
+    process.env.BRIDGE_NODE_1 || 'localhost:8083',  // Primary bridge node
+    process.env.BRIDGE_NODE_2 || 'localhost:8084',  // Secondary bridge node
   ]
 };
 
@@ -193,6 +193,8 @@ Environment Variables:
   BOOTSTRAP_HOST=0.0.0.0           Bootstrap server host
   MAX_PEERS=1000                   Maximum connected peers
   BRIDGE_AUTH=your-key             Bridge authentication key (must match bridge nodes)
+  BRIDGE_NODE_1=localhost:8083     Primary bridge node address
+  BRIDGE_NODE_2=localhost:8084     Secondary bridge node address
 
 Startup Order:
   1. First:  npm run bridge-nodes     # Start internal bridge nodes

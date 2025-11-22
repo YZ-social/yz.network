@@ -1,0 +1,47 @@
+version: '3.8'
+
+# DHT Nodes - Can run on ANY server (primary or secondary)
+# These nodes join the existing DHT network via bootstrap/bridge
+#
+# PRIMARY SERVER Usage:
+#   docker-compose -f docker-compose.nodes.yml up -d
+#
+# SECONDARY SERVER Usage:
+#   export BOOTSTRAP_URL=ws://PRIMARY_SERVER_IP:8080
+#   docker-compose -f docker-compose.nodes.yml up -d
+
+services:
+  dht-node:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: node src/docker/start-dht-node.js
+    environment:
+      - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
+      - OPEN_NETWORK=true
+      - METRICS_PORT=9090
+    networks:
+      - dht-network
+    restart: unless-stopped
+    deploy:
+      replicas: 15  # Optimized: 15 nodes on c6i.large (2 vCPU, 4 GB)
+      resources:
+        limits:
+          cpus: '0.15'      # Optimized: reduced from 0.5
+          memory: 128M      # Optimized: reduced from 256M
+        reservations:
+          cpus: '0.05'      # Optimized: reduced from 0.1
+          memory: 64M       # Optimized: reduced from 128M
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s  # Give nodes more time to connect
+
+# Use the existing network created by infrastructure.yml (primary)
+# or create a new one for secondary servers
+networks:
+  dht-network:
+    external: true
+    name: yznetwork_dht-network

@@ -1,0 +1,39 @@
+version: '3.8'
+
+# Genesis Node - ONE-TIME BOOTSTRAP
+# Run this ONCE on primary server to establish the initial DHT network
+# Usage: docker-compose -f docker-compose.genesis.yml up
+#
+# After genesis completes and connects to bridge:
+# 1. You'll see "✅ Connected to bridge node" in logs
+# 2. Press Ctrl+C to stop the genesis container
+# 3. The DHT network is now established via bridge nodes
+# 4. Start regular nodes with: docker-compose -f docker-compose.nodes.yml up -d
+
+services:
+  genesis-node:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yz-genesis-bootstrap
+    command: node src/docker/start-dht-node.js
+    environment:
+      - BOOTSTRAP_URL=ws://bootstrap:8080
+      - OPEN_NETWORK=true
+      - METRICS_PORT=9090
+    networks:
+      - dht-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.15'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+
+# Use the existing network created by infrastructure.yml
+networks:
+  dht-network:
+    external: true
+    name: yznetwork_dht-network

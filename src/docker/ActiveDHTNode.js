@@ -28,12 +28,24 @@ export class ActiveDHTNode extends DHTClient {
       enableConnections: true,
       k: options.k || 20,
       alpha: options.alpha || 3,
+      // WebSocket server configuration
+      websocketPort: options.websocketPort,
+      websocketHost: options.websocketHost || '0.0.0.0',
+      publicAddress: options.publicAddress,
+      upnpEnabled: options.upnpEnabled !== false,
       ...options
     });
 
     // HTTP server for metrics/health endpoint
     this.metricsPort = options.metricsPort || 9090;
     this.metricsServer = null;
+
+    // WebSocket server configuration
+    this.websocketPort = options.websocketPort;
+    this.websocketHost = options.websocketHost || '0.0.0.0';
+    this.publicAddress = options.publicAddress;
+    this.upnpEnabled = options.upnpEnabled !== false;
+    this.upnpMappings = [];
 
     // PubSub client
     this.pubsub = null;
@@ -230,7 +242,7 @@ export class ActiveDHTNode extends DHTClient {
    */
   handleHealthCheck(req, res) {
     const uptime = Date.now() - this.metrics.startTime;
-    const connectedPeers = this.dht ? this.dht.getAllConnectedPeers().length : 0;
+    const connectedPeers = this.dht ? this.dht.getConnectedPeers().length : 0;
 
     // Node is healthy if:
     // 1. DHT is running
@@ -272,7 +284,7 @@ export class ActiveDHTNode extends DHTClient {
       capabilities: this.getCapabilities(),
       uptime: Date.now() - this.metrics.startTime,
       dht: this.dht ? {
-        connectedPeers: this.dht.getAllConnectedPeers().length,
+        connectedPeers: this.dht.getConnectedPeers().length,
         routingTableSize: this.dht.routingTable.getAllNodes().length,
         active: true
       } : { active: false },
@@ -296,7 +308,7 @@ export class ActiveDHTNode extends DHTClient {
    */
   collectMetrics() {
     const uptime = (Date.now() - this.metrics.startTime) / 1000;
-    const connectedPeers = this.dht ? this.dht.getAllConnectedPeers().length : 0;
+    const connectedPeers = this.dht ? this.dht.getConnectedPeers().length : 0;
     const routingTableSize = this.dht ? this.dht.routingTable.getAllNodes().length : 0;
 
     return {
@@ -473,7 +485,7 @@ export class ActiveDHTNode extends DHTClient {
     // Update connection metrics every 10 seconds
     this.metricsInterval = setInterval(() => {
       if (this.dht) {
-        const connections = this.dht.getAllConnectedPeers().length;
+        const connections = this.dht.getConnectedPeers().length;
         this.metrics.currentConnections = connections;
         this.metrics.maxConnections = Math.max(this.metrics.maxConnections, connections);
       }
@@ -491,7 +503,7 @@ export class ActiveDHTNode extends DHTClient {
   async performHealthCheck() {
     try {
       const uptime = Date.now() - this.metrics.startTime;
-      const connectedPeers = this.dht ? this.dht.getAllConnectedPeers().length : 0;
+      const connectedPeers = this.dht ? this.dht.getConnectedPeers().length : 0;
 
       // Health criteria
       const hasConnections = connectedPeers > 0 || uptime < 30000;

@@ -58,18 +58,32 @@ export class InvitationToken {
       // Configure for Node.js environment
       if (typeof process !== 'undefined' && process.versions && process.versions.node) {
         const crypto = await import('crypto');
+
+        // Polyfill crypto.getRandomValues for Node.js
+        if (typeof globalThis.crypto === 'undefined') {
+          globalThis.crypto = {};
+        }
+        if (!globalThis.crypto.getRandomValues) {
+          globalThis.crypto.getRandomValues = (arr) => {
+            const bytes = crypto.randomBytes(arr.length);
+            arr.set(bytes);
+            return arr;
+          };
+          console.log('🔧 Added crypto.getRandomValues polyfill for Node.js');
+        }
+
         if (this._nobleEd25519.ed25519) {
           // Handle both named and default exports
           const ed25519 = this._nobleEd25519.ed25519 || this._nobleEd25519;
           if (ed25519.etc && !ed25519.etc.sha512Sync) {
             ed25519.etc.sha512Sync = (...m) => crypto.createHash('sha512').update(Buffer.concat(m)).digest();
-            console.log('🔧 Configured ed25519 for Node.js environment');
+            console.log('🔧 Configured ed25519 sha512 for Node.js environment');
           }
         } else {
           // Direct access to the library
           if (this._nobleEd25519.etc && !this._nobleEd25519.etc.sha512Sync) {
             this._nobleEd25519.etc.sha512Sync = (...m) => crypto.createHash('sha512').update(Buffer.concat(m)).digest();
-            console.log('🔧 Configured ed25519 for Node.js environment');
+            console.log('🔧 Configured ed25519 sha512 for Node.js environment');
           }
         }
       }

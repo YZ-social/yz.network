@@ -1,5 +1,17 @@
 import { EventEmitter } from 'events';
 
+// Polyfill WebSocket for Node.js environment
+let WebSocketImpl;
+if (typeof WebSocket === 'undefined') {
+  // Node.js environment - dynamically import 'ws' package
+  const wsModule = await import('ws');
+  WebSocketImpl = wsModule.default || wsModule.WebSocket || wsModule;
+  console.log('🔧 Using ws package for WebSocket in Node.js');
+} else {
+  // Browser environment - use native WebSocket
+  WebSocketImpl = WebSocket;
+}
+
 /**
  * Bootstrap client for initial peer discovery
  * Connects to bootstrap server only for initial signaling
@@ -51,7 +63,7 @@ export class BootstrapClient extends EventEmitter {
 
     return new Promise((resolve, reject) => {
       try {
-        this.ws = new WebSocket(serverUrl);
+        this.ws = new WebSocketImpl(serverUrl);
 
         const timeout = setTimeout(() => {
           this.ws?.close();
@@ -278,7 +290,8 @@ export class BootstrapClient extends EventEmitter {
    * Send message to bootstrap server
    */
   sendMessage(message) {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+    // WebSocket.OPEN = 1 (use constant to avoid WebSocket reference)
+    if (!this.ws || this.ws.readyState !== 1) {
       throw new Error(`Not connected to bootstrap server (readyState: ${this.ws ? this.ws.readyState : 'null'})`);
     }
 
@@ -495,7 +508,8 @@ export class BootstrapClient extends EventEmitter {
    * Check if connected to bootstrap server
    */
   isBootstrapConnected() {
-    return this.isConnected && this.ws && this.ws.readyState === WebSocket.OPEN;
+    // WebSocket.OPEN = 1 (use constant to avoid WebSocket reference)
+    return this.isConnected && this.ws && this.ws.readyState === 1;
   }
 
   /**

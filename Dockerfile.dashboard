@@ -8,18 +8,20 @@ WORKDIR /app
 # Install dependencies (if needed - currently using only built-in modules)
 COPY package*.json ./
 
-# Install wget for health checks
-RUN apk add --no-cache wget
+# Install wget for health checks and Docker CLI for container discovery
+RUN apk add --no-cache wget docker-cli
 
 # Copy dashboard source
 COPY src/docker/dashboard/ ./src/docker/dashboard/
 
-# Create non-root user
-RUN addgroup -g 1001 dashboard && \
-    adduser -D -u 1001 -G dashboard dashboard && \
-    chown -R dashboard:dashboard /app
-
-USER dashboard
+# Note: Running as root for Docker socket access on Windows/Docker Desktop
+# On Linux, uncomment the following lines and remove this comment:
+# RUN addgroup -g 1001 dashboard && \
+#     adduser -D -u 1001 -G dashboard dashboard && \
+#     addgroup -S docker 2>/dev/null || true && \
+#     addgroup dashboard docker && \
+#     chown -R dashboard:dashboard /app
+# USER dashboard
 
 # Expose dashboard port
 EXPOSE 3000

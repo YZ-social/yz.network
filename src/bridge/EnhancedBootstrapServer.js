@@ -1,6 +1,13 @@
 import { EventEmitter } from 'events';
 import { WebSocket, WebSocketServer } from 'ws';
 import crypto from 'crypto';
+import http from 'http';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 /**
  * Enhanced Bootstrap Server with Bridge Integration
@@ -62,14 +69,24 @@ export class EnhancedBootstrapServer extends EventEmitter {
 
     // Bridge connections will use raw WebSocket for bootstrap authentication
 
-    // Start public bootstrap server
+    // Create HTTP server that handles installer downloads
+    this.httpServer = http.createServer((req, res) => {
+      this.handleHttpRequest(req, res);
+    });
+
+    // Start public bootstrap server attached to HTTP server
     this.server = new WebSocketServer({
-      port: this.options.port,
-      host: this.options.host
+      server: this.httpServer
     });
 
     this.server.on('connection', (ws, req) => {
       this.handleClientConnection(ws, req);
+    });
+
+    // Start HTTP server
+    await new Promise((resolve, reject) => {
+      this.httpServer.listen(this.options.port, this.options.host, () => resolve());
+      this.httpServer.on('error', reject);
     });
 
     // Bridge nodes will be connected on-demand when genesis peer arrives
@@ -81,10 +98,423 @@ export class EnhancedBootstrapServer extends EventEmitter {
 
     console.log(`🌟 Enhanced Bootstrap Server started`);
     console.log(`🔗 Public server: ${this.options.host}:${this.options.port}`);
+    console.log(`📥 Installer: http://${this.options.host === '0.0.0.0' ? 'localhost' : this.options.host}:${this.options.port}/install.sh`);
     console.log(`🌉 Bridge nodes: ${this.options.bridgeNodes.length} configured`);
     console.log(`🆕 Create new DHT mode: ${this.options.createNewDHT ? 'ENABLED' : 'DISABLED'}`);
     console.log(`🌐 Open network mode: ${this.options.openNetwork ? 'ENABLED (no invitations required)' : 'DISABLED (invitations required)'}`);
     console.log(`👥 Max peers: ${this.options.maxPeers}`);
+  }
+
+  /**
+   * Handle HTTP requests for installer downloads and info pages
+   */
+  handleHttpRequest(req, res) {
+    const url = req.url;
+
+    // CORS headers for installer scripts
+    res.setHeader('Access-Control-Allow-Origin', '*');
+
+    if (url === '/install.sh' || url === '/install') {
+      // Serve bash installer
+      const installerPath = path.join(__dirname, '../installer/bootstrap.sh');
+      this.serveFile(res, installerPath, 'text/plain');
+    } else if (url === '/install.ps1') {
+      // Serve PowerShell installer
+      const installerPath = path.join(__dirname, '../installer/bootstrap.ps1');
+      this.serveFile(res, installerPath, 'text/plain');
+    } else if (url === '/' || url === '/info') {
+      // Serve landing page with installation instructions
+      this.serveLandingPage(res);
+    } else if (url === '/support') {
+      // Detailed support page for non-technical users
+      this.serveSupportPage(res);
+    } else if (url === '/health') {
+      // Health check endpoint
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok', peers: this.peers.size }));
+    } else if (url === '/stats') {
+      // Stats endpoint
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(this.getStats()));
+    } else {
+      // Not found
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('Not Found\n\nAvailable endpoints:\n  /           - Installation info\n  /install.sh - Linux/Mac installer\n  /install.ps1 - Windows installer\n  /health     - Health check\n  /stats      - Server statistics');
+    }
+  }
+
+  /**
+   * Serve a file from disk
+   */
+  serveFile(res, filePath, contentType) {
+    fs.readFile(filePath, (err, data) => {
+      if (err) {
+        res.writeHead(500, { 'Content-Type': 'text/plain' });
+        res.end('Error reading file');
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': contentType });
+      res.end(data);
+    });
+  }
+
+  /**
+   * Serve landing page with installation instructions
+   */
+  serveLandingPage(res) {
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <title>YZ Network - Community Node Installer</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; background: #1a1a2e; color: #eee; }
+    h1 { color: #00d4ff; }
+    code { background: #16213e; padding: 10px 15px; border-radius: 5px; display: block; margin: 10px 0; color: #00ff88; overflow-x: auto; }
+    .section { background: #16213e; padding: 20px; border-radius: 10px; margin: 20px 0; }
+    .stats { display: flex; gap: 20px; flex-wrap: wrap; }
+    .stat { background: #0f3460; padding: 15px; border-radius: 8px; text-align: center; }
+    .stat-value { font-size: 2em; color: #00d4ff; }
+    a { color: #00d4ff; }
+    pre { margin: 0; }
+  </style>
+</head>
+<body>
+  <h1>YZ Network - Community Node Installer</h1>
+  <p>Help strengthen the decentralized network by running DHT nodes on your computer!</p>
+
+  <div class="section">
+    <h2>Quick Install</h2>
+    <h3>Linux / macOS / WSL</h3>
+    <code><pre>curl -fsSL http://${req.headers.host}/install.sh | bash</pre></code>
+
+    <h3>Windows (PowerShell)</h3>
+    <code><pre>irm http://${req.headers.host}/install.ps1 | iex</pre></code>
+  </div>
+
+  <div class="section">
+    <h2>Requirements</h2>
+    <ul>
+      <li><strong>Docker Desktop</strong> - installed and running</li>
+      <li><strong>Internet connection</strong></li>
+      <li><strong>Optional:</strong> UPnP-enabled router for automatic port forwarding</li>
+    </ul>
+  </div>
+
+  <div class="section">
+    <h2>Network Stats</h2>
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-value">${this.peers.size}</div>
+        <div>Connected Peers</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">${this.options.openNetwork ? 'Open' : 'Invite Only'}</div>
+        <div>Network Mode</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>What You'll Contribute</h2>
+    <p>Each node uses minimal resources:</p>
+    <ul>
+      <li><strong>CPU:</strong> 0.15 cores per node</li>
+      <li><strong>RAM:</strong> 128 MB per node</li>
+      <li><strong>Disk:</strong> 50 MB per node</li>
+    </ul>
+  </div>
+
+  <p style="text-align: center; margin-top: 40px; opacity: 0.7;">
+    <a href="https://github.com/yz-network/yz.network">GitHub</a> |
+    <a href="/health">Health Check</a> |
+    <a href="/stats">API Stats</a>
+  </p>
+</body>
+</html>`;
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(html);
+  }
+
+  /**
+   * Serve detailed support page with step-by-step instructions for non-technical users
+   */
+  serveSupportPage(res) {
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <title>Help Support the YZ Network - Step-by-Step Guide</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background: #1a1a2e; color: #eee; line-height: 1.6; }
+    h1 { color: #00d4ff; text-align: center; margin-bottom: 10px; }
+    h2 { color: #00d4ff; border-bottom: 2px solid #0f3460; padding-bottom: 10px; margin-top: 40px; }
+    h3 { color: #00ff88; }
+    .subtitle { text-align: center; opacity: 0.8; margin-bottom: 40px; }
+    .step { background: #16213e; padding: 25px; border-radius: 10px; margin: 20px 0; border-left: 4px solid #00d4ff; }
+    .step-number { background: #00d4ff; color: #1a1a2e; width: 35px; height: 35px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-weight: bold; margin-right: 10px; }
+    code { background: #0f3460; padding: 3px 8px; border-radius: 4px; color: #00ff88; }
+    .command-box { background: #0f3460; padding: 15px 20px; border-radius: 8px; margin: 15px 0; overflow-x: auto; }
+    .command-box code { background: transparent; padding: 0; display: block; }
+    .warning { background: #3d2914; border-left: 4px solid #ffa500; padding: 15px; margin: 15px 0; border-radius: 0 8px 8px 0; }
+    .success { background: #143d29; border-left: 4px solid #00ff88; padding: 15px; margin: 15px 0; border-radius: 0 8px 8px 0; }
+    .info { background: #142d3d; border-left: 4px solid #00d4ff; padding: 15px; margin: 15px 0; border-radius: 0 8px 8px 0; }
+    ul { padding-left: 25px; }
+    li { margin: 10px 0; }
+    a { color: #00d4ff; }
+    .platform-tabs { display: flex; gap: 10px; margin-bottom: 20px; }
+    .platform-tab { padding: 10px 20px; background: #0f3460; border-radius: 8px; cursor: pointer; border: 2px solid transparent; }
+    .platform-tab.active { border-color: #00d4ff; background: #16213e; }
+    .platform-content { display: none; }
+    .platform-content.active { display: block; }
+    .resource-box { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin: 20px 0; }
+    .resource-item { background: #0f3460; padding: 15px; border-radius: 8px; text-align: center; }
+    .resource-value { font-size: 1.5em; color: #00d4ff; font-weight: bold; }
+    .faq { background: #16213e; padding: 20px; border-radius: 10px; margin: 15px 0; }
+    .faq summary { cursor: pointer; font-weight: bold; color: #00d4ff; }
+    .faq p { margin: 15px 0 0 0; opacity: 0.9; }
+    .btn { display: inline-block; padding: 12px 25px; background: linear-gradient(135deg, #00d4ff, #0099cc); color: #1a1a2e; text-decoration: none; border-radius: 8px; font-weight: bold; margin: 10px 5px; }
+    .btn:hover { background: linear-gradient(135deg, #00e5ff, #00aadd); }
+    footer { text-align: center; margin-top: 50px; padding-top: 20px; border-top: 1px solid #0f3460; opacity: 0.7; }
+    img { max-width: 100%; border-radius: 8px; margin: 10px 0; }
+  </style>
+</head>
+<body>
+  <h1>Help Support the YZ Network</h1>
+  <p class="subtitle">Run community nodes on your computer to help strengthen the decentralized network.<br>It's easy, secure, and uses minimal resources!</p>
+
+  <div class="info">
+    <strong>What are community nodes?</strong> Community nodes are small programs that help route messages and store data for the YZ Network. By running nodes, you help make the network faster, more reliable, and more decentralized. Think of it like helping to power a community internet.
+  </div>
+
+  <h2>What You'll Need</h2>
+  <ul>
+    <li><strong>A computer</strong> - Windows, Mac, or Linux (even a Raspberry Pi works!)</li>
+    <li><strong>Docker Desktop</strong> - Free software that runs the nodes (we'll show you how to install it)</li>
+    <li><strong>Internet connection</strong> - Standard home internet is fine</li>
+    <li><strong>5 minutes</strong> - That's all it takes to set up!</li>
+  </ul>
+
+  <h2>Resource Usage (Very Light!)</h2>
+  <div class="resource-box">
+    <div class="resource-item">
+      <div class="resource-value">0.15</div>
+      <div>CPU cores per node</div>
+    </div>
+    <div class="resource-item">
+      <div class="resource-value">128 MB</div>
+      <div>RAM per node</div>
+    </div>
+    <div class="resource-item">
+      <div class="resource-value">50 MB</div>
+      <div>Disk per node</div>
+    </div>
+    <div class="resource-item">
+      <div class="resource-value">1-5 Mbps</div>
+      <div>Network usage</div>
+    </div>
+  </div>
+  <p style="opacity: 0.8; font-size: 0.9em;">Running 3 nodes uses less resources than a single browser tab!</p>
+
+  <h2>Step-by-Step Installation</h2>
+
+  <div class="step">
+    <h3><span class="step-number">1</span> Install Docker Desktop</h3>
+    <p>Docker is free software that lets you run the community nodes. It's like a container that keeps everything organized and secure.</p>
+
+    <div class="platform-tabs">
+      <div class="platform-tab active" onclick="showPlatform('windows')">Windows</div>
+      <div class="platform-tab" onclick="showPlatform('mac')">Mac</div>
+      <div class="platform-tab" onclick="showPlatform('linux')">Linux</div>
+    </div>
+
+    <div id="windows" class="platform-content active">
+      <ol>
+        <li>Go to <a href="https://www.docker.com/products/docker-desktop" target="_blank">docker.com/products/docker-desktop</a></li>
+        <li>Click the blue "Download for Windows" button</li>
+        <li>Run the downloaded file (Docker Desktop Installer.exe)</li>
+        <li>Follow the installation wizard - just click "Next" through the steps</li>
+        <li>When asked, check "Use WSL 2" (recommended)</li>
+        <li>Click "Close" when installation finishes</li>
+        <li><strong>Restart your computer</strong> when prompted</li>
+        <li>After restart, Docker Desktop will start automatically. Wait for it to say "Docker is running"</li>
+      </ol>
+      <div class="info">
+        <strong>First time?</strong> Docker might ask you to create an account. You can skip this - click "Continue without signing in" or just close the sign-in window.
+      </div>
+    </div>
+
+    <div id="mac" class="platform-content">
+      <ol>
+        <li>Go to <a href="https://www.docker.com/products/docker-desktop" target="_blank">docker.com/products/docker-desktop</a></li>
+        <li>Click "Download for Mac" - choose Apple Chip or Intel based on your Mac</li>
+        <li>Open the downloaded .dmg file</li>
+        <li>Drag the Docker icon to your Applications folder</li>
+        <li>Open Docker from Applications</li>
+        <li>Click "Open" if macOS asks for permission</li>
+        <li>Wait for Docker to start (you'll see the whale icon in your menu bar)</li>
+      </ol>
+      <div class="info">
+        <strong>Not sure which Mac you have?</strong> Click the Apple menu > "About This Mac". If it says "Apple M1/M2/M3" choose Apple Chip. Otherwise choose Intel.
+      </div>
+    </div>
+
+    <div id="linux" class="platform-content">
+      <p>For Ubuntu/Debian, open Terminal and run:</p>
+      <div class="command-box">
+        <code>curl -fsSL https://get.docker.com | sudo sh</code>
+      </div>
+      <p>Then add your user to the docker group:</p>
+      <div class="command-box">
+        <code>sudo usermod -aG docker $USER</code>
+      </div>
+      <p>Log out and log back in for the changes to take effect.</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <h3><span class="step-number">2</span> Verify Docker is Running</h3>
+    <p>Before installing the nodes, make sure Docker is running:</p>
+    <ul>
+      <li><strong>Windows/Mac:</strong> Look for the Docker whale icon in your system tray (Windows) or menu bar (Mac). It should NOT have a red dot or warning symbol.</li>
+      <li><strong>All platforms:</strong> Open a terminal/command prompt and type: <code>docker --version</code>. You should see a version number.</li>
+    </ul>
+    <div class="warning">
+      <strong>Docker not running?</strong> Open Docker Desktop from your Start menu (Windows) or Applications (Mac). Wait until the whale icon stops animating.
+    </div>
+  </div>
+
+  <div class="step">
+    <h3><span class="step-number">3</span> Run the Installer</h3>
+    <p>Now for the easy part! Just copy and paste ONE command:</p>
+
+    <h4>Windows (PowerShell)</h4>
+    <p>Right-click the Start button > "Windows PowerShell" (or "Terminal"), then paste:</p>
+    <div class="command-box">
+      <code>irm http://${this.options.host === '0.0.0.0' ? 'bootstrap.yz.network' : this.options.host}:${this.options.port}/install.ps1 | iex</code>
+    </div>
+
+    <h4>Mac / Linux</h4>
+    <p>Open Terminal and paste:</p>
+    <div class="command-box">
+      <code>curl -fsSL http://${this.options.host === '0.0.0.0' ? 'bootstrap.yz.network' : this.options.host}:${this.options.port}/install.sh | bash</code>
+    </div>
+
+    <div class="success">
+      <strong>That's it!</strong> The installer will guide you through a few simple questions:
+      <ul style="margin: 10px 0;">
+        <li>How many nodes to run (default: 3 - just press Enter)</li>
+        <li>Whether to enable automatic port forwarding (recommended: Yes)</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="step">
+    <h3><span class="step-number">4</span> You're Done!</h3>
+    <p>After installation, your nodes will start automatically and begin helping the network. You can:</p>
+    <ul>
+      <li><strong>Check status:</strong> Open <a href="http://localhost:9090/health" target="_blank">http://localhost:9090/health</a> in your browser</li>
+      <li><strong>View logs:</strong> Open Docker Desktop and click on the running containers</li>
+      <li><strong>Let it run:</strong> The nodes will restart automatically when you restart your computer</li>
+    </ul>
+  </div>
+
+  <h2>Managing Your Nodes</h2>
+
+  <div class="info">
+    <p>After installation, a folder is created at:</p>
+    <ul>
+      <li><strong>Windows:</strong> <code>%USERPROFILE%\\.yz-network</code></li>
+      <li><strong>Mac/Linux:</strong> <code>~/.yz-network</code></li>
+    </ul>
+    <p>Navigate there in terminal/command prompt to run management commands.</p>
+  </div>
+
+  <h3>Common Commands</h3>
+  <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+    <tr style="background: #0f3460;">
+      <td style="padding: 12px; border: 1px solid #16213e;"><strong>View logs</strong></td>
+      <td style="padding: 12px; border: 1px solid #16213e;"><code>docker-compose -f docker-compose.community.yml logs -f</code></td>
+    </tr>
+    <tr>
+      <td style="padding: 12px; border: 1px solid #16213e;"><strong>Stop nodes</strong></td>
+      <td style="padding: 12px; border: 1px solid #16213e;"><code>docker-compose -f docker-compose.community.yml stop</code></td>
+    </tr>
+    <tr style="background: #0f3460;">
+      <td style="padding: 12px; border: 1px solid #16213e;"><strong>Start nodes</strong></td>
+      <td style="padding: 12px; border: 1px solid #16213e;"><code>docker-compose -f docker-compose.community.yml start</code></td>
+    </tr>
+    <tr>
+      <td style="padding: 12px; border: 1px solid #16213e;"><strong>Remove everything</strong></td>
+      <td style="padding: 12px; border: 1px solid #16213e;"><code>docker-compose -f docker-compose.community.yml down</code></td>
+    </tr>
+  </table>
+
+  <h2>Frequently Asked Questions</h2>
+
+  <details class="faq">
+    <summary>Is this safe? What data is being shared?</summary>
+    <p>Yes, it's completely safe! Your nodes only route encrypted network traffic - no personal data, files, or information from your computer is ever accessed or shared. Think of it like being a relay in a chain - you help pass messages along, but you can't read them.</p>
+  </details>
+
+  <details class="faq">
+    <summary>Will this slow down my computer or internet?</summary>
+    <p>Barely noticeable! Running 3 nodes uses about 0.5 CPU cores and 400MB RAM - less than having a few browser tabs open. Network usage is typically 1-5 Mbps, which is a tiny fraction of most home internet connections.</p>
+  </details>
+
+  <details class="faq">
+    <summary>Can I run this on an old computer or Raspberry Pi?</summary>
+    <p>Yes! The nodes are very lightweight. Any computer from the last 10 years should work fine. Raspberry Pi 4 with 2GB+ RAM is perfect for running 1-3 nodes.</p>
+  </details>
+
+  <details class="faq">
+    <summary>Do I need to keep my computer on all the time?</summary>
+    <p>No! Run nodes whenever it's convenient for you. When you turn off your computer, the nodes stop. When you turn it back on, Docker restarts them automatically. Every bit of uptime helps!</p>
+  </details>
+
+  <details class="faq">
+    <summary>What is port forwarding / UPnP?</summary>
+    <p>UPnP (Universal Plug and Play) automatically configures your router to allow incoming connections to your nodes. This makes your nodes more useful to the network. If UPnP doesn't work on your router, the nodes will still function, just with slightly reduced connectivity.</p>
+  </details>
+
+  <details class="faq">
+    <summary>How do I uninstall everything?</summary>
+    <p>Open terminal/command prompt, navigate to the installation folder, and run: <code>docker-compose -f docker-compose.community.yml down</code>. Then delete the .yz-network folder. Optionally, uninstall Docker Desktop if you no longer need it.</p>
+  </details>
+
+  <details class="faq">
+    <summary>I'm getting an error during installation. What do I do?</summary>
+    <p>Most errors are because Docker isn't running or isn't installed correctly. Make sure Docker Desktop is running (look for the whale icon). If problems persist, try restarting Docker Desktop or your computer.</p>
+  </details>
+
+  <h2>Thank You!</h2>
+  <div class="success" style="text-align: center;">
+    <p style="font-size: 1.2em; margin: 0;">By running community nodes, you're helping to:</p>
+    <ul style="text-align: left; display: inline-block; margin: 15px 0;">
+      <li>Make the network more decentralized and resilient</li>
+      <li>Improve speed and reliability for all users</li>
+      <li>Support privacy-preserving communication</li>
+      <li>Enable truly peer-to-peer applications</li>
+    </ul>
+    <p style="font-size: 1.3em; margin: 15px 0 0 0;"><strong>Every node counts!</strong></p>
+  </div>
+
+  <footer>
+    <a href="/" class="btn">Back to Home</a>
+    <a href="https://github.com/yz-network/yz.network" class="btn">GitHub</a>
+    <p style="margin-top: 20px;">YZ Network Community Node Support</p>
+  </footer>
+
+  <script>
+    function showPlatform(platform) {
+      document.querySelectorAll('.platform-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.platform-content').forEach(c => c.classList.remove('active'));
+      document.querySelector('[onclick="showPlatform(\\'' + platform + '\\')"]').classList.add('active');
+      document.getElementById(platform).classList.add('active');
+    }
+  </script>
+</body>
+</html>`;
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(html);
   }
 
   /**
@@ -117,10 +547,16 @@ export class EnhancedBootstrapServer extends EventEmitter {
     }
     this.bridgeReconnectTimers.clear();
 
-    // Close server
+    // Close WebSocket server
     if (this.server) {
       this.server.close();
       this.server = null;
+    }
+
+    // Close HTTP server
+    if (this.httpServer) {
+      this.httpServer.close();
+      this.httpServer = null;
     }
 
     this.isStarted = false;
@@ -178,9 +614,10 @@ export class EnhancedBootstrapServer extends EventEmitter {
           if (message.type === 'auth_success') {
             clearTimeout(timeout);
 
-            // CRITICAL: Store bridge node ID from auth response
+            // CRITICAL: Store bridge node ID and listening address from auth response
             ws.bridgeNodeId = message.bridgeNodeId;
-            console.log(`🔍 Stored bridge node ID: ${message.bridgeNodeId?.substring(0, 8)}...`);
+            ws.listeningAddress = message.listeningAddress;
+            console.log(`🔍 Stored bridge node ID: ${message.bridgeNodeId?.substring(0, 8)}... at ${message.listeningAddress}`);
 
             // Set up ongoing message handler for bridge communication
             ws.onmessage = (event) => {
@@ -1213,13 +1650,13 @@ export class EnhancedBootstrapServer extends EventEmitter {
     const bridgeMetadata = [];
     for (const [addr, ws] of this.bridgeConnections) {
       if (ws.readyState === WebSocket.OPEN && ws.bridgeNodeId) {
-        // Extract port from address for bridge connection
-        const port = addr.includes(':8083') ? '8083' : '8084';
+        // Use the listening address advertised by the bridge node (supports Docker service names)
+        const listeningAddress = ws.listeningAddress || `ws://localhost:${addr.includes(':8083') ? '8083' : '8084'}`;
         bridgeMetadata.push({
           nodeId: ws.bridgeNodeId,
           metadata: {
             nodeType: 'bridge',
-            listeningAddress: `ws://localhost:${port}`,
+            listeningAddress: listeningAddress,
             capabilities: ['websocket'],
             isBridgeNode: true,
             bridgeAuthToken: 'bridge_auth_' + (this.options.bridgeAuth || 'default-bridge-auth-key'),
@@ -1367,6 +1804,10 @@ export class EnhancedBootstrapServer extends EventEmitter {
         bridgeMetadata = [];
       }
 
+      // Get the bridge node's actual listening address
+      const bridgeWs = this.getBridgeNodeByNodeId(response.bridgeNodeId);
+      const bridgeListeningAddress = bridgeWs?.listeningAddress || 'ws://localhost:8083';
+
       const responseData = {
         type: 'response',
         requestId: pending.clientMessage.requestId,
@@ -1378,7 +1819,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
           bridgeNodeId: response.bridgeNodeId,
           bridgeConnectionInfo: {
             nodeId: response.bridgeNodeId,
-            websocketAddress: 'ws://localhost:8083',
+            websocketAddress: bridgeListeningAddress,
             nodeType: 'bridge',
             capabilities: ['websocket']
           },
@@ -1388,7 +1829,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
             bridgeNodeInfo: {
               nodeId: response.bridgeNodeId,
               nodeType: 'bridge',
-              listeningAddress: 'ws://localhost:8083',
+              listeningAddress: bridgeListeningAddress,
               capabilities: ['websocket'],
               isBridgeNode: true
             }
@@ -1745,6 +2186,10 @@ export class EnhancedBootstrapServer extends EventEmitter {
         return;
       }
 
+      // Get the bridge node's actual listening address
+      const bridgeWs = this.getBridgeNodeByNodeId(bridgeNodeId);
+      const bridgeListeningAddr = bridgeWs?.listeningAddress || 'ws://localhost:8083';
+
       // Send bridge node information to genesis peer with invitation request
       genesisClient.ws.send(JSON.stringify({
         type: 'bridge_invitation_request',
@@ -1752,7 +2197,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
         bridgeNodeInfo: {
           nodeId: bridgeNodeId,
           nodeType: 'bridge',
-          listeningAddress: 'ws://localhost:8083',
+          listeningAddress: bridgeListeningAddr,
           capabilities: ['websocket'],
           isBridgeNode: true
         },

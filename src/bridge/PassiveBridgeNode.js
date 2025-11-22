@@ -205,13 +205,20 @@ export class PassiveBridgeNode extends DHTClient {
     const bridgeAuthToken = 'bridge_auth_' + (this.options.bridgeAuth || 'default-bridge-auth-key');
     const bridgeSignature = await this.generateBridgeSignature(bridgeAuthToken);
 
+    // Use publicAddress if provided (for Docker service names), otherwise fall back to serverAddress
+    const advertisedAddress = this.options.publicAddress
+      ? (this.options.publicAddress.startsWith('ws://') ? this.options.publicAddress : `ws://${this.options.publicAddress}`)
+      : serverAddress;
+
+    console.log(`📍 Bridge advertising address: ${advertisedAddress} (server listening on ${serverAddress})`);
+
     // CRITICAL: Store this node's metadata in ConnectionManagerFactory so it's included in handshakes
     // Bridge nodes need to identify themselves during WebSocket connection establishment
     const { ConnectionManagerFactory } = await import('../network/ConnectionManagerFactory.js');
     ConnectionManagerFactory.setPeerMetadata(this.dht.localNodeId.toString(), {
       isBridgeNode: true,
       nodeType: 'bridge',
-      listeningAddress: serverAddress,
+      listeningAddress: advertisedAddress,  // Use publicAddress for peer connections
       capabilities: ['websocket'],
       bridgeNodeType: 'passive',
       maxConnections: this.options.maxConnections,
@@ -966,14 +973,20 @@ export class PassiveBridgeNode extends DHTClient {
       this.authorizedBootstrap.add(peerId);
       console.log(`✅ Added ${peerId} to authorized bootstrap servers`);
 
-      // Send auth success through dedicated peer manager
+      // Send auth success with listening address through dedicated peer manager
+      const serverAddress = this.connectionManager.getServerAddress() || `ws://${this.bridgeHost}:${this.bridgePort}`;
+      const advertisedAddress = this.options.publicAddress
+        ? (this.options.publicAddress.startsWith('ws://') ? this.options.publicAddress : `ws://${this.options.publicAddress}`)
+        : serverAddress;
+
       const manager = this.getManagerForPeer(peerId);
       await manager.sendMessage(peerId, {
         type: 'auth_success',
-        bridgeNodeId: this.dht.localNodeId.toString()
+        bridgeNodeId: this.dht.localNodeId.toString(),
+        listeningAddress: advertisedAddress
       });
 
-      console.log('✅ Bootstrap server authenticated with bridge');
+      console.log(`✅ Bootstrap server authenticated with bridge - advertising ${advertisedAddress}`);
     } else {
       // Close connection through dedicated peer manager
       const manager = this.getManagerForPeer(peerId);
