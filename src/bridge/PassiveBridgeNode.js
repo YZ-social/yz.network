@@ -216,7 +216,9 @@ export class PassiveBridgeNode extends DHTClient {
 
     // Use publicAddress if provided (for Docker service names), otherwise fall back to serverAddress
     const advertisedAddress = this.options.publicAddress
-      ? (this.options.publicAddress.startsWith('ws://') ? this.options.publicAddress : `ws://${this.options.publicAddress}`)
+      ? (this.options.publicAddress.startsWith('ws://') || this.options.publicAddress.startsWith('wss://')
+         ? this.options.publicAddress
+         : `ws://${this.options.publicAddress}`)
       : serverAddress;
 
     console.log(`📍 Bridge advertising address: ${advertisedAddress} (server listening on ${serverAddress})`);
@@ -985,7 +987,9 @@ export class PassiveBridgeNode extends DHTClient {
       // Send auth success with listening address through dedicated peer manager
       const serverAddress = this.connectionManager.getServerAddress() || `ws://${this.bridgeHost}:${this.bridgePort}`;
       const advertisedAddress = this.options.publicAddress
-        ? (this.options.publicAddress.startsWith('ws://') ? this.options.publicAddress : `ws://${this.options.publicAddress}`)
+        ? (this.options.publicAddress.startsWith('ws://') || this.options.publicAddress.startsWith('wss://')
+           ? this.options.publicAddress
+           : `ws://${this.options.publicAddress}`)
         : serverAddress;
 
       const manager = this.getManagerForPeer(peerId);
