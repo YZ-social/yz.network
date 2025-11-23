@@ -124,7 +124,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
       this.serveFile(res, installerPath, 'text/plain');
     } else if (url === '/' || url === '/info') {
       // Serve landing page with installation instructions
-      this.serveLandingPage(res);
+      this.serveLandingPage(req, res);
     } else if (url === '/support') {
       // Detailed support page for non-technical users
       this.serveSupportPage(res);
@@ -161,7 +161,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
   /**
    * Serve landing page with installation instructions
    */
-  serveLandingPage(res) {
+  serveLandingPage(req, res) {
     const html = `<!DOCTYPE html>
 <html>
 <head>
@@ -710,6 +710,11 @@ export class EnhancedBootstrapServer extends EventEmitter {
    */
   async handleClientMessage(ws, message) {
     try {
+      // Update lastSeen timestamp for this peer to prevent timeout
+      if (ws.nodeId && this.peers.has(ws.nodeId)) {
+        this.peers.get(ws.nodeId).lastSeen = Date.now();
+      }
+
       if (message.type === 'register') {
         await this.handleClientRegistration(ws, message);
       } else if (message.type === 'auth_response') {
