@@ -32,7 +32,7 @@ services:
       timeout: 10s
       retries: 3
 
-  # Bridge Node 1 (WSS accessible via /bridge1)
+  # Bridge Node 1 (Internal Docker + WSS accessible via /bridge1)
   bridge-node-1:
     image: itsmeront/yz-dht-node:latest
     container_name: yz-bridge-node-1
@@ -43,7 +43,7 @@ services:
     environment:
       - BRIDGE_PORT=8083
       - WEBSOCKET_HOST=0.0.0.0
-      - PUBLIC_ADDRESS=wss://imeyouwe.com/bridge1
+      - PUBLIC_ADDRESS=bridge-node-1:8083
       - BOOTSTRAP_URL=ws://bootstrap:8080
       - NODE_NAME=bridge-node-1
       - METRICS_PORT=9090
@@ -60,7 +60,7 @@ services:
           cpus: '0.25'
           memory: 256M
 
-  # Bridge Node 2 (WSS accessible via /bridge2)
+  # Bridge Node 2 (Internal Docker + WSS accessible via /bridge2)
   bridge-node-2:
     image: itsmeront/yz-dht-node:latest
     container_name: yz-bridge-node-2
@@ -71,7 +71,7 @@ services:
     environment:
       - BRIDGE_PORT=8084
       - WEBSOCKET_HOST=0.0.0.0
-      - PUBLIC_ADDRESS=wss://imeyouwe.com/bridge2
+      - PUBLIC_ADDRESS=bridge-node-2:8084
       - BOOTSTRAP_URL=ws://bootstrap:8080
       - NODE_NAME=bridge-node-2
       - METRICS_PORT=9090
@@ -88,7 +88,7 @@ services:
           cpus: '0.25'
           memory: 256M
 
-  # Genesis Node - First active DHT participant (WSS accessible via /genesis)
+  # Genesis Node - First active DHT participant (Internal Docker + WSS accessible via /genesis)
   genesis-node:
     image: itsmeront/yz-dht-node:latest
     container_name: yz-genesis-node
@@ -100,7 +100,7 @@ services:
       - BOOTSTRAP_URL=ws://bootstrap:8080
       - WEBSOCKET_PORT=8085
       - WEBSOCKET_HOST=0.0.0.0
-      - PUBLIC_ADDRESS=wss://imeyouwe.com/genesis
+      - PUBLIC_ADDRESS=genesis-node:8085
       - METRICS_PORT=9090
       - NODE_NAME=genesis-node
       - OPEN_NETWORK=true
