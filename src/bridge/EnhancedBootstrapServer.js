@@ -71,8 +71,34 @@ export class EnhancedBootstrapServer extends EventEmitter {
 
     // Create HTTP server that handles installer downloads
     this.httpServer = http.createServer((req, res) => {
-      this.handleHttpRequest(req, res);
+      try {
+        console.log(`📥 HTTP Request received: ${req.method} ${req.url}`);
+        this.handleHttpRequest(req, res);
+      } catch (error) {
+        console.error('❌ HTTP Request Handler Error:', error);
+        try {
+          res.writeHead(500, { 'Content-Type': 'text/plain' });
+          res.end('Internal Server Error');
+        } catch (resError) {
+          console.error('❌ Failed to send error response:', resError);
+        }
+      }
     });
+
+    // Add error handler for HTTP server
+    this.httpServer.on('error', (error) => {
+      console.error('❌ HTTP Server Error:', error);
+    });
+
+    // Add error handler for client errors
+    this.httpServer.on('clientError', (error, socket) => {
+      console.error('❌ HTTP Client Error:', error);
+      if (!socket.destroyed) {
+        socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
+      }
+    });
+
+    console.log('✅ HTTP server created, now starting to listen...');
 
     // Start public bootstrap server attached to HTTP server
     this.server = new WebSocketServer({
@@ -83,10 +109,18 @@ export class EnhancedBootstrapServer extends EventEmitter {
       this.handleClientConnection(ws, req);
     });
 
+    console.log(`🔌 Attempting to listen on ${this.options.host}:${this.options.port}...`);
+
     // Start HTTP server
     await new Promise((resolve, reject) => {
-      this.httpServer.listen(this.options.port, this.options.host, () => resolve());
-      this.httpServer.on('error', reject);
+      this.httpServer.listen(this.options.port, this.options.host, () => {
+        console.log(`✅ HTTP server successfully listening on ${this.options.host}:${this.options.port}`);
+        resolve();
+      });
+      this.httpServer.on('error', (error) => {
+        console.error(`❌ HTTP server listen error:`, error);
+        reject(error);
+      });
     });
 
     // Bridge nodes will be connected on-demand when genesis peer arrives
@@ -109,37 +143,62 @@ export class EnhancedBootstrapServer extends EventEmitter {
    * Handle HTTP requests for installer downloads and info pages
    */
   handleHttpRequest(req, res) {
-    const url = req.url;
+    try {
+      const url = req.url;
+      console.log(`📥 handleHttpRequest called: ${req.method} ${url}`);
 
-    // CORS headers for installer scripts
-    res.setHeader('Access-Control-Allow-Origin', '*');
+      // CORS headers for installer scripts
+      res.setHeader('Access-Control-Allow-Origin', '*');
 
-    if (url === '/install.sh' || url === '/install') {
-      // Serve bash installer
-      const installerPath = path.join(__dirname, '../installer/bootstrap.sh');
-      this.serveFile(res, installerPath, 'text/plain');
-    } else if (url === '/install.ps1') {
-      // Serve PowerShell installer
-      const installerPath = path.join(__dirname, '../installer/bootstrap.ps1');
-      this.serveFile(res, installerPath, 'text/plain');
-    } else if (url === '/' || url === '/info') {
-      // Serve landing page with installation instructions
-      this.serveLandingPage(req, res);
-    } else if (url === '/support') {
-      // Detailed support page for non-technical users
-      this.serveSupportPage(res);
-    } else if (url === '/health') {
-      // Health check endpoint
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok', peers: this.peers.size }));
-    } else if (url === '/stats') {
-      // Stats endpoint
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(this.getStats()));
-    } else {
-      // Not found
-      res.writeHead(404, { 'Content-Type': 'text/plain' });
-      res.end('Not Found\n\nAvailable endpoints:\n  /           - Installation info\n  /install.sh - Linux/Mac installer\n  /install.ps1 - Windows installer\n  /health     - Health check\n  /stats      - Server statistics');
+      if (url === '/install.sh' || url === '/install') {
+        // Serve bash installer
+        const installerPath = path.join(__dirname, '../installer/bootstrap.sh');
+        this.serveFile(res, installerPath, 'text/plain');
+      } else if (url === '/install.ps1') {
+        // Serve PowerShell installer
+        const installerPath = path.join(__dirname, '../installer/bootstrap.ps1');
+        this.serveFile(res, installerPath, 'text/plain');
+      } else if (url === '/' || url === '/info') {
+        // Serve landing page with installation instructions
+        this.serveLandingPage(req, res);
+      } else if (url === '/support') {
+        // Detailed support page for non-technical users
+        this.serveSupportPage(res);
+      } else if (url === '/health') {
+        // Health check endpoint
+        console.log('✅ Health check endpoint hit, responding with OK');
+        try {
+          const peerCount = this.peers ? this.peers.size : 0;
+          const healthData = { status: 'ok', peers: peerCount };
+          console.log('📊 Health data:', JSON.stringify(healthData));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(healthData));
+          console.log('✅ Health response sent successfully');
+        } catch (healthError) {
+          console.error('❌ Error in health check:', healthError);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ status: 'error', message: healthError.message }));
+        }
+      } else if (url === '/stats') {
+        // Stats endpoint
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(this.getStats()));
+      } else {
+        // Not found
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('Not Found\n\nAvailable endpoints:\n  /           - Installation info\n  /install.sh - Linux/Mac installer\n  /install.ps1 - Windows installer\n  /health     - Health check\n  /stats      - Server statistics');
+      }
+    } catch (error) {
+      console.error('❌ Critical error in handleHttpRequest:', error);
+      console.error('Stack:', error.stack);
+      try {
+        if (!res.headersSent) {
+          res.writeHead(500, { 'Content-Type': 'text/plain' });
+          res.end('Internal Server Error: ' + error.message);
+        }
+      } catch (resError) {
+        console.error('❌ Failed to send error response:', resError);
+      }
     }
   }
 
