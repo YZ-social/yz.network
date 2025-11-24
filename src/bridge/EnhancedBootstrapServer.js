@@ -614,10 +614,13 @@ export class EnhancedBootstrapServer extends EventEmitter {
           if (message.type === 'auth_success') {
             clearTimeout(timeout);
 
-            // CRITICAL: Store bridge node ID and listening address from auth response
+            // CRITICAL: Store bridge node ID and both addresses from auth response
             ws.bridgeNodeId = message.bridgeNodeId;
-            ws.listeningAddress = message.listeningAddress;
-            console.log(`🔍 Stored bridge node ID: ${message.bridgeNodeId?.substring(0, 8)}... at ${message.listeningAddress}`);
+            ws.listeningAddress = message.listeningAddress;  // Internal Docker address
+            ws.publicWssAddress = message.publicWssAddress || message.listeningAddress;  // Public WSS for browsers
+            console.log(`🔍 Stored bridge node ID: ${message.bridgeNodeId?.substring(0, 8)}...`);
+            console.log(`   Internal: ${message.listeningAddress}`);
+            console.log(`   Public: ${ws.publicWssAddress}`);
 
             // Set up ongoing message handler for bridge communication
             ws.onmessage = (event) => {

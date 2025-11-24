@@ -353,15 +353,28 @@ export class WebSocketConnectionManager extends ConnectionManager {
       await this.waitForWebSocketInitialization();
     }
 
-    // Get WebSocket address from peer metadata (peerMetadata already set above from parameter or global)
-    const wsAddress = peerMetadata?.listeningAddress;
-
     // Determine node types for connection handling
     const localNodeType = this.localNodeType;
     const targetNodeType = peerMetadata?.nodeType;
     const finalTargetNodeType = targetNodeType || this.targetNodeType || 'browser';
 
+    // Select WebSocket address based on local node type
+    // Browser clients MUST use public WSS (can't use ws:// from https://, can't reach internal Docker)
+    // Node.js clients prefer internal (faster), fallback to public (for community nodes)
+    let wsAddress;
+    if (localNodeType === 'browser') {
+      // Browser → Node.js: Must use external WSS address
+      wsAddress = peerMetadata?.publicWssAddress || peerMetadata?.listeningAddress;
+    } else {
+      // Node.js → Node.js: Prefer internal, fallback to external
+      // Server nodes will connect via internal, community nodes via external
+      wsAddress = peerMetadata?.listeningAddress || peerMetadata?.publicWssAddress;
+    }
+
     console.log(`🔗 WebSocket connection: ${localNodeType} → ${finalTargetNodeType}`);
+    if (peerMetadata?.publicWssAddress && peerMetadata?.listeningAddress !== peerMetadata?.publicWssAddress) {
+      console.log(`📍 Address selected: ${wsAddress} (internal: ${peerMetadata?.listeningAddress}, public: ${peerMetadata?.publicWssAddress})`);
+    }
 
     // Handle different connection scenarios
     if (!wsAddress) {

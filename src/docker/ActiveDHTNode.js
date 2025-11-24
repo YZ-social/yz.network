@@ -31,7 +31,8 @@ export class ActiveDHTNode extends DHTClient {
       // WebSocket server configuration
       websocketPort: options.websocketPort,
       websocketHost: options.websocketHost || '0.0.0.0',
-      publicAddress: options.publicAddress,
+      publicAddress: options.publicAddress,           // Internal Docker address
+      publicWssAddress: options.publicWssAddress,     // External browser WSS address
       upnpEnabled: options.upnpEnabled !== false,
       ...options
     });
@@ -43,7 +44,8 @@ export class ActiveDHTNode extends DHTClient {
     // WebSocket server configuration
     this.websocketPort = options.websocketPort;
     this.websocketHost = options.websocketHost || '0.0.0.0';
-    this.publicAddress = options.publicAddress;
+    this.publicAddress = options.publicAddress;           // Internal Docker address
+    this.publicWssAddress = options.publicWssAddress;     // External browser WSS address
     this.upnpEnabled = options.upnpEnabled !== false;
     this.upnpMappings = [];
 

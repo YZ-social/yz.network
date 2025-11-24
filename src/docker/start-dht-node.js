@@ -20,7 +20,8 @@ const config = {
   openNetwork: process.env.OPEN_NETWORK !== 'false',
   websocketPort: process.env.WEBSOCKET_PORT ? parseInt(process.env.WEBSOCKET_PORT) : undefined,
   websocketHost: process.env.WEBSOCKET_HOST || '0.0.0.0',
-  publicAddress: process.env.PUBLIC_ADDRESS,
+  publicAddress: process.env.PUBLIC_ADDRESS,           // Internal Docker address
+  publicWssAddress: process.env.PUBLIC_WSS_ADDRESS,    // External browser WSS address
   upnpEnabled: process.env.UPNP_ENABLED !== 'false'
 };
 
@@ -35,7 +36,10 @@ if (config.websocketPort) {
   console.log(`🔌 WebSocket Port: ${config.websocketPort}`);
 }
 if (config.publicAddress) {
-  console.log(`📍 Public Address: ${config.publicAddress}`);
+  console.log(`📍 Internal Address: ${config.publicAddress}`);
+}
+if (config.publicWssAddress) {
+  console.log(`📍 Public WSS Address: ${config.publicWssAddress}`);
 }
 console.log(`🔓 UPnP: ${config.upnpEnabled ? 'ENABLED' : 'DISABLED'}`);
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');

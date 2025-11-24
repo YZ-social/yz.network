@@ -43,7 +43,8 @@ services:
     environment:
       - BRIDGE_PORT=8083
       - WEBSOCKET_HOST=0.0.0.0
-      - PUBLIC_ADDRESS=ws://bridge-node-1:8083
+      - PUBLIC_ADDRESS=ws://bridge-node-1:8083          # Internal Docker address
+      - PUBLIC_WSS_ADDRESS=wss://imeyouwe.com/bridge1   # External browser address
       - BOOTSTRAP_URL=ws://bootstrap:8080
       - NODE_NAME=bridge-node-1
       - METRICS_PORT=9090
@@ -71,7 +72,8 @@ services:
     environment:
       - BRIDGE_PORT=8084
       - WEBSOCKET_HOST=0.0.0.0
-      - PUBLIC_ADDRESS=ws://bridge-node-2:8084
+      - PUBLIC_ADDRESS=ws://bridge-node-2:8084          # Internal Docker address
+      - PUBLIC_WSS_ADDRESS=wss://imeyouwe.com/bridge2   # External browser address
       - BOOTSTRAP_URL=ws://bootstrap:8080
       - NODE_NAME=bridge-node-2
       - METRICS_PORT=9090
@@ -100,7 +102,8 @@ services:
       - BOOTSTRAP_URL=ws://bootstrap:8080
       - WEBSOCKET_PORT=8085
       - WEBSOCKET_HOST=0.0.0.0
-      - PUBLIC_ADDRESS=wss://imeyouwe.com/genesis
+      - PUBLIC_ADDRESS=ws://genesis-node:8085           # Internal Docker address
+      - PUBLIC_WSS_ADDRESS=wss://imeyouwe.com/genesis   # External browser address
       - METRICS_PORT=9090
       - NODE_NAME=genesis-node
       - OPEN_NETWORK=true

@@ -113,12 +113,13 @@ export class NodeDHTClient extends DHTClient {
   }
 
   /**
-   * Override bootstrap metadata to include WebSocket listening address
+   * Override bootstrap metadata to include WebSocket listening addresses
    */
   getBootstrapMetadata() {
     return {
       nodeType: 'nodejs',
-      listeningAddress: this.connectionManager?.getServerAddress?.(),
+      listeningAddress: this.connectionManager?.getServerAddress?.(),  // Internal Docker address
+      publicWssAddress: this.options.publicWssAddress,                 // External browser WSS address
       capabilities: ['websocket', 'relay'],
       canRelay: true,
       canAcceptConnections: true,
@@ -252,13 +253,17 @@ export class NodeDHTClient extends DHTClient {
     // Prepare bootstrap metadata with WebSocket information
     this.dht.bootstrapMetadata = {
       nodeType: 'nodejs',
-      listeningAddress: actualListeningAddress,
+      listeningAddress: actualListeningAddress,              // Internal Docker address
+      publicWssAddress: this.options.publicWssAddress,       // External browser WSS address
       capabilities: ['websocket', 'relay'],
       canRelay: true
     };
 
     console.log('📡 Prepared WebSocket coordination metadata for bootstrap registration');
-    console.log(`   Listening Address: ${actualListeningAddress}`);
+    console.log(`   Internal Address: ${actualListeningAddress}`);
+    if (this.options.publicWssAddress) {
+      console.log(`   Public WSS Address: ${this.options.publicWssAddress}`);
+    }
 
     // Start the DHT
     await this.dht.start();
