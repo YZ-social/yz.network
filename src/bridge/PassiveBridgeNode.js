@@ -1031,7 +1031,14 @@ export class PassiveBridgeNode extends NodeDHTClient {
     }
 
     try {
-      if (message.type === 'validate_reconnection') {
+      if (message.type === 'ping') {
+        // Respond to keep-alive ping from bootstrap server
+        const manager = this.getManagerForPeer(peerId);
+        await manager.sendMessage(peerId, {
+          type: 'pong',
+          timestamp: Date.now()
+        });
+      } else if (message.type === 'validate_reconnection') {
         await this.handleReconnectionValidation(peerId, message);
       } else if (message.type === 'connect_genesis_peer') {
         await this.handleGenesisConnection(peerId, message);

@@ -681,16 +681,45 @@ export class EnhancedBootstrapServer extends EventEmitter {
             console.log(`   Internal: ${message.listeningAddress}`);
             console.log(`   Public: ${ws.publicWssAddress}`);
 
+            // Store the connection AFTER successful authentication (FIX: moved from outside event handler)
+            this.bridgeConnections.set(bridgeAddr, ws);
+            console.log(`✅ Bridge node connected and authenticated: ${bridgeAddr}`);
+
             // Set up ongoing message handler for bridge communication
             ws.onmessage = (event) => {
               try {
                 const bridgeMessage = JSON.parse(event.data);
+
+                // Handle pong responses
+                if (bridgeMessage.type === 'pong') {
+                  ws.lastPong = Date.now();
+                  return;
+                }
+
                 this.handleBridgeResponse(bridgeAddr, bridgeMessage);
               } catch (error) {
                 console.error(`Error parsing bridge message from ${bridgeAddr}:`, error);
               }
             };
+
+            // Set up keep-alive ping/pong mechanism (FIX: prevents idle connection timeouts)
+            ws.keepAliveInterval = setInterval(() => {
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
+
+                // Check if last pong is too old (30 seconds)
+                if (ws.lastPong && (Date.now() - ws.lastPong > 30000)) {
+                  console.warn(`⚠️ Bridge node ${bridgeAddr} not responding to pings, closing connection`);
+                  ws.close(1000, 'Keep-alive timeout');
+                }
+              }
+            }, 10000); // Ping every 10 seconds
+            ws.lastPong = Date.now();
+
             resolve(ws);
+          } else if (message.type === 'pong') {
+            // Handle pong during initial connection (before onmessage is reassigned)
+            ws.lastPong = Date.now();
           } else {
             this.handleBridgeResponse(bridgeAddr, message);
           }
@@ -703,13 +732,15 @@ export class EnhancedBootstrapServer extends EventEmitter {
 
         ws.onclose = () => {
           console.warn(`🔌 Bridge node disconnected: ${bridgeAddr}`);
+
+          // Clean up keep-alive interval
+          if (ws.keepAliveInterval) {
+            clearInterval(ws.keepAliveInterval);
+          }
+
           this.bridgeConnections.delete(bridgeAddr);
           this.scheduleBridgeReconnect(bridgeAddr);
         };
-
-        // Store the connection after successful authentication
-        this.bridgeConnections.set(bridgeAddr, ws);
-        console.log(`✅ Bridge node connected and authenticated: ${bridgeAddr}`);
       });
 
     } catch (error) {
