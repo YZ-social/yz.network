@@ -60,6 +60,11 @@ services:
         limits:
           cpus: '0.25'
           memory: 256M
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:9090/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   # Bridge Node 2 (Internal Docker + WSS accessible via /bridge2)
   bridge-node-2:
@@ -89,6 +94,11 @@ services:
         limits:
           cpus: '0.25'
           memory: 256M
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:9090/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   # Genesis Node - First active DHT participant (Internal Docker + WSS accessible via /genesis)
   genesis-node:
@@ -123,7 +133,7 @@ services:
           cpus: '0.5'
           memory: 512M
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/health"]
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:9090/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
       interval: 30s
       timeout: 10s
       retries: 3
