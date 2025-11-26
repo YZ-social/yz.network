@@ -10,13 +10,13 @@
  * - HTTP API for status and metrics
  */
 
-import { DHTClient } from '../core/DHTClient.js';
+import { NodeDHTClient } from '../node/NodeDHTClient.js';
 import { PubSubClient } from '../pubsub/PubSubClient.js';
 import { InvitationToken } from '../core/InvitationToken.js';
 import crypto from 'crypto';
 import http from 'http';
 
-export class ActiveDHTNode extends DHTClient {
+export class ActiveDHTNode extends NodeDHTClient {
   constructor(options = {}) {
     super({
       bootstrapServers: options.bootstrapServers || ['ws://bootstrap:8080'],
@@ -28,7 +28,8 @@ export class ActiveDHTNode extends DHTClient {
       enableConnections: true,
       k: options.k || 20,
       alpha: options.alpha || 3,
-      // WebSocket server configuration
+      // WebSocket server configuration (map websocketPort to port for NodeDHTClient)
+      port: options.websocketPort || options.port || 0,
       websocketPort: options.websocketPort,
       websocketHost: options.websocketHost || '0.0.0.0',
       publicAddress: options.publicAddress,           // Internal Docker address

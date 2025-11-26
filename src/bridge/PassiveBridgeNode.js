@@ -1,5 +1,4 @@
-import { DHTClient } from '../core/DHTClient.js';
-import { ConnectionManagerFactory } from '../network/ConnectionManagerFactory.js';
+import { NodeDHTClient } from '../node/NodeDHTClient.js';
 import { DHTNodeId } from '../core/DHTNodeId.js';
 import http from 'http';
 
@@ -8,11 +7,19 @@ import http from 'http';
  *
  * This node connects to the DHT network but does not participate in DHT operations.
  * It only observes network activity and peer announcements to facilitate reconnections.
+ *
+ * Extends NodeDHTClient to inherit WebSocket server capabilities and bootstrap metadata.
  */
-export class PassiveBridgeNode extends DHTClient {
+export class PassiveBridgeNode extends NodeDHTClient {
   constructor(options = {}) {
+    // Map bridge-specific options to NodeDHTClient options
     super({
       bootstrapServers: ['ws://bridge-placeholder:8080'], // Placeholder to prevent connection
+      port: options.bridgePort || options.port || 8083,   // Map bridgePort to port for NodeDHTClient
+      websocketPort: options.bridgePort || options.port || 8083,
+      websocketHost: options.bridgeHost || options.host || '0.0.0.0',
+      publicAddress: options.publicAddress,
+      publicWssAddress: options.publicWssAddress,
       passiveMode: true,
       disableStorage: true,
       disableRouting: true,
@@ -23,23 +30,16 @@ export class PassiveBridgeNode extends DHTClient {
 
     // Bridge-specific options
     this.bridgeAuth = options.bridgeAuth || 'default-bridge-auth-key';
-    this.bridgePort = options.bridgePort || 8083;
-    this.bridgeHost = options.bridgeHost || 'localhost';
+    this.bridgePort = options.bridgePort || options.port || 8083;
+    this.bridgeHost = options.bridgeHost || options.host || '0.0.0.0';
 
     // Metrics server for health checks
     this.metricsPort = options.metricsPort || parseInt(process.env.METRICS_PORT) || 9090;
     this.metricsServer = null;
     this.startTime = Date.now();
 
-    // Create connection manager using factory (connection-agnostic)
-    // Bridge nodes are Node.js servers accepting browser and Node.js client connections
-    this.connectionManager = ConnectionManagerFactory.createForConnection('nodejs', 'browser', {
-      maxConnections: this.options.maxConnections,
-      port: this.bridgePort,
-      host: this.bridgeHost,
-      enableServer: true,
-      ...options.connectionOptions
-    });
+    // NodeDHTClient will create connection manager in start() method
+    // this.connectionManager will be set by parent class
 
 
     // Network state monitoring
@@ -98,6 +98,7 @@ export class PassiveBridgeNode extends DHTClient {
 
   /**
    * Override DHT options for passive bridge mode
+   * NodeDHTClient will create and configure the connection manager
    */
   getDHTOptions() {
     return {
@@ -106,8 +107,8 @@ export class PassiveBridgeNode extends DHTClient {
       disableStorage: true,
       disableRouting: true,
       disableLookups: true,
-      enableConnections: true,
-      serverConnectionManager: this.connectionManager // Reuse bridge's connection manager
+      enableConnections: true
+      // serverConnectionManager removed - NodeDHTClient handles this
     };
   }
 
@@ -188,25 +189,23 @@ export class PassiveBridgeNode extends DHTClient {
     // Start metrics server first
     await this.startMetricsServer();
 
-    // Call superclass start to create DHT
+    // Call superclass start to create DHT and connection manager
+    // NodeDHTClient.start() handles:
+    // - Crypto setup
+    // - Connection manager creation
+    // - WebSocket server startup
+    // - DHT initialization
     await super.start();
 
-    // Now set up event handlers after DHT is created
+    // Now set up bridge-specific event handlers after DHT is created
     this.setupDHTEventHandlers();
     this.setupConnectionManagerEventHandlers();
 
-    // Initialize connection manager with bridge node ID
-    this.connectionManager.initialize(this.dht.localNodeId.toString());
-
-    // CRITICAL: Wait for WebSocket initialization and server startup that was started in constructor
-    console.log('⏳ Waiting for WebSocket initialization to complete...');
-    await this.connectionManager.waitForWebSocketInitialization();
-    console.log('✅ WebSocket initialization completed');
-
-    // WebSocket server is already started automatically by initializeWebSocketClasses()
+    // NodeDHTClient already initialized connection manager and started WebSocket server
+    // this.connectionManager is now set and ready
     console.log(`🌐 WebSocket server ready at ${this.connectionManager.getServerAddress()}`);
 
-    // Wait a moment for server to fully initialize, then get address
+    // Get server address (already initialized by NodeDHTClient)
     const serverAddress = this.connectionManager.getServerAddress() || `ws://${this.bridgeHost}:${this.bridgePort}`;
 
     // CRITICAL: Mark this node as a bridge node in metadata

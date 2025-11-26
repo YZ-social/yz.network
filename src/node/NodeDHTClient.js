@@ -214,11 +214,8 @@ export class NodeDHTClient extends DHTClient {
     // Small delay to ensure server.address() is available
     await new Promise(resolve => setTimeout(resolve, 100));
 
-    // Create bootstrap client
-    this.bootstrap = new BootstrapClient({
-      bootstrapServers: this.options.bootstrapServers,
-      timeout: 15000
-    });
+    // Create bootstrap client (allows subclasses like PassiveBridgeNode to override with mock)
+    this.bootstrap = this.createBootstrapClient();
 
     // Generate cryptographic keys
     const keyInfo = await InvitationToken.generateKeyPair();

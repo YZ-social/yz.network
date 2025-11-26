@@ -23,12 +23,14 @@ const DEFAULT_CONFIG = {
       port: parseInt(process.env.BRIDGE_PORT_1) || 8083,
       host: 'localhost',
       dhtPort: parseInt(process.env.BRIDGE_DHT_PORT_1) || 9083,
+      metricsPort: parseInt(process.env.BRIDGE_METRICS_PORT_1) || 9090,  // Local default
       maxConnections: 20
     },
     {
       port: parseInt(process.env.BRIDGE_PORT_2) || 8084,
       host: 'localhost',
       dhtPort: parseInt(process.env.BRIDGE_DHT_PORT_2) || 9084,
+      metricsPort: parseInt(process.env.BRIDGE_METRICS_PORT_2) || 9091,  // Local default (Docker uses METRICS_PORT=9090)
       maxConnections: 20
     }
   ]
@@ -102,6 +104,7 @@ class BridgeNodesManager {
         bridgePort: nodeConfig.port,
         bridgeHost: nodeConfig.host,
         bridgeAuth: this.config.bridgeAuth,
+        metricsPort: nodeConfig.metricsPort,  // Different port for each bridge node (local testing)
         maxConnections: nodeConfig.maxConnections,
         dhtOptions: {
           bootstrapServers: this.config.bootstrapServers
