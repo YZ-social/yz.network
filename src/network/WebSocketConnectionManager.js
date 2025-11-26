@@ -285,6 +285,38 @@ export class WebSocketConnectionManager extends ConnectionManager {
   // ===========================================
 
   /**
+   * Handle invitation from peer - WebSocket-specific logic
+   * Browsers can only be WebSocket clients, not servers
+   * @param {string} peerId - Inviter peer ID
+   * @param {Object} peerMetadata - Inviter's connection metadata
+   * @returns {Promise<void>}
+   */
+  async handleInvitation(peerId, peerMetadata) {
+    // Determine if we need to initiate connection based on capabilities
+    const localIsServer = this.serverMode === 'server';
+    const localIsBrowser = this.localNodeType === 'browser';
+    const inviterIsNodejs = peerMetadata.nodeType === 'nodejs' || peerMetadata.nodeType === 'nodejs-active';
+
+    // CRITICAL: Browsers can't be WebSocket servers!
+    // If we're a browser and inviter is nodejs, WE must initiate connection
+    if (localIsBrowser && inviterIsNodejs) {
+      const connectAddress = peerMetadata.publicWssAddress || peerMetadata.listeningAddress;
+      console.log(`🔗 Browser initiating WebSocket connection to nodejs at ${connectAddress}`);
+
+      try {
+        await this.createConnection(peerId, true, peerMetadata);
+        console.log(`✅ Browser successfully connected to inviter ${peerId.substring(0, 8)}...`);
+      } catch (error) {
+        console.error(`❌ Browser failed to connect to inviter: ${error.message}`);
+        throw error;
+      }
+    } else {
+      // Default: wait for inviter to connect to us
+      console.log(`⏳ Waiting for WebSocket connection from ${peerId.substring(0, 8)}...`);
+    }
+  }
+
+  /**
    * Create WebSocket connection to peer
    * @param {string} peerId - Target peer ID
    * @param {boolean} initiator - Whether we're initiating the connection

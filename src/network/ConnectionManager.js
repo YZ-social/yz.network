@@ -85,6 +85,19 @@ export class ConnectionManager extends EventEmitter {
     throw new Error('destroyConnection() must be implemented by subclass');
   }
 
+  /**
+   * Handle invitation from peer - determines who initiates connection
+   * Transport-specific logic for handling connection direction
+   * @param {string} peerId - Inviter peer ID
+   * @param {Object} peerMetadata - Inviter's connection metadata
+   * @returns {Promise<void>}
+   */
+  async handleInvitation(peerId, peerMetadata) {
+    // Default: wait for inviter to connect
+    // Subclasses override to implement transport-specific logic
+    console.log(`⏳ Waiting for connection from ${peerId.substring(0, 8)}...`);
+  }
+
   // ===========================================
   // PROTOCOL MESSAGE HANDLING (Implemented in base class)
   // ===========================================

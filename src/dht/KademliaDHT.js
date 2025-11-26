@@ -1280,15 +1280,21 @@ export class KademliaDHT extends EventEmitter {
       }
     }
 
-    // This node is the invitee - store inviter metadata for reference
+    // This node is the invitee - store inviter metadata and handle connection
     if (fromPeer && fromPeerMetadata) {
       console.log(`📋 Received inviter metadata from ${fromPeer.substring(0, 8)}...`);
       console.log(`   Listening address: ${fromPeerMetadata.listeningAddress}`);
       console.log(`   Node type: ${fromPeerMetadata.nodeType}`);
 
-      // Store metadata (connection will be initiated by the inviter)
+      // Create peer node and let connection manager handle invitation logic
       const peerNode = this.getOrCreatePeerNode(fromPeer, fromPeerMetadata);
-      console.log(`⏳ Waiting for WebSocket connection from ${fromPeer.substring(0, 8)}...`);
+
+      // Connection-agnostic: delegate to connection manager
+      if (peerNode.connectionManager) {
+        await peerNode.connectionManager.handleInvitation(fromPeer, fromPeerMetadata);
+      } else {
+        console.warn(`⚠️ No connection manager for peer ${fromPeer.substring(0, 8)}...`);
+      }
     }
   }
 
