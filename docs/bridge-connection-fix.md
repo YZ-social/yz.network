@@ -95,6 +95,33 @@ WebSocket connections with **no traffic** can be closed silently by:
 **Industry Standard Solution**:
 WebSocket ping/pong frames are designed exactly for this, but require periodic traffic to keep connection alive.
 
+### Bug #3: Docker Network Binding Issue
+
+**The Problem**:
+WebSocket servers in Docker containers were binding to `127.0.0.1` (localhost only) instead of `0.0.0.0` (all interfaces), preventing them from accepting connections from other containers in the same Docker network.
+
+**Symptoms After Deploying Fixes #1 and #2**:
+```
+yz-bridge-node-1 | 🌐 WebSocket server listening on 127.0.0.1:8083  ❌
+yz-bootstrap-server | 🔗 Connecting to bridge node: bridge-node-1:8083
+yz-bootstrap-server | 🔌 Bridge node disconnected: bridge-node-1:8083
+[NO "authenticated" message - connection fails immediately]
+[NO logs on bridge node about receiving connections]
+```
+
+**Why This Was a Bug**:
+1. `NodeDHTClient.js:194` hardcoded `host: 'localhost'`
+2. `WebSocketConnectionManager.js:126` converted `'localhost'` → `'127.0.0.1'`
+3. In Docker, `127.0.0.1` means "only accept connections from within this container"
+4. Bootstrap server in different container couldn't connect to bridge nodes
+5. Connections failed immediately at TCP level, before WebSocket handshake
+
+**Docker Networking Requirements**:
+- Services must bind to `0.0.0.0` to accept connections from other containers
+- `127.0.0.1` is localhost-only, isolated to single container
+- Docker DNS resolves container names (e.g., `bridge-node-1`) to internal IPs
+- Containers on same network can connect if server binds to all interfaces
+
 ## Fixes Applied
 
 ### Fix #1: Move Connection Storage Into Auth Handler
@@ -197,6 +224,41 @@ if (message.type === 'ping') {
 4. Automatic reconnection recovery from infrastructure issues
 5. Clean resource management (interval cleanup)
 
+### Fix #3: Change WebSocket Binding to All Interfaces
+
+**File**: `src/node/NodeDHTClient.js`
+
+**Changes**:
+```javascript
+// BEFORE (broken in Docker):
+this.connectionManager = ConnectionManagerFactory.createForConnection('nodejs', 'browser', {
+  port: this.options.port || 0,
+  host: 'localhost',  // ❌ Binds to 127.0.0.1, Docker-incompatible
+  // ...
+});
+
+// AFTER (Docker-compatible):
+this.connectionManager = ConnectionManagerFactory.createForConnection('nodejs', 'browser', {
+  port: this.options.port || 0,
+  host: '0.0.0.0',  // ✅ Binds to all interfaces, accepts Docker connections
+  // ...
+});
+```
+
+**Why This Fixes It**:
+1. `0.0.0.0` binds to all network interfaces, not just localhost
+2. Other Docker containers can now connect to the WebSocket server
+3. Still works correctly in local development (localhost can connect to 0.0.0.0)
+4. Production and Docker deployments now have identical behavior
+5. No environment detection needed - works universally
+
+**How WebSocketConnectionManager Processes This**:
+```javascript
+// WebSocketConnectionManager.js:126
+const host = this.wsOptions.host === 'localhost' ? '127.0.0.1' : this.wsOptions.host;
+// Now receives '0.0.0.0' instead of 'localhost', bypasses conversion
+```
+
 ## Expected Behavior After Fixes
 
 ### Bootstrap Server Logs:
@@ -212,6 +274,8 @@ if (message.type === 'ping') {
 
 ### Bridge Node Logs:
 ```
+🌐 WebSocket server listening on 0.0.0.0:8083  ✅ All interfaces
+🔗 Incoming connection from bootstrap_... via connection manager
 ✅ Bootstrap server connected and authenticated: bootstrap_...
 [every 10s] ← ping
 [every 10s] → pong

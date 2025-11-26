@@ -191,7 +191,7 @@ export class NodeDHTClient extends DHTClient {
     // NodeDHTClient is a Node.js server that accepts connections from both browsers and other Node.js clients
     this.connectionManager = ConnectionManagerFactory.createForConnection('nodejs', 'browser', {
       port: this.options.port || 0,
-      host: 'localhost',
+      host: '0.0.0.0',  // Bind to all interfaces for Docker/production environments
       maxConnections: this.options.maxConnections || 50,
       timeout: this.options.timeout || 30000,
       enableServer: true,
