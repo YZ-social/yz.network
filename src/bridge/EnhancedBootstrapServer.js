@@ -1043,12 +1043,15 @@ export class EnhancedBootstrapServer extends EventEmitter {
 
       // Create pending invitation for ALL connection types (WebRTC and WebSocket)
       // This enables handleInvitationAccepted to coordinate connections properly
+      // CRITICAL: Store metadata so we can coordinate even if inviter disconnects
       const invitationId = `${inviterNodeId}_${targetPeerId}_${Date.now()}`;
       this.pendingInvitations.set(invitationId, {
         inviterNodeId: inviterNodeId,
         inviteeNodeId: targetPeerId,
         inviterWs: ws,
         inviteeWs: targetClient.ws,
+        inviterMetadata: inviterClient?.metadata || {},  // Store for offline coordination
+        inviteeMetadata: targetClient?.metadata || {},   // Store for offline coordination
         status: 'invitation_sent',
         timestamp: Date.now()
       });
@@ -2393,20 +2396,40 @@ export class EnhancedBootstrapServer extends EventEmitter {
     matchingInvitation.status = 'invitation_accepted';
     matchingInvitation.acceptedAt = Date.now();
 
-    // Get both peer connections
+    // Get peer connections
     const inviterClient = this.connectedClients.get(matchingInvitation.inviterNodeId);
     const inviteeClient = this.connectedClients.get(matchingInvitation.inviteeNodeId);
 
-    if (!inviterClient || !inviteeClient ||
-        inviterClient.ws.readyState !== 1 || inviteeClient.ws.readyState !== 1) {
-      console.error(`❌ Cannot coordinate connection - one or both peers are offline`);
+    // CRITICAL FIX: For bridge-coordinated invitations, inviter may be offline
+    // Use stored metadata from pending invitation if inviter disconnected
+    const inviterOnline = inviterClient && inviterClient.ws.readyState === 1;
+    const inviteeOnline = inviteeClient && inviteeClient.ws.readyState === 1;
+
+    if (!inviteeOnline) {
+      console.error(`❌ Cannot coordinate - invitee ${fromPeer?.substring(0, 8)}... is offline`);
       this.pendingInvitations.delete(invitationId);
       return;
     }
 
+    // Get metadata - use live connection or fallback to stored metadata
+    const inviterMetadata = inviterOnline ? inviterClient.metadata : matchingInvitation.inviterMetadata;
+    const inviteeMetadata = inviteeClient.metadata;
+
+    if (!inviterMetadata) {
+      console.error(`❌ Cannot coordinate - no metadata available for inviter ${toPeer?.substring(0, 8)}...`);
+      this.pendingInvitations.delete(invitationId);
+      return;
+    }
+
+    // Log coordination mode
+    if (!inviterOnline) {
+      console.log(`📝 Inviter offline - using stored metadata for coordination`);
+      console.log(`   Inviter will not receive metadata (expected for bridge-coordinated invitations)`);
+    }
+
     // Determine connection type based on node types
-    const inviterNodeType = inviterClient.metadata?.nodeType || 'browser';
-    const inviteeNodeType = inviteeClient.metadata?.nodeType || 'browser';
+    const inviterNodeType = inviterMetadata.nodeType || 'browser';
+    const inviteeNodeType = inviteeMetadata.nodeType || 'browser';
 
     console.log(`🔍 Connection coordination: ${inviterNodeType} → ${inviteeNodeType}`);
 
@@ -2433,26 +2456,30 @@ export class EnhancedBootstrapServer extends EventEmitter {
       console.log(`🌐 Using WebSocket coordination for Node.js connection`);
 
       // Debug: Log metadata being sent
-      console.log(`🔍 Invitee metadata being sent:`, JSON.stringify(inviteeClient.metadata, null, 2));
-      console.log(`🔍 Inviter metadata being sent:`, JSON.stringify(inviterClient.metadata, null, 2));
+      console.log(`🔍 Invitee metadata:`, JSON.stringify(inviteeMetadata, null, 2));
+      console.log(`🔍 Inviter metadata:`, JSON.stringify(inviterMetadata, null, 2));
 
-      // Send invitee's metadata to inviter so inviter can connect via WebSocket
-      inviterClient.ws.send(JSON.stringify({
-        type: 'websocket_peer_metadata',
-        targetPeer: matchingInvitation.inviteeNodeId,
-        targetPeerMetadata: inviteeClient.metadata,
-        invitationId: invitationId,
-        message: 'Connect to invited peer using WebSocket (metadata provided)'
-      }));
+      // Send invitee's metadata to inviter (only if online)
+      if (inviterOnline) {
+        inviterClient.ws.send(JSON.stringify({
+          type: 'websocket_peer_metadata',
+          targetPeer: matchingInvitation.inviteeNodeId,
+          targetPeerMetadata: inviteeMetadata,
+          invitationId: invitationId,
+          message: 'Connect to invited peer using WebSocket (metadata provided)'
+        }));
+        console.log(`📤 Sent invitee metadata to online inviter`);
+      }
 
-      // Send inviter's metadata to invitee (for bidirectional awareness)
+      // ALWAYS send inviter's metadata to invitee (invitee must initiate if inviter offline)
       inviteeClient.ws.send(JSON.stringify({
         type: 'websocket_peer_metadata',
         fromPeer: matchingInvitation.inviterNodeId,
-        fromPeerMetadata: inviterClient.metadata,
+        fromPeerMetadata: inviterMetadata,
         invitationId: invitationId,
-        message: 'Inviter peer metadata (connection will be initiated by inviter)'
+        message: 'Inviter peer metadata - initiate connection if inviter is nodejs'
       }));
+      console.log(`📤 Sent inviter metadata to invitee`);
     }
 
     console.log(`🚀 Connection coordination initiated between ${matchingInvitation.inviterNodeId.substring(0,8)}... and ${matchingInvitation.inviteeNodeId.substring(0,8)}...`);
