@@ -10,7 +10,19 @@ const execAsync = promisify(exec);
  * Usage: node scripts/kill-ports.js [port1] [port2] ...
  */
 
-const defaultPorts = [3000, 8080, 8081, 8083, 8084];
+// Default ports used by YZSocialC:
+// 3000 - Dev server
+// 8080 - Bootstrap server
+// 8081 - Fallback bootstrap
+// 8083 - Bridge node 1 WebSocket
+// 8084 - Bridge node 2 WebSocket
+// 8085 - Genesis node WebSocket
+// 9083 - Bridge node 1 DHT (legacy)
+// 9084 - Bridge node 2 DHT (legacy)
+// 9090 - Bridge node 1 metrics
+// 9091 - Bridge node 2 metrics
+// 9095 - Genesis node metrics
+const defaultPorts = [3000, 8080, 8081, 8083, 8084, 8085, 9083, 9084, 9090, 9091, 9095];
 const isWindows = process.platform === 'win32';
 
 async function killPort(port) {

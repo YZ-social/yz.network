@@ -34,14 +34,18 @@ class App {
       const useTabIdentity = urlParams.get('tabIdentity') !== 'false'; // Default: true (enables testing multiple tabs)
 
       // Create BrowserDHTClient with cryptographic identity
+      // Bootstrap server URL: production uses /ws proxy, local uses :8080
+      const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      const bootstrapUrl = isLocalDev
+        ? 'ws://localhost:8080'  // Local development
+        : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.hostname}/ws`; // Production
+
       this.dht = new BrowserDHTClient({
         k: 20,
         alpha: 3,
         replicateK: 20,
         useTabIdentity: useTabIdentity, // Enable tab-specific identities for testing multiple clients
-        bootstrapServers: [
-          `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.hostname}/ws`
-        ],
+        bootstrapServers: [bootstrapUrl],
         webrtc: {
           iceServers: [
             { urls: 'stun:stun.l.google.com:19302' },
