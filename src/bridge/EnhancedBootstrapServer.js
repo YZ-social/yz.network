@@ -1377,6 +1377,19 @@ export class EnhancedBootstrapServer extends EventEmitter {
           peer.metadata.verified = true;
         }
 
+        // CRITICAL FIX: Add authenticated client to connectedClients for invitation coordination
+        // This ensures browser clients are available for handleInvitationAccepted()
+        if (!this.connectedClients.has(nodeId)) {
+          const peer = this.peers.get(nodeId);
+          this.connectedClients.set(nodeId, {
+            ws,
+            nodeId,
+            metadata: peer?.metadata || {},
+            timestamp: Date.now()
+          });
+          console.log(`➕ Added authenticated client ${nodeId.substring(0, 8)}... to connected clients (total: ${this.connectedClients.size})`);
+        }
+
         // Send success message
         ws.send(JSON.stringify({
           type: 'auth_success',
