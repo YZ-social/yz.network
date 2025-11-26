@@ -1269,7 +1269,8 @@ export class KademliaDHT extends EventEmitter {
         // Initiate WebSocket connection using Perfect Negotiation
         if (peerNode && peerNode.connectionManager) {
           console.log(`🔗 Creating WebSocket connection to ${targetPeer.substring(0, 8)}...`);
-          await peerNode.connectionManager.createConnection(targetPeer, true); // true = initiator
+          // CRITICAL: Pass metadata so connection manager can use publicWssAddress for browsers
+          await peerNode.connectionManager.createConnection(targetPeer, true, peerNode.metadata);
           console.log(`✅ WebSocket connection initiated to ${targetPeer.substring(0, 8)}...`);
         } else {
           console.error(`❌ No connection manager available for ${targetPeer.substring(0, 8)}...`);
