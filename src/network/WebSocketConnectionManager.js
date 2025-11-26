@@ -297,6 +297,12 @@ export class WebSocketConnectionManager extends ConnectionManager {
     const localIsBrowser = this.localNodeType === 'browser';
     const inviterIsNodejs = peerMetadata.nodeType === 'nodejs' || peerMetadata.nodeType === 'nodejs-active';
 
+    // DEBUG: Log values to understand why condition fails
+    console.log(`🔍 handleInvitation DEBUG:`);
+    console.log(`   localNodeType: ${this.localNodeType}, localIsBrowser: ${localIsBrowser}`);
+    console.log(`   inviter nodeType: ${peerMetadata.nodeType}, inviterIsNodejs: ${inviterIsNodejs}`);
+    console.log(`   Condition (localIsBrowser && inviterIsNodejs): ${localIsBrowser && inviterIsNodejs}`);
+
     // CRITICAL: Browsers can't be WebSocket servers!
     // If we're a browser and inviter is nodejs, WE must initiate connection
     if (localIsBrowser && inviterIsNodejs) {
