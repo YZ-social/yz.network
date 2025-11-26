@@ -1771,6 +1771,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
           metadata: {
             nodeType: 'bridge',
             listeningAddress: listeningAddress,
+            publicWssAddress: ws.publicWssAddress,  // CRITICAL: Browsers need WSS address
             capabilities: ['websocket'],
             isBridgeNode: true,
             bridgeAuthToken: 'bridge_auth_' + (this.options.bridgeAuth || 'default-bridge-auth-key'),
