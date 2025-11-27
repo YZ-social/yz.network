@@ -597,9 +597,14 @@ export class PassiveBridgeNode extends NodeDHTClient {
 
       // 3. Filter to only full DHT members (exclude passive bridge nodes)
       // Bridge nodes cannot create invitation tokens since they don't have membership tokens
+      console.log(`🔍 Filtering ${closestPeers.length} peers for non-bridge nodes...`);
       const fullDHTMembers = closestPeers.filter(peer => {
+        const peerId = peer.id.toString();
         const isBridge = peer.metadata?.isBridgeNode || peer.metadata?.nodeType === 'bridge';
-        return !isBridge;  // Only select non-bridge nodes
+        const isSelf = peerId === this.dht.localNodeId.toString();
+        console.log(`   Peer ${peerId.substring(0, 8)}: isBridge=${isBridge}, isSelf=${isSelf}, metadata.nodeType=${peer.metadata?.nodeType}, metadata.isBridgeNode=${peer.metadata?.isBridgeNode}`);
+        // Also filter out self
+        return !isBridge && !isSelf;  // Only select non-bridge nodes and not ourselves
       });
 
       if (fullDHTMembers.length === 0) {
