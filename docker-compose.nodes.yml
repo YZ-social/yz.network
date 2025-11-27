@@ -1,43 +1,536 @@
 version: '3.8'
 
-# DHT Nodes - Can run on ANY server (primary or secondary)
-# These nodes join the existing DHT network via bootstrap/bridge
+# DHT Nodes - 15 individual nodes with external browser access
+# Each node has unique port and WSS path for browser connections
 #
-# PRIMARY SERVER Usage:
-#   docker-compose -f docker-compose.nodes.yml up -d
-#
-# SECONDARY SERVER Usage:
-#   export BOOTSTRAP_URL=ws://PRIMARY_SERVER_IP:8080
-#   docker-compose -f docker-compose.nodes.yml up -d
+# Ports: 8086-8100 (WebSocket), 9096-9110 (Metrics)
+# WSS Paths: /node1 through /node15
 
 services:
-  dht-node:
-    build:
-      context: .
-      dockerfile: Dockerfile
+  # DHT Node 1
+  dht-node-1:
+    image: itsmeront/yz-dht-node:latest
+    container_name: yz-dht-node-1
     command: node src/docker/start-dht-node.js
+    ports:
+      - "8086:8086"
+      - "9096:9090"
     environment:
       - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
-      - OPEN_NETWORK=true
+      - WEBSOCKET_PORT=8086
+      - WEBSOCKET_HOST=0.0.0.0
+      - PUBLIC_ADDRESS=ws://dht-node-1:8086
+      - PUBLIC_WSS_ADDRESS=wss://imeyouwe.com/node1
       - METRICS_PORT=9090
+      - NODE_NAME=dht-node-1
+      - OPEN_NETWORK=true
     networks:
       - dht-network
     restart: unless-stopped
     deploy:
-      replicas: 15  # Optimized: 15 nodes on c6i.large (2 vCPU, 4 GB)
       resources:
         limits:
-          cpus: '0.15'      # Optimized: reduced from 0.5
-          memory: 128M      # Optimized: reduced from 256M
+          cpus: '0.15'
+          memory: 128M
         reservations:
-          cpus: '0.05'      # Optimized: reduced from 0.1
-          memory: 64M       # Optimized: reduced from 128M
+          cpus: '0.05'
+          memory: 64M
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:9090/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s  # Give nodes more time to connect
+      start_period: 60s
+
+  # DHT Node 2
+  dht-node-2:
+    image: itsmeront/yz-dht-node:latest
+    container_name: yz-dht-node-2
+    command: node src/docker/start-dht-node.js
+    ports:
+      - "8087:8087"
+      - "9097:9090"
+    environment:
+      - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
+      - WEBSOCKET_PORT=8087
+      - WEBSOCKET_HOST=0.0.0.0
+      - PUBLIC_ADDRESS=ws://dht-node-2:8087
+      - PUBLIC_WSS_ADDRESS=wss://imeyouwe.com/node2
+      - METRICS_PORT=9090
+      - NODE_NAME=dht-node-2
+      - OPEN_NETWORK=true
+    networks:
+      - dht-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.15'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:9090/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # DHT Node 3
+  dht-node-3:
+    image: itsmeront/yz-dht-node:latest
+    container_name: yz-dht-node-3
+    command: node src/docker/start-dht-node.js
+    ports:
+      - "8088:8088"
+      - "9098:9090"
+    environment:
+      - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
+      - WEBSOCKET_PORT=8088
+      - WEBSOCKET_HOST=0.0.0.0
+      - PUBLIC_ADDRESS=ws://dht-node-3:8088
+      - PUBLIC_WSS_ADDRESS=wss://imeyouwe.com/node3
+      - METRICS_PORT=9090
+      - NODE_NAME=dht-node-3
+      - OPEN_NETWORK=true
+    networks:
+      - dht-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.15'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:9090/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # DHT Node 4
+  dht-node-4:
+    image: itsmeront/yz-dht-node:latest
+    container_name: yz-dht-node-4
+    command: node src/docker/start-dht-node.js
+    ports:
+      - "8089:8089"
+      - "9099:9090"
+    environment:
+      - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
+      - WEBSOCKET_PORT=8089
+      - WEBSOCKET_HOST=0.0.0.0
+      - PUBLIC_ADDRESS=ws://dht-node-4:8089
+      - PUBLIC_WSS_ADDRESS=wss://imeyouwe.com/node4
+      - METRICS_PORT=9090
+      - NODE_NAME=dht-node-4
+      - OPEN_NETWORK=true
+    networks:
+      - dht-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.15'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:9090/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # DHT Node 5
+  dht-node-5:
+    image: itsmeront/yz-dht-node:latest
+    container_name: yz-dht-node-5
+    command: node src/docker/start-dht-node.js
+    ports:
+      - "8090:8090"
+      - "9100:9090"
+    environment:
+      - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
+      - WEBSOCKET_PORT=8090
+      - WEBSOCKET_HOST=0.0.0.0
+      - PUBLIC_ADDRESS=ws://dht-node-5:8090
+      - PUBLIC_WSS_ADDRESS=wss://imeyouwe.com/node5
+      - METRICS_PORT=9090
+      - NODE_NAME=dht-node-5
+      - OPEN_NETWORK=true
+    networks:
+      - dht-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.15'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:9090/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # DHT Node 6
+  dht-node-6:
+    image: itsmeront/yz-dht-node:latest
+    container_name: yz-dht-node-6
+    command: node src/docker/start-dht-node.js
+    ports:
+      - "8091:8091"
+      - "9101:9090"
+    environment:
+      - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
+      - WEBSOCKET_PORT=8091
+      - WEBSOCKET_HOST=0.0.0.0
+      - PUBLIC_ADDRESS=ws://dht-node-6:8091
+      - PUBLIC_WSS_ADDRESS=wss://imeyouwe.com/node6
+      - METRICS_PORT=9090
+      - NODE_NAME=dht-node-6
+      - OPEN_NETWORK=true
+    networks:
+      - dht-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.15'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:9090/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # DHT Node 7
+  dht-node-7:
+    image: itsmeront/yz-dht-node:latest
+    container_name: yz-dht-node-7
+    command: node src/docker/start-dht-node.js
+    ports:
+      - "8092:8092"
+      - "9102:9090"
+    environment:
+      - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
+      - WEBSOCKET_PORT=8092
+      - WEBSOCKET_HOST=0.0.0.0
+      - PUBLIC_ADDRESS=ws://dht-node-7:8092
+      - PUBLIC_WSS_ADDRESS=wss://imeyouwe.com/node7
+      - METRICS_PORT=9090
+      - NODE_NAME=dht-node-7
+      - OPEN_NETWORK=true
+    networks:
+      - dht-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.15'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:9090/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # DHT Node 8
+  dht-node-8:
+    image: itsmeront/yz-dht-node:latest
+    container_name: yz-dht-node-8
+    command: node src/docker/start-dht-node.js
+    ports:
+      - "8093:8093"
+      - "9103:9090"
+    environment:
+      - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
+      - WEBSOCKET_PORT=8093
+      - WEBSOCKET_HOST=0.0.0.0
+      - PUBLIC_ADDRESS=ws://dht-node-8:8093
+      - PUBLIC_WSS_ADDRESS=wss://imeyouwe.com/node8
+      - METRICS_PORT=9090
+      - NODE_NAME=dht-node-8
+      - OPEN_NETWORK=true
+    networks:
+      - dht-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.15'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:9090/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # DHT Node 9
+  dht-node-9:
+    image: itsmeront/yz-dht-node:latest
+    container_name: yz-dht-node-9
+    command: node src/docker/start-dht-node.js
+    ports:
+      - "8094:8094"
+      - "9104:9090"
+    environment:
+      - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
+      - WEBSOCKET_PORT=8094
+      - WEBSOCKET_HOST=0.0.0.0
+      - PUBLIC_ADDRESS=ws://dht-node-9:8094
+      - PUBLIC_WSS_ADDRESS=wss://imeyouwe.com/node9
+      - METRICS_PORT=9090
+      - NODE_NAME=dht-node-9
+      - OPEN_NETWORK=true
+    networks:
+      - dht-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.15'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:9090/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # DHT Node 10
+  dht-node-10:
+    image: itsmeront/yz-dht-node:latest
+    container_name: yz-dht-node-10
+    command: node src/docker/start-dht-node.js
+    ports:
+      - "8095:8095"
+      - "9105:9090"
+    environment:
+      - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
+      - WEBSOCKET_PORT=8095
+      - WEBSOCKET_HOST=0.0.0.0
+      - PUBLIC_ADDRESS=ws://dht-node-10:8095
+      - PUBLIC_WSS_ADDRESS=wss://imeyouwe.com/node10
+      - METRICS_PORT=9090
+      - NODE_NAME=dht-node-10
+      - OPEN_NETWORK=true
+    networks:
+      - dht-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.15'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:9090/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # DHT Node 11
+  dht-node-11:
+    image: itsmeront/yz-dht-node:latest
+    container_name: yz-dht-node-11
+    command: node src/docker/start-dht-node.js
+    ports:
+      - "8096:8096"
+      - "9106:9090"
+    environment:
+      - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
+      - WEBSOCKET_PORT=8096
+      - WEBSOCKET_HOST=0.0.0.0
+      - PUBLIC_ADDRESS=ws://dht-node-11:8096
+      - PUBLIC_WSS_ADDRESS=wss://imeyouwe.com/node11
+      - METRICS_PORT=9090
+      - NODE_NAME=dht-node-11
+      - OPEN_NETWORK=true
+    networks:
+      - dht-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.15'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:9090/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # DHT Node 12
+  dht-node-12:
+    image: itsmeront/yz-dht-node:latest
+    container_name: yz-dht-node-12
+    command: node src/docker/start-dht-node.js
+    ports:
+      - "8097:8097"
+      - "9107:9090"
+    environment:
+      - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
+      - WEBSOCKET_PORT=8097
+      - WEBSOCKET_HOST=0.0.0.0
+      - PUBLIC_ADDRESS=ws://dht-node-12:8097
+      - PUBLIC_WSS_ADDRESS=wss://imeyouwe.com/node12
+      - METRICS_PORT=9090
+      - NODE_NAME=dht-node-12
+      - OPEN_NETWORK=true
+    networks:
+      - dht-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.15'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:9090/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # DHT Node 13
+  dht-node-13:
+    image: itsmeront/yz-dht-node:latest
+    container_name: yz-dht-node-13
+    command: node src/docker/start-dht-node.js
+    ports:
+      - "8098:8098"
+      - "9108:9090"
+    environment:
+      - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
+      - WEBSOCKET_PORT=8098
+      - WEBSOCKET_HOST=0.0.0.0
+      - PUBLIC_ADDRESS=ws://dht-node-13:8098
+      - PUBLIC_WSS_ADDRESS=wss://imeyouwe.com/node13
+      - METRICS_PORT=9090
+      - NODE_NAME=dht-node-13
+      - OPEN_NETWORK=true
+    networks:
+      - dht-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.15'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:9090/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # DHT Node 14
+  dht-node-14:
+    image: itsmeront/yz-dht-node:latest
+    container_name: yz-dht-node-14
+    command: node src/docker/start-dht-node.js
+    ports:
+      - "8099:8099"
+      - "9109:9090"
+    environment:
+      - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
+      - WEBSOCKET_PORT=8099
+      - WEBSOCKET_HOST=0.0.0.0
+      - PUBLIC_ADDRESS=ws://dht-node-14:8099
+      - PUBLIC_WSS_ADDRESS=wss://imeyouwe.com/node14
+      - METRICS_PORT=9090
+      - NODE_NAME=dht-node-14
+      - OPEN_NETWORK=true
+    networks:
+      - dht-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.15'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:9090/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # DHT Node 15
+  dht-node-15:
+    image: itsmeront/yz-dht-node:latest
+    container_name: yz-dht-node-15
+    command: node src/docker/start-dht-node.js
+    ports:
+      - "8100:8100"
+      - "9110:9090"
+    environment:
+      - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
+      - WEBSOCKET_PORT=8100
+      - WEBSOCKET_HOST=0.0.0.0
+      - PUBLIC_ADDRESS=ws://dht-node-15:8100
+      - PUBLIC_WSS_ADDRESS=wss://imeyouwe.com/node15
+      - METRICS_PORT=9090
+      - NODE_NAME=dht-node-15
+      - OPEN_NETWORK=true
+    networks:
+      - dht-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.15'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:9090/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
 # Use the existing network created by production.yml
 networks:
