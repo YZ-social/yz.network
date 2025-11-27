@@ -1219,6 +1219,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
       const client = this.connectedClients.get(nodeId);
       client.metadata = metadata || {};
       console.log(`📋 Updated metadata for connected client ${nodeId.substring(0, 8)}...:`, metadata);
+      console.log(`   🔍 METADATA STORAGE DEBUG - publicWssAddress: ${metadata?.publicWssAddress || 'NOT SET'}`);
     } else {
       // Client doesn't exist yet - add them with metadata
       this.connectedClients.set(nodeId, {
@@ -1228,6 +1229,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
         timestamp: Date.now()
       });
       console.log(`📋 Added new client ${nodeId.substring(0, 8)}... to connected clients with metadata:`, metadata);
+      console.log(`   🔍 METADATA STORAGE DEBUG - publicWssAddress: ${metadata?.publicWssAddress || 'NOT SET'}`);
     }
 
     console.log(`📋 Registered new peer: ${nodeId.substring(0, 8)}...`);
@@ -2473,6 +2475,14 @@ export class EnhancedBootstrapServer extends EventEmitter {
       }
 
       // ALWAYS send inviter's metadata to invitee (invitee must initiate if inviter offline)
+      // CRITICAL DEBUG: Log exact metadata being sent to browser
+      console.log(`📤 SENDING TO BROWSER - Inviter metadata:`, JSON.stringify({
+        listeningAddress: inviterMetadata.listeningAddress,
+        publicWssAddress: inviterMetadata.publicWssAddress,
+        nodeType: inviterMetadata.nodeType,
+        fullMetadata: inviterMetadata
+      }, null, 2));
+
       inviteeClient.ws.send(JSON.stringify({
         type: 'websocket_peer_metadata',
         fromPeer: matchingInvitation.inviterNodeId,
