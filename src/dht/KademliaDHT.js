@@ -1285,6 +1285,7 @@ export class KademliaDHT extends EventEmitter {
     if (fromPeer && fromPeerMetadata) {
       console.log(`📋 Received inviter metadata from ${fromPeer.substring(0, 8)}...`);
       console.log(`   Listening address: ${fromPeerMetadata.listeningAddress}`);
+      console.log(`   Public WSS address: ${fromPeerMetadata.publicWssAddress || 'not set'}`);
       console.log(`   Node type: ${fromPeerMetadata.nodeType}`);
 
       // Create peer node and let connection manager handle invitation logic
