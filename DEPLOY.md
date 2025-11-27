@@ -10,11 +10,12 @@
 5. ✅ Browser detects local vs production bootstrap URLs
 6. ✅ **CRITICAL FIX**: Bridge connection storage race condition (was logging "authenticated" before actually authenticating)
 7. ✅ **CRITICAL FIX**: Added WebSocket keep-alive ping/pong mechanism (10s interval, 30s timeout)
+8. ✅ **CRITICAL FIX**: Fixed Docker network binding (WebSocket server now binds to 0.0.0.0 instead of 127.0.0.1)
 
 ### Files Changed:
 - `src/bridge/PassiveBridgeNode.js` - Fixed inheritance + ping/pong handling
 - `src/bridge/EnhancedBootstrapServer.js` - Fixed race condition + keep-alive mechanism
-- `src/node/NodeDHTClient.js` - Use createBootstrapClient() method
+- `src/node/NodeDHTClient.js` - Use createBootstrapClient() method + Docker network binding fix (0.0.0.0)
 - `src/bridge/start-bridge-nodes.js` - Metrics port configuration
 - `src/index.js` - Local vs production bootstrap URL detection
 - `scripts/kill-ports.js` - Added bridge node ports
