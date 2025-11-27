@@ -236,10 +236,15 @@ export class NodeDHTClient extends DHTClient {
     this.setupEventHandlers();
 
     // CRITICAL: Get actual listening address after server is fully started
-    const actualListeningAddress = this.connectionManager.getServerAddress();
-    if (!actualListeningAddress) {
+    const serverBindAddress = this.connectionManager.getServerAddress();
+    if (!serverBindAddress) {
       throw new Error('WebSocket server did not provide listening address');
     }
+
+    // Use configured publicAddress for internal connections (Docker container names),
+    // otherwise fall back to bind address (0.0.0.0) - NOT ideal but works for local
+    // Internal nodes should use container names like ws://genesis-node:8085, not ws://0.0.0.0:8085
+    const actualListeningAddress = this.options.publicAddress || serverBindAddress;
 
     // Add node capabilities to DHT metadata
     this.dht.nodeType = 'nodejs';
@@ -250,14 +255,14 @@ export class NodeDHTClient extends DHTClient {
     // Prepare bootstrap metadata with WebSocket information
     this.dht.bootstrapMetadata = {
       nodeType: 'nodejs',
-      listeningAddress: actualListeningAddress,              // Internal Docker address
+      listeningAddress: actualListeningAddress,              // Internal Docker address (container name)
       publicWssAddress: this.options.publicWssAddress,       // External browser WSS address
       capabilities: ['websocket', 'relay'],
       canRelay: true
     };
 
     console.log('📡 Prepared WebSocket coordination metadata for bootstrap registration');
-    console.log(`   Internal Address: ${actualListeningAddress}`);
+    console.log(`   Internal Address: ${actualListeningAddress} (bind: ${serverBindAddress})`);
     if (this.options.publicWssAddress) {
       console.log(`   Public WSS Address: ${this.options.publicWssAddress}`);
     }
