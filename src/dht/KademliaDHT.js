@@ -1313,13 +1313,16 @@ export class KademliaDHT extends EventEmitter {
       const connectionPromises = [];
 
       for (const bridgeNode of bridgeNodes) {
-        console.log(`🔗 Connecting to bridge node ${bridgeNode.nodeId.substring(0, 8)}... at ${bridgeNode.metadata.listeningAddress}`);
+        const connectAddress = bridgeNode.metadata.publicWssAddress || bridgeNode.metadata.listeningAddress;
+        console.log(`🔗 Connecting to bridge node ${bridgeNode.nodeId.substring(0, 8)}... at ${connectAddress}`);
 
         // Create peer node with bridge metadata
+        // CRITICAL: Include publicWssAddress for browser connections
         const peerNode = this.getOrCreatePeerNode(bridgeNode.nodeId, {
           nodeType: 'nodejs',
           isBridgeNode: true,
           listeningAddress: bridgeNode.metadata.listeningAddress,
+          publicWssAddress: bridgeNode.metadata.publicWssAddress,  // For browser WSS connections
           capabilities: bridgeNode.metadata.capabilities,
           bridgeAuthToken: bridgeNode.metadata.bridgeAuthToken
         });
