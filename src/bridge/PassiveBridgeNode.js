@@ -93,6 +93,18 @@ export class PassiveBridgeNode extends NodeDHTClient {
   }
 
   /**
+   * Override bootstrap metadata to identify as bridge node
+   */
+  getBootstrapMetadata() {
+    return {
+      ...super.getBootstrapMetadata(),
+      isBridgeNode: true,
+      nodeType: 'bridge',
+      bridgeAuthToken: this.bridgeAuth
+    };
+  }
+
+  /**
    * Setup DHT event handlers for passive observation
    */
   setupDHTEventHandlers() {
