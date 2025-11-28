@@ -1557,17 +1557,23 @@ export class EnhancedBootstrapServer extends EventEmitter {
       }
 
     } catch (error) {
-      console.error(`❌ Failed to connect genesis to bridge:`, error);
+      console.log(`❌ Failed to connect genesis to bridge: ${error.message}`);
+      console.log(`   Inner catch - bridges not ready yet, keeping client connected`);
 
-      // Send error response to genesis peer
+      // Mark genesis as assigned to prevent subsequent peers from also trying
+      this.genesisAssigned = true;
+
+      // Send success response anyway - peer can discover others later
+      // DON'T close connection - let peer stay connected to bootstrap
       ws.send(JSON.stringify({
-        type: 'genesis_connection_failed',
-        reason: error.message
+        type: 'genesis_response',
+        isGenesisPeer: true,
+        peers: [],  // Empty for now - bridges will be available later
+        bootstrapServers: [`ws://${this.options.host}:${this.options.port}`],
+        message: 'Genesis peer registered. Bridge nodes starting up - check back shortly.'
       }));
 
-      // Close connection
-      ws.close(1000, 'Genesis connection failed');
-      this.peers.delete(nodeId);
+      console.log(`⚠️ Genesis peer ${nodeId?.substring(0, 8)}... registered, bridges pending`);
     }
   }
 
