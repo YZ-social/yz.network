@@ -205,20 +205,10 @@ export class PassiveBridgeNode extends NodeDHTClient {
     const bridgeAuthToken = 'bridge_auth_' + (this.options.bridgeAuth || 'default-bridge-auth-key');
     const bridgeSignature = await this.generateBridgeSignature(bridgeAuthToken);
 
-    // Dual addressing: internal for Docker, public for browsers
-    const internalAddress = this.options.publicAddress
-      ? (this.options.publicAddress.startsWith('ws://') || this.options.publicAddress.startsWith('wss://')
-         ? this.options.publicAddress
-         : `ws://${this.options.publicAddress}`)
-      : serverAddress;
+    // Use external address for ALL connections - nginx handles routing
+    const externalAddress = this.options.externalAddress || serverAddress;
 
-    // Public WSS address for browser clients (through nginx proxy)
-    const publicWssAddress = this.options.publicWssAddress || internalAddress;
-
-    console.log(`📍 Bridge advertising addresses:`);
-    console.log(`   Internal (Node.js): ${internalAddress}`);
-    console.log(`   Public (Browser): ${publicWssAddress}`);
-    console.log(`   Server listening on: ${serverAddress}`);
+    console.log(`📍 Bridge advertising address: ${externalAddress}`);
 
     // CRITICAL: Store this node's metadata in ConnectionManagerFactory so it's included in handshakes
     // Bridge nodes need to identify themselves during WebSocket connection establishment
@@ -226,8 +216,8 @@ export class PassiveBridgeNode extends NodeDHTClient {
     ConnectionManagerFactory.setPeerMetadata(this.dht.localNodeId.toString(), {
       isBridgeNode: true,
       nodeType: 'bridge',
-      listeningAddress: internalAddress,  // Internal Docker address for Node.js clients
-      publicWssAddress: publicWssAddress,  // Public WSS address for browser clients
+      listeningAddress: externalAddress,  // All connections via nginx (e.g., wss://imeyouwe.com/bridge1)
+      publicWssAddress: externalAddress,  // Same address - nginx routes all connections
       capabilities: ['websocket'],
       bridgeNodeType: 'passive',
       maxConnections: this.options.maxConnections,
@@ -987,24 +977,19 @@ export class PassiveBridgeNode extends NodeDHTClient {
       this.authorizedBootstrap.add(peerId);
       console.log(`✅ Added ${peerId} to authorized bootstrap servers`);
 
-      // Send auth success with dual addresses through dedicated peer manager
+      // Send auth success with external address - nginx handles routing
       const serverAddress = this.connectionManager.getServerAddress() || `ws://${this.bridgeHost}:${this.bridgePort}`;
-      const internalAddress = this.options.publicAddress
-        ? (this.options.publicAddress.startsWith('ws://') || this.options.publicAddress.startsWith('wss://')
-           ? this.options.publicAddress
-           : `ws://${this.options.publicAddress}`)
-        : serverAddress;
-      const publicWssAddress = this.options.publicWssAddress || internalAddress;
+      const externalAddress = this.options.externalAddress || serverAddress;
 
       const manager = this.getManagerForPeer(peerId);
       await manager.sendMessage(peerId, {
         type: 'auth_success',
         bridgeNodeId: this.dht.localNodeId.toString(),
-        listeningAddress: internalAddress,  // Internal Docker address
-        publicWssAddress: publicWssAddress  // Public WSS address for browsers
+        listeningAddress: externalAddress,  // All connections via nginx (e.g., wss://imeyouwe.com/bridge1)
+        publicWssAddress: externalAddress   // Same address - nginx routes all connections
       });
 
-      console.log(`✅ Bootstrap server authenticated with bridge - advertising internal=${internalAddress}, public=${publicWssAddress}`);
+      console.log(`✅ Bootstrap server authenticated with bridge - advertising ${externalAddress}`);
     } else {
       // Close connection through dedicated peer manager
       const manager = this.getManagerForPeer(peerId);
