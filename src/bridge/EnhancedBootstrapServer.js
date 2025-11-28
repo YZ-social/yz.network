@@ -880,8 +880,8 @@ export class EnhancedBootstrapServer extends EventEmitter {
             await this.connectToBridgeNodes();
 
             console.log(`🔍 Bridge connections status: ${this.bridgeConnections.size} connected`);
-            for (const [addr, ws] of this.bridgeConnections) {
-              console.log(`   ${addr}: ${ws.readyState === 1 ? 'OPEN' : 'NOT_OPEN'}`);
+            for (const [addr, bridgeWs] of this.bridgeConnections) {
+              console.log(`   ${addr}: ${bridgeWs.readyState === 1 ? 'OPEN' : 'NOT_OPEN'}`);
             }
 
             // Then connect genesis to bridge
@@ -932,8 +932,8 @@ export class EnhancedBootstrapServer extends EventEmitter {
             await this.connectToBridgeNodes();
 
             console.log(`🔍 Bridge connections status: ${this.bridgeConnections.size} connected`);
-            for (const [addr, ws] of this.bridgeConnections) {
-              console.log(`   ${addr}: ${ws.readyState === 1 ? 'OPEN' : 'NOT_OPEN'}`);
+            for (const [addr, bridgeWs] of this.bridgeConnections) {
+              console.log(`   ${addr}: ${bridgeWs.readyState === 1 ? 'OPEN' : 'NOT_OPEN'}`);
             }
 
             // Ask bridge to select random active peer to invite this new node
