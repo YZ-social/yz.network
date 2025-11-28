@@ -6,8 +6,8 @@ echo "🚀 Starting YZ Network production services..."
 docker compose -f docker-compose.production.yml up -d
 
 echo ""
-echo "⏳ Waiting 30 seconds for bootstrap/bridges to stabilize..."
-sleep 30
+echo "⏳ Waiting 45 seconds for bootstrap/bridges to stabilize and authenticate..."
+sleep 45
 
 echo ""
 echo "🚀 Starting YZ Network DHT nodes..."

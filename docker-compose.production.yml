@@ -124,9 +124,9 @@ services:
       bootstrap:
         condition: service_healthy
       bridge-node-1:
-        condition: service_started
+        condition: service_healthy
       bridge-node-2:
-        condition: service_started
+        condition: service_healthy
     deploy:
       resources:
         limits:
