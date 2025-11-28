@@ -887,15 +887,20 @@ export class EnhancedBootstrapServer extends EventEmitter {
             // Then connect genesis to bridge
             await this.connectGenesisToBridge(ws, nodeId, message.metadata || {}, message);
           } catch (error) {
-            console.error(`❌ Failed to connect genesis to bridge: ${error.message}`);
-            console.error(`   Stack: ${error.stack}`);
+            console.log(`❌ Failed to connect genesis to bridge: ${error.message}`);
+            console.log(`   Entering catch block for genesis ${nodeId?.substring(0, 8)}...`);
+            console.log(`   Setting genesisAssigned = true`);
 
             // Mark genesis as assigned to prevent subsequent peers from also trying
             this.genesisAssigned = true;
 
+            console.log(`   genesisAssigned set, now checking WebSocket state...`);
+            console.log(`   ws exists: ${!!ws}, ws.readyState: ${ws?.readyState}`);
+
             // Send response to genesis peer so they don't timeout waiting
             try {
-              if (ws.readyState === 1) {  // WebSocket.OPEN = 1
+              if (ws && ws.readyState === 1) {  // WebSocket.OPEN = 1
+                console.log(`   WebSocket is OPEN, sending genesis_response...`);
                 ws.send(JSON.stringify({
                   type: 'genesis_response',
                   isGenesisPeer: true,
@@ -905,10 +910,10 @@ export class EnhancedBootstrapServer extends EventEmitter {
                 }));
                 console.log(`⚠️ Genesis peer ${nodeId?.substring(0, 8)}... registered but bridge connection pending`);
               } else {
-                console.error(`⚠️ Cannot send genesis response - WebSocket not open (state: ${ws.readyState})`);
+                console.log(`⚠️ Cannot send genesis response - WebSocket not open (exists: ${!!ws}, state: ${ws?.readyState})`);
               }
             } catch (sendError) {
-              console.error(`❌ Error sending genesis response: ${sendError.message}`);
+              console.log(`❌ Error sending genesis response: ${sendError.message}`);
             }
           }
         }, 2000); // Give genesis peer time to complete setup
