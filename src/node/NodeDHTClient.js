@@ -253,13 +253,8 @@ export class NodeDHTClient extends DHTClient {
     this.dht.listeningAddress = actualListeningAddress;
 
     // Prepare bootstrap metadata with WebSocket information
-    this.dht.bootstrapMetadata = {
-      nodeType: 'nodejs',
-      listeningAddress: actualListeningAddress,              // Internal Docker address (container name)
-      publicWssAddress: this.options.publicWssAddress,       // External browser WSS address
-      capabilities: ['websocket', 'relay'],
-      canRelay: true
-    };
+    // Call getBootstrapMetadata() to allow subclasses (like PassiveBridgeNode) to override
+    this.dht.bootstrapMetadata = this.getBootstrapMetadata();
 
     console.log('📡 Prepared WebSocket coordination metadata for bootstrap registration');
     console.log(`   Internal Address: ${actualListeningAddress} (bind: ${serverBindAddress})`);
