@@ -14,7 +14,7 @@ export class PassiveBridgeNode extends NodeDHTClient {
   constructor(options = {}) {
     // Map bridge-specific options to NodeDHTClient options
     super({
-      bootstrapServers: ['ws://bridge-placeholder:8080'], // Placeholder to prevent connection
+      bootstrapServers: options.bootstrapServers || ['ws://bootstrap:8080'], // Register with real bootstrap for external accessibility
       port: options.bridgePort || options.port || 8083,   // Map bridgePort to port for NodeDHTClient
       websocketPort: options.bridgePort || options.port || 8083,
       websocketHost: options.bridgeHost || options.host || '0.0.0.0',
@@ -74,26 +74,6 @@ export class PassiveBridgeNode extends NodeDHTClient {
 
   canInitiateConnections() {
     return true;
-  }
-
-  /**
-   * Override bootstrap client creation to return mock bootstrap
-   */
-  createBootstrapClient() {
-    return {
-      connect: async () => Promise.resolve(),
-      disconnect: async () => Promise.resolve(),
-      destroy: () => {},
-      isConnected: false,
-      isBootstrapConnected: () => false,
-      sendInvitation: async () => ({ success: false, error: 'Bridge nodes cannot send invitations' }),
-      on: () => {},
-      emit: () => {},
-      requestPeersOrGenesis: async () => ({ isGenesis: false, peers: [], message: 'Bridge node' }),
-      announceIndependent: async () => Promise.resolve(),
-      disableAutoReconnect: () => {}, // Mock method - bridge nodes don't use bootstrap auto-reconnect
-      enableAutoReconnect: () => {}   // Mock method - bridge nodes don't use bootstrap auto-reconnect
-    };
   }
 
   /**
