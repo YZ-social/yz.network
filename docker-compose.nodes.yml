@@ -17,7 +17,6 @@ services:
       - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
       - WEBSOCKET_PORT=8086
       - WEBSOCKET_HOST=0.0.0.0
-      - INTERNAL_ADDRESS=ws://dht-node-1:8086
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node1
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-1
@@ -52,7 +51,6 @@ services:
       - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
       - WEBSOCKET_PORT=8087
       - WEBSOCKET_HOST=0.0.0.0
-      - INTERNAL_ADDRESS=ws://dht-node-2:8087
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node2
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-2
@@ -87,7 +85,6 @@ services:
       - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
       - WEBSOCKET_PORT=8088
       - WEBSOCKET_HOST=0.0.0.0
-      - INTERNAL_ADDRESS=ws://dht-node-3:8088
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node3
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-3
@@ -122,7 +119,6 @@ services:
       - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
       - WEBSOCKET_PORT=8089
       - WEBSOCKET_HOST=0.0.0.0
-      - INTERNAL_ADDRESS=ws://dht-node-4:8089
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node4
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-4
@@ -157,7 +153,6 @@ services:
       - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
       - WEBSOCKET_PORT=8090
       - WEBSOCKET_HOST=0.0.0.0
-      - INTERNAL_ADDRESS=ws://dht-node-5:8090
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node5
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-5
@@ -192,7 +187,6 @@ services:
       - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
       - WEBSOCKET_PORT=8091
       - WEBSOCKET_HOST=0.0.0.0
-      - INTERNAL_ADDRESS=ws://dht-node-6:8091
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node6
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-6
@@ -227,7 +221,6 @@ services:
       - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
       - WEBSOCKET_PORT=8092
       - WEBSOCKET_HOST=0.0.0.0
-      - INTERNAL_ADDRESS=ws://dht-node-7:8092
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node7
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-7
@@ -262,7 +255,6 @@ services:
       - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
       - WEBSOCKET_PORT=8093
       - WEBSOCKET_HOST=0.0.0.0
-      - INTERNAL_ADDRESS=ws://dht-node-8:8093
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node8
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-8
@@ -297,7 +289,6 @@ services:
       - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
       - WEBSOCKET_PORT=8094
       - WEBSOCKET_HOST=0.0.0.0
-      - INTERNAL_ADDRESS=ws://dht-node-9:8094
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node9
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-9
@@ -332,7 +323,6 @@ services:
       - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
       - WEBSOCKET_PORT=8095
       - WEBSOCKET_HOST=0.0.0.0
-      - INTERNAL_ADDRESS=ws://dht-node-10:8095
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node10
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-10
@@ -367,7 +357,6 @@ services:
       - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
       - WEBSOCKET_PORT=8096
       - WEBSOCKET_HOST=0.0.0.0
-      - INTERNAL_ADDRESS=ws://dht-node-11:8096
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node11
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-11
@@ -402,7 +391,6 @@ services:
       - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
       - WEBSOCKET_PORT=8097
       - WEBSOCKET_HOST=0.0.0.0
-      - INTERNAL_ADDRESS=ws://dht-node-12:8097
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node12
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-12
@@ -437,7 +425,6 @@ services:
       - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
       - WEBSOCKET_PORT=8098
       - WEBSOCKET_HOST=0.0.0.0
-      - INTERNAL_ADDRESS=ws://dht-node-13:8098
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node13
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-13
@@ -472,7 +459,6 @@ services:
       - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
       - WEBSOCKET_PORT=8099
       - WEBSOCKET_HOST=0.0.0.0
-      - INTERNAL_ADDRESS=ws://dht-node-14:8099
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node14
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-14
@@ -507,7 +493,6 @@ services:
       - BOOTSTRAP_URL=${BOOTSTRAP_URL:-ws://bootstrap:8080}
       - WEBSOCKET_PORT=8100
       - WEBSOCKET_HOST=0.0.0.0
-      - INTERNAL_ADDRESS=ws://dht-node-15:8100
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node15
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-15

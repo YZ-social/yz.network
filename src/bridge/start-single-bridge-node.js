@@ -13,13 +13,11 @@ const port = parseInt(process.argv[2]) || parseInt(process.env.BRIDGE_PORT) || 8
 const host = process.env.BRIDGE_HOST || '0.0.0.0';
 const bridgeAuth = process.env.BRIDGE_AUTH || 'default-bridge-auth-key';
 const bootstrapUrl = process.env.BOOTSTRAP_URL || 'ws://bootstrap:8080';
-const internalAddress = process.env.INTERNAL_ADDRESS || `${host}:${port}`;
-const externalAddress = process.env.EXTERNAL_ADDRESS;  // External browser address
+const externalAddress = process.env.EXTERNAL_ADDRESS;  // All connections via nginx
 
 console.log(`🌉 Starting Passive Bridge Node on port ${port}...`);
-console.log(`📍 Internal address: ${internalAddress}`);
 if (externalAddress) {
-  console.log(`📍 External address: ${externalAddress}`);
+  console.log(`📍 Address: ${externalAddress}`);
 }
 
 const node = new PassiveBridgeNode({
@@ -27,8 +25,7 @@ const node = new PassiveBridgeNode({
   bridgeHost: host,
   bridgeAuth,
   bootstrapServers: [bootstrapUrl],
-  internalAddress,    // Internal Docker network (Node.js ↔ Node.js)
-  externalAddress     // External browser via nginx (Browser ↔ Node.js)
+  externalAddress     // All connections via nginx (e.g., wss://imeyouwe.com/bridge1)
 });
 
 // Start the bridge node
