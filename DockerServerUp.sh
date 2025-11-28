@@ -11,7 +11,7 @@ sleep 30
 
 echo ""
 echo "🚀 Starting YZ Network DHT nodes..."
-docker compose -f docker-compose.nodes.yml up -d --remove-orphans
+docker compose -f docker-compose.nodes.yml up -d
 
 echo ""
 echo "⏳ Waiting 10 seconds for DHT nodes to initialize..."
