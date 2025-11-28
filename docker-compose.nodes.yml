@@ -1,5 +1,3 @@
-version: '3.8'
-
 # DHT Nodes - 15 individual nodes with external browser access
 # Each node has unique port and WSS path for browser connections
 #
