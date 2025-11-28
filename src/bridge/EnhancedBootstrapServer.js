@@ -888,7 +888,21 @@ export class EnhancedBootstrapServer extends EventEmitter {
             await this.connectGenesisToBridge(ws, nodeId, message.metadata || {}, message);
           } catch (error) {
             console.error(`❌ Failed to connect genesis to bridge: ${error.message}`);
-            // Continue without bridge connection - genesis can still invite peers manually
+
+            // Mark genesis as assigned to prevent subsequent peers from also trying
+            this.genesisAssigned = true;
+
+            // Send response to genesis peer so they don't timeout waiting
+            // Give them empty bridge list - they can discover peers through bootstrap later
+            ws.send(JSON.stringify({
+              type: 'genesis_response',
+              isGenesisPeer: true,
+              peers: [],  // Empty for now - bridges will be available later
+              bootstrapServers: [`ws://${this.options.host}:${this.options.port}`],
+              message: 'Genesis peer registered. Bridge nodes not yet available - they will connect shortly.'
+            }));
+
+            console.log(`⚠️ Genesis peer ${nodeId?.substring(0, 8)}... registered but bridge connection pending`);
           }
         }, 2000); // Give genesis peer time to complete setup
 
