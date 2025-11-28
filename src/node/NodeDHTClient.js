@@ -116,10 +116,15 @@ export class NodeDHTClient extends DHTClient {
    * Override bootstrap metadata to include WebSocket listening addresses
    */
   getBootstrapMetadata() {
+    // Internal address: Docker network connections (Node.js ↔ Node.js)
+    // External address: Browser connections via nginx proxy (Browser ↔ Node.js)
+    const internalAddress = this.options.internalAddress || this.connectionManager?.getServerAddress?.();
+    const externalAddress = this.options.externalAddress;
+
     return {
       nodeType: 'nodejs',
-      listeningAddress: this.connectionManager?.getServerAddress?.(),  // Internal Docker address
-      publicWssAddress: this.options.publicWssAddress,                 // External browser WSS address
+      listeningAddress: internalAddress,    // Internal Docker network (Node.js ↔ Node.js)
+      publicWssAddress: externalAddress,    // External browser via nginx (Browser ↔ Node.js)
       capabilities: ['websocket', 'relay'],
       canRelay: true,
       canAcceptConnections: true,
