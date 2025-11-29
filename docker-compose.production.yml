@@ -48,6 +48,8 @@ services:
       - NODE_NAME=bridge-node-1
       - METRICS_PORT=9090
       - BRIDGE_AUTH=${BRIDGE_AUTH:-default-bridge-auth-key}
+    extra_hosts:
+      - "imeyouwe.com:172.18.0.3"  # Route to nginx container for internal Docker connections
     networks:
       - yz-network
     restart: unless-stopped
@@ -81,6 +83,8 @@ services:
       - NODE_NAME=bridge-node-2
       - METRICS_PORT=9090
       - BRIDGE_AUTH=${BRIDGE_AUTH:-default-bridge-auth-key}
+    extra_hosts:
+      - "imeyouwe.com:172.18.0.3"  # Route to nginx container for internal Docker connections
     networks:
       - yz-network
     restart: unless-stopped
@@ -114,6 +118,8 @@ services:
       - METRICS_PORT=9090
       - NODE_NAME=genesis-node
       - OPEN_NETWORK=true
+    extra_hosts:
+      - "imeyouwe.com:172.18.0.3"  # Route to nginx container for internal Docker connections
     networks:
       - yz-network
     restart: unless-stopped

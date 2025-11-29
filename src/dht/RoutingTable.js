@@ -482,11 +482,11 @@ export class RoutingTable {
 
     // Create shared event handler - same for all connection managers
     this.peerConnectedHandler = ({ peerId, connection, manager, initiator, metadata }) => {
-      console.log(`🔗 RoutingTable received peerConnected: ${peerId.substring(0, 8)}... (via ${manager.constructor.name})`);
+      console.log(`🔗 RoutingTable received peerConnected: ${peerId.substring(0, 8)}... (via ${manager.constructor.name}, initiator=${initiator})`);
       if (metadata) {
         console.log(`📋 RoutingTable received metadata for ${peerId.substring(0, 8)}:`, metadata);
       }
-      this.handlePeerConnected(peerId, connection, manager, metadata);
+      this.handlePeerConnected(peerId, connection, manager, initiator, metadata);
     };
 
     // Set up the same handler on all connection managers
@@ -526,17 +526,59 @@ export class RoutingTable {
   /**
    * Handle peerConnected event by creating and configuring DHTNode
    */
-  handlePeerConnected(peerId, connection, manager, metadata = null) {
+  handlePeerConnected(peerId, connection, manager, initiator, metadata = null) {
     // Check if node already exists
     const existingNode = this.getNode(peerId);
     if (existingNode) {
       console.log(`🔄 Node ${peerId.substring(0, 8)}... already exists in routing table`);
 
-      // CRITICAL: If node exists but doesn't have connection manager set up, set it up now
-      if (!existingNode.connectionManager || !existingNode.connection) {
+      // CRITICAL: Handle collision using Perfect Negotiation Pattern
+      // If both nodes try to connect simultaneously, keep only one connection
+      // Check for connectionManager (set immediately on outgoing attempt) not connection (set after handshake)
+      if (existingNode.connectionManager) {
+        // Collision detected - use node ID comparison to decide which connection wins
+        const localNodeId = this.localNodeId || this.options?.localNodeId;
+        if (!localNodeId) {
+          console.warn(`⚠️ Cannot resolve collision - localNodeId not available`);
+          // Fallback: Accept the new connection
+          existingNode.setupConnection(manager, connection);
+          return;
+        }
+
+        const weArePolite = localNodeId.toString().localeCompare(peerId.toString()) < 0;
+        const existingIsOutgoing = existingNode.initiator; // Store initiator flag on node
+        const newIsOutgoing = initiator;
+
+        console.log(`🎭 Collision detected with ${peerId.substring(0, 8)}: we are ${weArePolite ? 'polite' : 'impolite'}, existing=${existingIsOutgoing ? 'outgoing' : 'incoming'}, new=${newIsOutgoing ? 'outgoing' : 'incoming'}`);
+
+        // Perfect Negotiation: polite peer drops outgoing, keeps incoming
+        // Impolite peer drops incoming, keeps outgoing
+        if (weArePolite) {
+          // Polite: keep incoming, drop outgoing
+          if (!newIsOutgoing) {
+            console.log(`✅ Polite: Accepting incoming connection, dropping existing ${existingIsOutgoing ? 'outgoing' : 'incoming'}`);
+            existingNode.setupConnection(manager, connection);
+            existingNode.initiator = initiator; // Store initiator flag
+          } else {
+            console.log(`🚫 Polite: Dropping new outgoing connection, keeping existing ${existingIsOutgoing ? 'outgoing' : 'incoming'}`);
+            // Don't update - keep existing connection
+          }
+        } else {
+          // Impolite: keep outgoing, drop incoming
+          if (newIsOutgoing) {
+            console.log(`✅ Impolite: Accepting outgoing connection, dropping existing ${existingIsOutgoing ? 'outgoing' : 'incoming'}`);
+            existingNode.setupConnection(manager, connection);
+            existingNode.initiator = initiator; // Store initiator flag
+          } else {
+            console.log(`🚫 Impolite: Dropping new incoming connection, keeping existing ${existingIsOutgoing ? 'outgoing' : 'incoming'}`);
+            // Don't update - keep existing connection
+          }
+        }
+      } else {
+        // No collision - just set up the connection
         console.log(`🔗 Setting up connection for existing node ${peerId.substring(0, 8)}...`);
         existingNode.setupConnection(manager, connection);
-        // Note: Signal handlers should already be attached via setupConnectionManagerHandlers()
+        existingNode.initiator = initiator; // Store initiator flag
       }
 
       // Update metadata if provided
@@ -556,6 +598,7 @@ export class RoutingTable {
 
     // Set up the node's connection and manager
     node.setupConnection(manager, connection);
+    node.initiator = initiator; // Store initiator flag for collision handling
     // Note: Signal handlers should already be attached via setupConnectionManagerHandlers()
 
     // Set metadata directly on node (clean architecture - no intermediate storage)

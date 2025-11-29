@@ -923,15 +923,16 @@ export class PassiveBridgeNode extends NodeDHTClient {
     // Only set up DHT connection for actual DHT peers, not bootstrap servers
     if (!peerId.startsWith('bootstrap_')) {
       try {
-        const peerNode = this.dht.getOrCreatePeerNode(peerId, {
+        // CRITICAL: Delegate to RoutingTable to create DHTNode (proper architecture)
+        // RoutingTable owns DHTNode creation and will notify DHT via onNodeAdded callback
+        const metadata = {
           connectionType: 'websocket',
-          isBridgeConnected: true
-        });
+          isBridgeConnected: true,
+          nodeType: 'nodejs'  // Assume nodejs for incoming WebSocket connections
+        };
 
-        console.log(`🔗 DHT peer ${peerId.substring(0, 8)}... integrated with bridge DHT`);
-
-        // Emit peer connected event for DHT
-        this.dht.emit('peerConnected', peerId);
+        this.dht.routingTable.handlePeerConnected(peerId, connection, manager, metadata);
+        console.log(`🔗 DHT peer ${peerId.substring(0, 8)}... handed to RoutingTable for DHTNode creation`);
 
       } catch (error) {
         console.error(`❌ Failed to set up DHT connection for ${peerId}:`, error);
@@ -1098,7 +1099,8 @@ export class PassiveBridgeNode extends NodeDHTClient {
         console.log(`✅ Bridge node successfully accepted invitation from ${fromPeer?.substring(0, 8)}...`);
 
         // Notify bootstrap server of successful invitation acceptance with bridge server address
-        const bridgeAddress = this.connectionManager.getServerAddress();
+        // Use external address (routed through nginx) for all connections (internal Docker + external browser)
+        const bridgeAddress = this.options.externalAddress || this.connectionManager.getServerAddress();
 
         console.log(`🔗 Bridge node invitation accepted - genesis peer will connect to our WebSocket server`);
         console.log(`📋 Connection will be established when genesis peer connects to our server at ${bridgeAddress}`);

@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(npm run bootstrap:genesis:*)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(ssh oracle-yz:*)"
     ],
     "deny": []
   }

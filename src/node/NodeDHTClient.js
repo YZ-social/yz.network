@@ -191,7 +191,25 @@ export class NodeDHTClient extends DHTClient {
     // Setup crypto first
     await this.setupCrypto();
 
+    // Create bootstrap client (allows subclasses like PassiveBridgeNode to override with mock)
+    this.bootstrap = this.createBootstrapClient();
+
+    // Generate cryptographic keys
+    const keyInfo = await InvitationToken.generateKeyPair();
+    console.log('🔐 Generated cryptographic key pair for invitation tokens');
+
+    // Create DHT FIRST so we have access to routing table
+    this.dht = new KademliaDHT({
+      nodeId: this.nodeId,
+      bootstrap: this.bootstrap,
+      bootstrapMetadata: this.getBootstrapMetadata(), // Include Node.js metadata (nodeType, listeningAddress, etc.)
+      k: this.options.k,
+      alpha: this.options.alpha,
+      replicateK: this.options.replicateK
+    });
+
     // Create WebSocket connection manager using factory
+    // Pass routing table reference so it can notify on new connections
     // NodeDHTClient is a Node.js server that accepts connections from both browsers and other Node.js clients
     this.connectionManager = ConnectionManagerFactory.createForConnection('nodejs', 'browser', {
       port: this.options.port || 0,
@@ -200,7 +218,8 @@ export class NodeDHTClient extends DHTClient {
       timeout: this.options.timeout || 30000,
       enableServer: true,
       localNodeType: 'nodejs',
-      targetNodeType: 'browser'
+      targetNodeType: 'browser',
+      routingTable: this.dht.routingTable  // Pass routing table for event notifications
     });
 
     // Set the local node ID on the connection manager
@@ -217,24 +236,6 @@ export class NodeDHTClient extends DHTClient {
 
     // Small delay to ensure server.address() is available
     await new Promise(resolve => setTimeout(resolve, 100));
-
-    // Create bootstrap client (allows subclasses like PassiveBridgeNode to override with mock)
-    this.bootstrap = this.createBootstrapClient();
-
-    // Generate cryptographic keys
-    const keyInfo = await InvitationToken.generateKeyPair();
-    console.log('🔐 Generated cryptographic key pair for invitation tokens');
-
-    // Create DHT with WebSocket connection manager and bootstrap metadata
-    this.dht = new KademliaDHT({
-      nodeId: this.nodeId,
-      serverConnectionManager: this.connectionManager, // CRITICAL: Node.js servers pass as serverConnectionManager so DHT reuses it for all peers
-      bootstrap: this.bootstrap,
-      bootstrapMetadata: this.getBootstrapMetadata(), // Include Node.js metadata (nodeType, listeningAddress, etc.)
-      k: this.options.k,
-      alpha: this.options.alpha,
-      replicateK: this.options.replicateK
-    });
 
     // Set up event handlers
     this.setupEventHandlers();
