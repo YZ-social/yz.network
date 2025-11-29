@@ -246,6 +246,13 @@ export class BootstrapClient extends EventEmitter {
           this.emit('connectToBridge', message);
           break;
 
+        case 'genesis_response':
+          // Temporary response from bootstrap while setting up genesis connection
+          console.log('🌟 Received genesis response from bootstrap server');
+          console.log(`   Status: ${message.message || 'Genesis peer registered'}`);
+          // Don't emit event - wait for final 'response' message with bridge details
+          break;
+
         case 'auth_challenge':
           console.log('🔐 Received authentication challenge from bootstrap server');
           this.emit('authChallenge', message);
@@ -337,12 +344,13 @@ export class BootstrapClient extends EventEmitter {
    */
   async requestPeersOrGenesis(maxPeers = 20) {
     try {
+      // Use longer timeout for genesis setup (bridge connection takes time)
       const response = await this.sendRequest({
         type: 'get_peers_or_genesis',
         maxPeers,
         nodeId: this.localNodeId,
         metadata: this.metadata || {}
-      });
+      }, 30000); // 30 second timeout for genesis/bridge setup
 
       return {
         peers: response.peers || [],

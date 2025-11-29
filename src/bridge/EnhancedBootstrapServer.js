@@ -858,9 +858,30 @@ export class EnhancedBootstrapServer extends EventEmitter {
         console.log(`➕ Added client ${nodeId.substring(0, 8)}... to connected clients (total: ${this.connectedClients.size})`);
       }
 
-      // In genesis mode, first connecting peer becomes genesis (only once)
-      if (this.options.createNewDHT && !this.genesisAssigned) {
-        console.log(`🌟 Genesis mode: Designating ${nodeId?.substring(0, 8)}... as genesis peer`);
+      // In genesis mode, first NON-PASSIVE peer becomes genesis (only once)
+      // Bridge nodes (passive) cannot be genesis - only regular DHT nodes
+      const existingClient = this.connectedClients.get(nodeId);
+      const existingPeer = this.peers.get(nodeId);
+
+      // Debug: Log what we're checking
+      console.log(`🔍 Genesis check for ${nodeId?.substring(0, 8)}...:`);
+      console.log(`   message.metadata:`, message.metadata);
+      console.log(`   existingClient.metadata:`, existingClient?.metadata);
+      console.log(`   existingPeer.metadata:`, existingPeer?.metadata);
+
+      const isBridgeNode = message.metadata?.isBridgeNode === true ||
+                           message.metadata?.nodeType === 'bridge' ||
+                           existingClient?.metadata?.isBridgeNode === true ||
+                           existingClient?.metadata?.nodeType === 'bridge' ||
+                           existingPeer?.metadata?.isBridgeNode === true ||
+                           existingPeer?.metadata?.nodeType === 'bridge';
+
+      if (isBridgeNode) {
+        console.log(`🌉 Detected bridge node ${nodeId?.substring(0, 8)}... - will not designate as genesis`);
+      }
+
+      if (this.options.createNewDHT && !this.genesisAssigned && !isBridgeNode) {
+        console.log(`🌟 Genesis mode: Designating ${nodeId?.substring(0, 8)}... as genesis peer (non-passive node)`);
 
         // Update peer record to mark as genesis
         const peer = this.peers.get(nodeId);
@@ -917,6 +938,24 @@ export class EnhancedBootstrapServer extends EventEmitter {
             }
           }
         }, 2000); // Give genesis peer time to complete setup
+
+        return;
+      }
+
+      // Bridge nodes in genesis mode - wait for genesis peer to connect
+      if (this.options.createNewDHT && isBridgeNode) {
+        console.log(`🌉 Bridge node ${nodeId?.substring(0, 8)}... registered - waiting for genesis peer (passive nodes cannot be genesis)`);
+
+        // Send empty peer list - bridges will be invited by genesis peer
+        ws.send(JSON.stringify({
+          type: 'response',
+          requestId: message.requestId,
+          success: true,
+          data: {
+            peers: [],
+            isGenesis: false
+          }
+        }));
 
         return;
       }
@@ -1484,96 +1523,48 @@ export class EnhancedBootstrapServer extends EventEmitter {
   }
 
   /**
-   * Connect genesis peer directly to bridge node (automatic first connection)
-   * This removes genesis status and gives the first client a valid DHT token
+   * Connect genesis peer to bridge nodes via invitation flow
+   * Genesis creates its own membership token, then invites bridge nodes
+   * Bridge nodes get membership tokens from the invitation process
    */
   async connectGenesisToBridge(ws, nodeId, metadata, clientMessage) {
     try {
-      console.log(`🌟 Connecting genesis peer ${nodeId.substring(0, 8)} to bridge node...`);
+      console.log(`🌟 Setting up genesis peer ${nodeId.substring(0, 8)} invitation flow...`);
 
-      // Get ALL available bridge nodes for redundancy
-      const bridgeNodes = this.getAllAvailableBridgeNodes();
-      if (bridgeNodes.length === 0) {
-        throw new Error('No bridge nodes available for genesis connection');
-      }
-
-      console.log(`🌉 Connecting genesis peer to ${bridgeNodes.length} bridge nodes for redundancy`);
-
-      // Create connection promises for ALL bridge nodes
-      const connectionPromises = [];
-
-      for (let i = 0; i < bridgeNodes.length; i++) {
-        const bridgeNode = bridgeNodes[i];
-        const requestId = `genesis_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${i}`;
-
-        // Create individual connection promise for this bridge node
-        const connectionPromise = new Promise((resolve, reject) => {
-          const timeout = setTimeout(() => {
-            this.pendingGenesisRequests.delete(`${nodeId}_${i}`);
-            reject(new Error(`Genesis-to-bridge connection timeout (bridge ${i})`));
-          }, this.options.bridgeTimeout);
-
-          this.pendingGenesisRequests.set(`${nodeId}_${i}`, {
-            ws,
-            nodeId,
-            requestId,
-            clientMessage,
-            resolve,
-            reject,
-            timeout,
-            isGenesis: true,
-            bridgeIndex: i
-          });
-
-          console.log(`🔍 Stored pending genesis request for ${nodeId.substring(0, 8)} to bridge ${i}, requestId=${requestId}`);
-        });
-
-        connectionPromises.push(connectionPromise);
-
-        // Send genesis connection request to this bridge node
-        bridgeNode.send(JSON.stringify({
-          type: 'connect_genesis_peer',
-          nodeId,
-          metadata,
-          requestId,
-          timestamp: Date.now()
-        }));
-
-        console.log(`📤 Sent genesis connection request to bridge ${i} for ${nodeId.substring(0, 8)}...`);
-      }
-
-      // Wait for at least one bridge connection to succeed (race condition)
-      try {
-        await Promise.race(connectionPromises);
-        console.log(`✅ Genesis peer ${nodeId.substring(0, 8)} successfully connected to at least one bridge node`);
-      } catch (error) {
-        // If race fails, try waiting for any to succeed
-        const results = await Promise.allSettled(connectionPromises);
-        const successful = results.filter(r => r.status === 'fulfilled');
-        if (successful.length === 0) {
-          throw new Error('Failed to connect to any bridge nodes');
-        }
-        console.log(`✅ Genesis peer ${nodeId.substring(0, 8)} connected to ${successful.length}/${bridgeNodes.length} bridge nodes`);
-      }
-
-    } catch (error) {
-      console.log(`❌ Failed to connect genesis to bridge: ${error.message}`);
-      console.log(`   Inner catch - bridges not ready yet, keeping client connected`);
-
-      // Mark genesis as assigned to prevent subsequent peers from also trying
+      // Mark genesis as assigned
       this.genesisAssigned = true;
 
-      // Send success response anyway - peer can discover others later
-      // DON'T close connection - let peer stay connected to bootstrap
+      // Send genesis response - genesis peer will create its own membership token
       ws.send(JSON.stringify({
-        type: 'genesis_response',
-        isGenesisPeer: true,
-        peers: [],  // Empty for now - bridges will be available later
-        bootstrapServers: [`ws://${this.options.host}:${this.options.port}`],
-        message: 'Genesis peer registered. Bridge nodes starting up - check back shortly.'
+        type: 'response',
+        requestId: clientMessage.requestId,
+        success: true,
+        data: {
+          isGenesis: true,
+          peers: [],  // Genesis starts with no peers
+          bootstrapServers: [`ws://${this.options.host}:${this.options.port}`]
+        }
       }));
 
-      console.log(`⚠️ Genesis peer ${nodeId?.substring(0, 8)}... registered, bridges pending`);
+      console.log(`✅ Genesis peer ${nodeId.substring(0, 8)} designated - will create own membership token`);
+
+      // Wait for genesis peer to create its membership token and be ready
+      setTimeout(async () => {
+        console.log(`🎫 Asking genesis peer ${nodeId.substring(0, 8)} to invite bridge nodes...`);
+        // Ask genesis to invite all available bridge nodes
+        await this.askGenesisToInviteBridgeNodes(nodeId);
+      }, 2000); // Give genesis time to create token and set up
+
+    } catch (error) {
+      console.error(`❌ Failed to set up genesis peer: ${error.message}`);
+
+      // Send error response
+      ws.send(JSON.stringify({
+        type: 'response',
+        requestId: clientMessage.requestId,
+        success: false,
+        error: `Failed to set up genesis peer: ${error.message}`
+      }));
     }
   }
 
