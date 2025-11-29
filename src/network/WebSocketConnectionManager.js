@@ -18,6 +18,9 @@ export class WebSocketConnectionManager extends ConnectionManager {
     this.localNodeType = options.localNodeType || null;
     this.targetNodeType = options.targetNodeType || null;
 
+    // Store routing table reference for event notifications (Node.js servers only)
+    this.routingTable = options.routingTable || null;
+
     // Initialize WebSocket class for this environment
     this.WebSocket = null;
     this.WebSocketServer = null;
@@ -43,23 +46,37 @@ export class WebSocketConnectionManager extends ConnectionManager {
     // NOTE: Metadata now passed directly in peerConnected events to RoutingTable
     // No intermediate storage needed - clean architecture!
 
-    // Initialize WebSocket classes asynchronously
-    this.initializeWebSocketClasses().then(() => {
-      if (this.wsOptions.enableServer) {
-        this.startServer();
-      }
-    }).catch(error => {
-      console.error('Failed to initialize WebSocket classes:', error);
-    });
+    // Initialize WebSocket classes (synchronous for browser, async for Node.js)
+    if (this.localNodeType === 'browser') {
+      // Browser environment - use native WebSocket (synchronous)
+      this.WebSocket = window.WebSocket;
+      this.WebSocketServer = null; // Browsers cannot create servers
+      this.webSocketInitialized = true;
+      console.log('🌐 Initialized browser WebSocket support (synchronous)');
+    } else {
+      // Node.js environment - initialize asynchronously
+      this.initializeWebSocketClasses().then(() => {
+        if (this.wsOptions.enableServer) {
+          this.startServer();
+        }
+      }).catch(error => {
+        console.error('Failed to initialize WebSocket classes:', error);
+      });
+    }
   }
 
   /**
-   * Initialize WebSocket classes based on environment
-   * Uses this.localNodeType set by factory instead of runtime detection
+   * Initialize WebSocket classes for Node.js environment
+   * Browser environment initialization is done synchronously in constructor
    */
   async initializeWebSocketClasses() {
     if (!this.localNodeType) {
       throw new Error('WebSocketConnectionManager requires localNodeType to be set by factory');
+    }
+
+    if (this.localNodeType === 'browser') {
+      // Already initialized synchronously in constructor
+      return;
     }
 
     console.log(`🔍 Initializing WebSocket classes for ${this.localNodeType} environment`);
@@ -78,12 +95,6 @@ export class WebSocketConnectionManager extends ConnectionManager {
         console.error('Failed to load ws library:', error);
         throw new Error('WebSocket library not available in Node.js environment');
       }
-    } else {
-      // Browser environment - use native WebSocket
-      this.WebSocket = window.WebSocket;
-      this.WebSocketServer = null; // Browsers cannot create servers
-      this.webSocketInitialized = true;
-      console.log('🌐 Initialized browser WebSocket support');
     }
   }
 
@@ -168,7 +179,7 @@ export class WebSocketConnectionManager extends ConnectionManager {
       ws.close(1000, 'Handshake timeout');
     }, 10000);
 
-    const messageHandler = (data) => {
+    const messageHandler = async (data) => {
       try {
         // Handle both Buffer and string data
         const dataString = typeof data === 'string' ? data : data.toString();
@@ -194,8 +205,8 @@ export class WebSocketConnectionManager extends ConnectionManager {
           // Initialize the new manager with our node ID
           bootstrapManager.initialize(this.localNodeId);
 
-          // Set up the connection on the NEW manager
-          bootstrapManager.setupConnection(bootstrapPeerId, ws, false);
+          // Set up the connection on the NEW manager (await for async initialization)
+          await bootstrapManager.setupConnection(bootstrapPeerId, ws, false);
 
           // Emit peerConnected with the NEW manager and metadata
           console.log(`📤 Emitting peerConnected event with dedicated manager for bootstrap`);
@@ -252,18 +263,24 @@ export class WebSocketConnectionManager extends ConnectionManager {
           // Initialize the new manager with our node ID
           peerManager.initialize(this.localNodeId);
 
-          // Set up the connection on the NEW manager
-          peerManager.setupConnection(peerId, ws, false); // false = not initiator
+          // CRITICAL: Wait for WebSocket classes to initialize before setup
+          // The constructor starts async initialization but doesn't await it
+          if (this.localNodeType === 'nodejs' && !peerManager.webSocketInitialized) {
+            console.log(`⏳ Waiting for WebSocket initialization for dedicated manager...`);
+            await peerManager.waitForWebSocketInitialization();
+            console.log(`✅ WebSocket initialized for dedicated manager`);
+          }
 
-          // Emit peerConnected with the NEW manager and metadata
-          console.log(`📤 Emitting peerConnected event with dedicated manager and metadata for ${peerId.substring(0, 8)}...`);
-          this.emit('peerConnected', {
-            peerId,
-            connection: ws,
-            manager: peerManager,
-            initiator: false,
-            metadata: peerMetadata  // Pass metadata directly to RoutingTable
-          });
+          // Set up the connection on the NEW manager (await for async initialization)
+          await peerManager.setupConnection(peerId, ws, false); // false = not initiator
+
+          // Notify routing table directly about the new connection
+          if (this.routingTable) {
+            console.log(`📤 Notifying RoutingTable of new connection from ${peerId.substring(0, 8)}...`);
+            this.routingTable.handlePeerConnected(peerId, ws, peerManager, false, peerMetadata);
+          } else {
+            console.warn(`⚠️ No routing table reference - cannot handle connection from ${peerId.substring(0, 8)}`);
+          }
 
         } else {
           console.warn('Invalid handshake message:', message.type);
@@ -458,7 +475,7 @@ export class WebSocketConnectionManager extends ConnectionManager {
             reject(new Error('WebSocket handshake timeout'));
           }, 5000);
 
-          const handleHandshakeResponse = (data) => {
+          const handleHandshakeResponse = async (data) => {
             try {
               const dataString = typeof data === 'string' ? data : data.toString();
               const message = JSON.parse(dataString);
@@ -475,7 +492,7 @@ export class WebSocketConnectionManager extends ConnectionManager {
 
                 console.log(`✅ Successfully connected to peer ${message.bridgeNodeId.substring(0, 8)}`);
 
-                this.setupConnection(peerId, ws, initiator, peerMetadata);
+                await this.setupConnection(peerId, ws, initiator, peerMetadata);
                 resolve();
 
               } else {
@@ -588,7 +605,15 @@ export class WebSocketConnectionManager extends ConnectionManager {
   /**
    * Set up WebSocket connection after handshake
    */
-  setupConnection(peerId, ws, initiator, metadata = null) {
+  async setupConnection(peerId, ws, initiator, metadata = null) {
+    // CRITICAL: Wait for WebSocket classes to be initialized
+    // This is especially important for Node.js where initialization is async
+    if (!this.webSocketInitialized) {
+      console.log(`⏳ Waiting for WebSocket initialization for ${peerId.substring(0, 8)}...`);
+      await this.waitForWebSocketInitialization();
+      console.log(`✅ WebSocket initialized for ${peerId.substring(0, 8)}`);
+    }
+
     // NOTE: In single-connection architecture, server managers accept first incoming connection
     // Subsequent connections from different peers should get their own managers (handled by routing table)
     if (this.peerId && this.peerId !== peerId) {
@@ -682,14 +707,22 @@ export class WebSocketConnectionManager extends ConnectionManager {
    * Check if peer is connected
    */
   isConnected() {
-    if (!this.connection) return false;
-
-    // Handle case where WebSocket classes aren't initialized yet
-    if (!this.webSocketInitialized || !this.WebSocket) {
+    if (!this.connection) {
+      console.log(`🔍 isConnected() returning false: no connection object`);
       return false;
     }
 
-    return this.connection.readyState === this.WebSocket.OPEN;
+    // Handle case where WebSocket classes aren't initialized yet
+    if (!this.webSocketInitialized || !this.WebSocket) {
+      console.log(`🔍 isConnected() returning false: WebSocket not initialized (webSocketInitialized=${this.webSocketInitialized}, WebSocket=${!!this.WebSocket})`);
+      return false;
+    }
+
+    const isOpen = this.connection.readyState === this.WebSocket.OPEN;
+    if (!isOpen) {
+      console.log(`🔍 isConnected() returning false: readyState=${this.connection.readyState}, OPEN=${this.WebSocket.OPEN}`);
+    }
+    return isOpen;
   }
 
   /**
