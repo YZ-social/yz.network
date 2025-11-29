@@ -611,16 +611,17 @@ export class OverlayNetwork extends EventEmitter {
     // Check if this peer is currently being invited
     const isInvitationFlow = signal.invitationFlow || this.dht.pendingInvitations.has(peerId);
 
-    if (!isDHTMember || isInvitationFlow || this.dht.useBootstrapForSignaling) {
+    // Priority: DHT members always use DHT signaling (browser-to-browser WebRTC)
+    // Only use bootstrap for invitations or non-DHT members
+    if (isInvitationFlow || !isDHTMember) {
       // Use bootstrap server for:
       // 1. New client invitations (invitation flow)
       // 2. Peers not yet in our routing table (not DHT members)
-      // 3. When we're still using bootstrap for signaling
-      console.log(`🔗 Using bootstrap signaling for ${peerId} (invitation: ${isInvitationFlow}, DHT member: ${isDHTMember})`);
+      console.log(`🔗 Using bootstrap signaling for ${peerId.substring(0, 8)}... (invitation: ${isInvitationFlow}, DHT member: ${isDHTMember})`);
       await this.dht.bootstrap.forwardSignal(peerId, signal);
     } else {
       // Use DHT direct messaging for signaling between existing DHT members
-      console.log(`🌐 Using DHT messaging for ${peerId} (existing DHT member)`);
+      console.log(`🌐 Using DHT messaging for ${peerId.substring(0, 8)}... (existing DHT member)`);
       await this.sendDHTSignal(peerId, signal);
     }
   }
