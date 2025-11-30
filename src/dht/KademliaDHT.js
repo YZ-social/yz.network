@@ -319,7 +319,7 @@ export class KademliaDHT extends EventEmitter {
 
       // IMMEDIATE PEER DISCOVERY: Trigger discovery right after connection
       // This prevents the 100+ second wait when browser has only 1 peer
-      const connectedPeers = this.getConnectedPeerCount();
+      const connectedPeers = this.getConnectedPeers().length;
       if (connectedPeers < 3) {
         console.log(`🚀 Triggering immediate peer discovery (${connectedPeers} peers - need more connections)`);
         // Use setTimeout to avoid blocking connection setup
@@ -1483,7 +1483,7 @@ export class KademliaDHT extends EventEmitter {
 
         // Immediate peer discovery when we have very few connections
         // This prevents the 100+ second wait when browser has only 1 peer
-        const connectedPeers = this.getConnectedPeerCount();
+        const connectedPeers = this.getConnectedPeers().length;
         if (connectedPeers < 3) {
           console.log(`🚀 Triggering immediate peer discovery (${connectedPeers} peers - need more connections)`);
           // Use setTimeout to avoid blocking connection setup
