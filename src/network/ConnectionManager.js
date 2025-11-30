@@ -207,6 +207,7 @@ export class ConnectionManager extends EventEmitter {
         case 'connect_genesis_peer':
         case 'validate_reconnection':
         case 'invitation_for_bridge':
+        case 'get_onboarding_peer':
           // Bootstrap server messages - emit to bridge handler
           this.emit('message', { peerId, message });
           break;
