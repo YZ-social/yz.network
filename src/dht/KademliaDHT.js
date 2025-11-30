@@ -1467,6 +1467,19 @@ export class KademliaDHT extends EventEmitter {
         }
 
         this.considerDHTSignaling();
+
+        // Immediate peer discovery when we have very few connections
+        // This prevents the 100+ second wait when browser has only 1 peer
+        const connectedPeers = this.getConnectedPeerCount();
+        if (connectedPeers < 3) {
+          console.log(`🚀 Triggering immediate peer discovery (${connectedPeers} peers - need more connections)`);
+          // Use setTimeout to avoid blocking connection setup
+          setTimeout(() => {
+            this.discoverPeersViaDHT().catch(err => {
+              console.error('❌ Immediate peer discovery failed:', err);
+            });
+          }, 500); // Small delay to ensure connection is fully established
+        }
       } else {
         // Even if adding failed, still check signaling mode
         this.considerDHTSignaling();
@@ -3814,9 +3827,11 @@ export class KademliaDHT extends EventEmitter {
     if (connectedPeers === 0) {
       emergencyInterval = 30 * 1000; // 30 seconds when completely disconnected
     } else if (connectedPeers < 2) {
-      emergencyInterval = 2 * 60 * 1000; // 2 minutes with 1 peer
+      emergencyInterval = 15 * 1000; // 15 seconds with 1 peer (reduced from 2 minutes)
+    } else if (connectedPeers < 3) {
+      emergencyInterval = 30 * 1000; // 30 seconds with 2 peers
     } else {
-      emergencyInterval = 10 * 60 * 1000; // 10 minutes with 2+ peers
+      emergencyInterval = 10 * 60 * 1000; // 10 minutes with 3+ peers
     }
 
     if (timeSinceLastEmergency < emergencyInterval && connectedPeers > 0) {
