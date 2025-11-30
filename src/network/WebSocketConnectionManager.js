@@ -725,31 +725,15 @@ export class WebSocketConnectionManager extends ConnectionManager {
    * Check if peer is connected
    */
   isConnected() {
-    // CRITICAL DEBUG: Log detailed connection manager state
-    console.log(`🔍 isConnected() called on ${this.constructor.name}:`, {
-      peerId: this.peerId?.substring(0, 8),
-      hasConnection: !!this.connection,
-      webSocketInitialized: this.webSocketInitialized,
-      hasWebSocket: !!this.WebSocket,
-      connectionState: this.connectionState
-    });
-
     if (!this.connection) {
-      console.log(`🔍 isConnected() returning false: no connection object`);
       return false;
     }
 
-    // Handle case where WebSocket classes aren't initialized yet
     if (!this.webSocketInitialized || !this.WebSocket) {
-      console.log(`🔍 isConnected() returning false: WebSocket not initialized (webSocketInitialized=${this.webSocketInitialized}, WebSocket=${!!this.WebSocket})`);
       return false;
     }
 
-    const isOpen = this.connection.readyState === this.WebSocket.OPEN;
-    if (!isOpen) {
-      console.log(`🔍 isConnected() returning false: readyState=${this.connection.readyState}, OPEN=${this.WebSocket.OPEN}`);
-    }
-    return isOpen;
+    return this.connection.readyState === this.WebSocket.OPEN;
   }
 
   /**

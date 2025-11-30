@@ -2922,12 +2922,7 @@ export class KademliaDHT extends EventEmitter {
 
     const peerNode = this.routingTable.getNode(peerId);
     if (peerNode && peerNode.connectionManager) {
-      // REFACTORED: isConnected() no longer takes peerId parameter (single-connection architecture)
-      const isConnected = peerNode.connectionManager.isConnected();
-      if (!isConnected) {
-        console.log(`🔍 isPeerConnected(${peerId.substring(0,8)}): routing table node exists, connectionManager.isConnected() = false`);
-      }
-      return isConnected;
+      return peerNode.connectionManager.isConnected();
     }
 
     // CRITICAL FIX: Also check for WebSocket connections that might not be in routing table yet
@@ -2935,12 +2930,10 @@ export class KademliaDHT extends EventEmitter {
     if (this.peerNodes && this.peerNodes.has(peerId)) {
       const directPeerNode = this.peerNodes.get(peerId);
       if (directPeerNode && directPeerNode.connectionManager) {
-        // REFACTORED: isConnected() no longer takes peerId parameter (single-connection architecture)
         return directPeerNode.connectionManager.isConnected();
       }
     }
 
-    console.log(`🔍 isPeerConnected(${peerId.substring(0,8)}): not in routing table or peerNodes`);
     return false;
   }
 
