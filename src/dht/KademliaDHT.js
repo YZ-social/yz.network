@@ -316,6 +316,19 @@ export class KademliaDHT extends EventEmitter {
 
       // Delegate to routing table to create and manage the node
       this.routingTable.handlePeerConnected(peerId, connection, manager, initiator);
+
+      // IMMEDIATE PEER DISCOVERY: Trigger discovery right after connection
+      // This prevents the 100+ second wait when browser has only 1 peer
+      const connectedPeers = this.getConnectedPeerCount();
+      if (connectedPeers < 3) {
+        console.log(`🚀 Triggering immediate peer discovery (${connectedPeers} peers - need more connections)`);
+        // Use setTimeout to avoid blocking connection setup
+        setTimeout(() => {
+          this.discoverPeersViaDHT().catch(err => {
+            console.error('❌ Immediate peer discovery failed:', err);
+          });
+        }, 500); // Small delay to ensure connection is fully established
+      }
     };
 
     console.log('✅ Routing table event handlers configured');
