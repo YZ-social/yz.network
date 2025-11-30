@@ -569,11 +569,11 @@ export class PassiveBridgeNode extends NodeDHTClient {
       const randomId = this.generateRandomNodeId();
       console.log(`🎲 Random target: ${randomId.toString().substring(0, 8)}...`);
 
-      // 2. Find closest peer via DHT lookup with 30s timeout
-      // findNode can take 10-30s if peers are slow/disconnected
+      // 2. Find closest peer via DHT lookup with 10s timeout
+      // With proper connections, findNode should complete in 1-3s normally
       const findNodePromise = this.dht.findNode(randomId, { emergencyBypass: true });
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('findNode timeout - taking too long')), 30000)
+        setTimeout(() => reject(new Error('findNode timeout - taking too long')), 10000)
       );
       const closestPeers = await Promise.race([findNodePromise, timeoutPromise]);
 
