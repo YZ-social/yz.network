@@ -312,17 +312,18 @@ export class WebSocketConnectionManager extends ConnectionManager {
     // Determine if we need to initiate connection based on capabilities
     const localIsServer = this.serverMode === 'server';
     const localIsBrowser = this.localNodeType === 'browser';
-    const inviterIsNodejs = peerMetadata.nodeType === 'nodejs' || peerMetadata.nodeType === 'nodejs-active';
+    const peerIsBrowser = peerMetadata.nodeType === 'browser';
+    const peerIsNodejs = peerMetadata.nodeType === 'nodejs' || peerMetadata.nodeType === 'nodejs-active';
 
-    // DEBUG: Log values to understand why condition fails
+    // DEBUG: Log values to understand connection decision
     console.log(`🔍 handleInvitation DEBUG:`);
     console.log(`   localNodeType: ${this.localNodeType}, localIsBrowser: ${localIsBrowser}`);
-    console.log(`   inviter nodeType: ${peerMetadata.nodeType}, inviterIsNodejs: ${inviterIsNodejs}`);
-    console.log(`   Condition (localIsBrowser && inviterIsNodejs): ${localIsBrowser && inviterIsNodejs}`);
+    console.log(`   peer nodeType: ${peerMetadata.nodeType}, peerIsNodejs: ${peerIsNodejs}, peerIsBrowser: ${peerIsBrowser}`);
 
     // CRITICAL: Browsers can't be WebSocket servers!
-    // If we're a browser and inviter is nodejs, WE must initiate connection
-    if (localIsBrowser && inviterIsNodejs) {
+    // Only browsers can initiate connections to Node.js servers
+    if (localIsBrowser && peerIsNodejs) {
+      // Browser → Node.js: Browser must initiate
       const connectAddress = peerMetadata.publicWssAddress || peerMetadata.listeningAddress;
       console.log(`🔗 Browser initiating WebSocket connection to nodejs at ${connectAddress}`);
 
@@ -333,8 +334,25 @@ export class WebSocketConnectionManager extends ConnectionManager {
         console.error(`❌ Browser failed to connect to inviter: ${error.message}`);
         throw error;
       }
+    } else if (!localIsBrowser && peerIsBrowser) {
+      // Node.js → Browser: Node.js CANNOT initiate (browsers can't accept incoming connections)
+      // Wait for browser to connect to our WebSocket server
+      console.log(`⏳ Peer is browser - waiting for browser to connect to our WebSocket server`);
+      console.log(`   Node.js cannot initiate connections to browsers (browsers can only be clients)`);
+    } else if (!localIsBrowser && peerIsNodejs) {
+      // Node.js → Node.js: Can initiate connection
+      const connectAddress = peerMetadata.listeningAddress;
+      console.log(`🔗 Node.js initiating WebSocket connection to another Node.js at ${connectAddress}`);
+
+      try {
+        await this.createConnection(peerId, true, peerMetadata);
+        console.log(`✅ Successfully connected to Node.js peer ${peerId.substring(0, 8)}...`);
+      } catch (error) {
+        console.error(`❌ Failed to connect to Node.js peer: ${error.message}`);
+        throw error;
+      }
     } else {
-      // Default: wait for inviter to connect to us
+      // Default: wait for peer to connect to us
       console.log(`⏳ Waiting for WebSocket connection from ${peerId.substring(0, 8)}...`);
     }
   }
