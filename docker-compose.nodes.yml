@@ -22,7 +22,7 @@ services:
       - NODE_NAME=dht-node-1
       - OPEN_NETWORK=true
     networks:
-      - dht-network
+      - yz-network
     restart: unless-stopped
     deploy:
       resources:
@@ -56,7 +56,7 @@ services:
       - NODE_NAME=dht-node-2
       - OPEN_NETWORK=true
     networks:
-      - dht-network
+      - yz-network
     restart: unless-stopped
     deploy:
       resources:
@@ -90,7 +90,7 @@ services:
       - NODE_NAME=dht-node-3
       - OPEN_NETWORK=true
     networks:
-      - dht-network
+      - yz-network
     restart: unless-stopped
     deploy:
       resources:
@@ -124,7 +124,7 @@ services:
       - NODE_NAME=dht-node-4
       - OPEN_NETWORK=true
     networks:
-      - dht-network
+      - yz-network
     restart: unless-stopped
     deploy:
       resources:
@@ -158,7 +158,7 @@ services:
       - NODE_NAME=dht-node-5
       - OPEN_NETWORK=true
     networks:
-      - dht-network
+      - yz-network
     restart: unless-stopped
     deploy:
       resources:
@@ -192,7 +192,7 @@ services:
       - NODE_NAME=dht-node-6
       - OPEN_NETWORK=true
     networks:
-      - dht-network
+      - yz-network
     restart: unless-stopped
     deploy:
       resources:
@@ -226,7 +226,7 @@ services:
       - NODE_NAME=dht-node-7
       - OPEN_NETWORK=true
     networks:
-      - dht-network
+      - yz-network
     restart: unless-stopped
     deploy:
       resources:
@@ -260,7 +260,7 @@ services:
       - NODE_NAME=dht-node-8
       - OPEN_NETWORK=true
     networks:
-      - dht-network
+      - yz-network
     restart: unless-stopped
     deploy:
       resources:
@@ -294,7 +294,7 @@ services:
       - NODE_NAME=dht-node-9
       - OPEN_NETWORK=true
     networks:
-      - dht-network
+      - yz-network
     restart: unless-stopped
     deploy:
       resources:
@@ -328,7 +328,7 @@ services:
       - NODE_NAME=dht-node-10
       - OPEN_NETWORK=true
     networks:
-      - dht-network
+      - yz-network
     restart: unless-stopped
     deploy:
       resources:
@@ -362,7 +362,7 @@ services:
       - NODE_NAME=dht-node-11
       - OPEN_NETWORK=true
     networks:
-      - dht-network
+      - yz-network
     restart: unless-stopped
     deploy:
       resources:
@@ -396,7 +396,7 @@ services:
       - NODE_NAME=dht-node-12
       - OPEN_NETWORK=true
     networks:
-      - dht-network
+      - yz-network
     restart: unless-stopped
     deploy:
       resources:
@@ -430,7 +430,7 @@ services:
       - NODE_NAME=dht-node-13
       - OPEN_NETWORK=true
     networks:
-      - dht-network
+      - yz-network
     restart: unless-stopped
     deploy:
       resources:
@@ -464,7 +464,7 @@ services:
       - NODE_NAME=dht-node-14
       - OPEN_NETWORK=true
     networks:
-      - dht-network
+      - yz-network
     restart: unless-stopped
     deploy:
       resources:
@@ -498,7 +498,7 @@ services:
       - NODE_NAME=dht-node-15
       - OPEN_NETWORK=true
     networks:
-      - dht-network
+      - yz-network
     restart: unless-stopped
     deploy:
       resources:
@@ -517,6 +517,6 @@ services:
 
 # Use the existing network created by production.yml
 networks:
-  dht-network:
+  yz-network:
     external: true
     name: yznetwork_yz-network
