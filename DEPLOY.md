@@ -11,8 +11,14 @@
 6. ✅ **CRITICAL FIX**: Bridge connection storage race condition (was logging "authenticated" before actually authenticating)
 7. ✅ **CRITICAL FIX**: Added WebSocket keep-alive ping/pong mechanism (10s interval, 30s timeout)
 8. ✅ **CRITICAL FIX**: Fixed Docker network binding (WebSocket server now binds to 0.0.0.0 instead of 127.0.0.1)
+9. ✅ **PERFORMANCE FIX**: Immediate connection logic for fast pub-sub startup
+   - Browser now connects to 5 peers immediately after find_node_response
+   - Eliminates 30-60 second wait for background maintenance
+   - Target: 5 connected peers in <15 seconds (was 3 peers in 60 seconds)
+   - Critical for geo-location app pub-sub cold start performance
 
 ### Files Changed:
+- `src/dht/KademliaDHT.js` - Added immediate connection logic after find_node_response for fast pub-sub startup
 - `src/bridge/PassiveBridgeNode.js` - Fixed inheritance + ping/pong handling
 - `src/bridge/EnhancedBootstrapServer.js` - Fixed race condition + keep-alive mechanism
 - `src/node/NodeDHTClient.js` - Use createBootstrapClient() method + Docker network binding fix (0.0.0.0)
