@@ -1307,10 +1307,11 @@ export class KademliaDHT extends EventEmitter {
 
         // Initiate WebSocket connection using Perfect Negotiation
         if (peerNode && peerNode.connectionManager) {
-          console.log(`🔗 Creating WebSocket connection to ${targetPeer.substring(0, 8)}...`);
-          // CRITICAL: Pass metadata so connection manager can use publicWssAddress for browsers
-          await peerNode.connectionManager.createConnection(targetPeer, true, peerNode.metadata);
-          console.log(`✅ WebSocket connection initiated to ${targetPeer.substring(0, 8)}...`);
+          console.log(`🔗 Handling invitation to ${targetPeer.substring(0, 8)}... (nodeType: ${targetPeerMetadata.nodeType})`);
+          // CRITICAL FIX: Use handleInvitation() instead of createConnection() directly
+          // handleInvitation() has the logic to check if peer can accept connections (browsers can't!)
+          await peerNode.connectionManager.handleInvitation(targetPeer, peerNode.metadata);
+          console.log(`✅ Invitation handled for ${targetPeer.substring(0, 8)}...`);
         } else {
           console.error(`❌ No connection manager available for ${targetPeer.substring(0, 8)}...`);
         }
