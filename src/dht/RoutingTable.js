@@ -536,18 +536,6 @@ export class RoutingTable {
       // If both nodes try to connect simultaneously, keep only one connection
       // Check for connectionManager (set immediately on outgoing attempt) not connection (set after handshake)
       if (existingNode.connectionManager) {
-        // CRITICAL FIX: Check if existing connection is actually functional
-        // If existingNode has a connectionManager but no active connection, it means the connection failed
-        // (common when Node.js tries to connect to browser which can't be a server)
-        const existingHasActiveConnection = existingNode.connection && existingNode.connectionManager.isConnected();
-        
-        if (!existingHasActiveConnection && connection) {
-          console.log(`🔄 Existing connection failed/incomplete for ${peerId.substring(0, 8)}, accepting new working connection`);
-          existingNode.setupConnection(manager, connection);
-          existingNode.initiator = initiator;
-          return;
-        }
-
         // Collision detected - use node ID comparison to decide which connection wins
         const localNodeId = this.localNodeId || this.options?.localNodeId;
         if (!localNodeId) {
