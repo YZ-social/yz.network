@@ -322,7 +322,7 @@ export class PassiveBridgeNode extends NodeDHTClient {
   /**
    * Handle peer connection in passive mode
    */
-  handlePeerConnected(peerId) {
+  async handlePeerConnected(peerId) {
     console.log(`🔍 Bridge observing peer connection: ${peerId.substring(0, 8)}...`);
 
     this.connectedPeers.set(peerId, {
@@ -331,6 +331,39 @@ export class PassiveBridgeNode extends NodeDHTClient {
       messageCount: 0,
       isActive: true
     });
+
+    // OPEN NETWORK MODE: Auto-grant membership tokens to connecting DHT nodes
+    if (this.isOpenNetwork) {
+      try {
+        // Get peer metadata to check if it's a Node.js DHT client (not bridge)
+        const peerNode = this.dht.routingTable.getNode(peerId);
+        const metadata = peerNode?.metadata || {};
+
+        // Only grant to Node.js clients (not browsers, not other bridges)
+        const isNodeClient = metadata.nodeType === 'nodejs';
+        const isBridge = metadata.isBridgeNode || metadata.nodeType === 'bridge';
+
+        if (isNodeClient && !isBridge && this.dht._membershipToken) {
+          console.log(`🎫 [Open Network] Auto-granting membership token to connecting Node.js peer ${peerId.substring(0, 8)}...`);
+
+          const membershipToken = await this.dht.grantMembershipToken(peerId);
+
+          // Send membership token to the peer via DHT messaging
+          const manager = this.getManagerForPeer(peerId);
+          if (manager) {
+            await manager.sendMessage(peerId, {
+              type: 'membership_token_granted',
+              membershipToken,
+              from: this.dht.localNodeId.toString()
+            });
+
+            console.log(`✅ [Open Network] Membership token granted to ${peerId.substring(0, 8)}...`);
+          }
+        }
+      } catch (error) {
+        console.warn(`⚠️ Failed to auto-grant membership token to ${peerId.substring(0, 8)}:`, error.message);
+      }
+    }
 
     // Update network fingerprint when topology changes
     this.scheduleNetworkFingerprintUpdate();

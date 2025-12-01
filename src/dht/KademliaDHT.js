@@ -1737,6 +1737,9 @@ export class KademliaDHT extends EventEmitter {
         case 'create_invitation_for_peer':
           await this.handleCreateInvitationForPeer(peerId, message);
           break;
+        case 'membership_token_granted':
+          await this.handleMembershipTokenGranted(peerId, message);
+          break;
         default:
           console.warn(`Unknown message type from ${peerId}: ${message.type}`);
       }
@@ -5331,6 +5334,41 @@ export class KademliaDHT extends EventEmitter {
       console.error(`❌ Error creating/sending invitation:`, error);
       console.error(`   Target peer: ${targetNodeId.substring(0, 8)}`);
       console.error(`   Request ID: ${requestId}`);
+    }
+  }
+
+  /**
+   * Handle receiving a membership token grant from a bridge node (Open Network Mode)
+   */
+  async handleMembershipTokenGranted(peerId, message) {
+    const { membershipToken, from } = message;
+
+    console.log(`🎫 [Open Network] Received membership token from ${from.substring(0, 8)}...`);
+
+    try {
+      // Validate and store the membership token
+      if (!membershipToken || !membershipToken.nodeId) {
+        throw new Error('Invalid membership token received');
+      }
+
+      // Verify this token is for us
+      if (membershipToken.nodeId !== this.localNodeId.toString()) {
+        console.warn(`⚠️ Received membership token for ${membershipToken.nodeId.substring(0, 8)}, but we are ${this.localNodeId.toString().substring(0, 8)}`);
+        return;
+      }
+
+      // Store the membership token
+      this._membershipToken = membershipToken;
+
+      console.log(`✅ [Open Network] Membership token stored successfully`);
+      console.log(`   Granted by: ${membershipToken.issuer.substring(0, 8)}...`);
+      console.log(`   This node can now create invitation tokens for others`);
+
+      // Emit event for applications that need to know
+      this.emit('membershipGranted', { token: membershipToken, from });
+
+    } catch (error) {
+      console.error(`❌ Failed to handle membership token grant:`, error);
     }
   }
 
