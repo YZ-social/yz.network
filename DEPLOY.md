@@ -16,9 +16,16 @@
    - Eliminates 30-60 second wait for background maintenance
    - Target: 5 connected peers in <15 seconds (was 3 peers in 60 seconds)
    - Critical for geo-location app pub-sub cold start performance
+10. ✅ **ARCHITECTURAL FIX**: Node.js→Browser connection attempts prevented
+   - Fixed handleWebSocketPeerMetadata() to use handleInvitation() pattern
+   - Genesis nodes no longer attempt impossible WebSocket connections to browsers
+   - Eliminates failed connection attempts that interfere with working connections
+   - Collision detection now accepts working connections over failed attempts
+   - Root cause fix + symptom fix for browser find_node timeout issues
 
 ### Files Changed:
-- `src/dht/KademliaDHT.js` - Added immediate connection logic after find_node_response for fast pub-sub startup
+- `src/dht/KademliaDHT.js` - Immediate connection logic + handleInvitation() fix for browser connections
+- `src/dht/RoutingTable.js` - Collision detection prefers working connections over failed attempts
 - `src/bridge/PassiveBridgeNode.js` - Fixed inheritance + ping/pong handling
 - `src/bridge/EnhancedBootstrapServer.js` - Fixed race condition + keep-alive mechanism
 - `src/node/NodeDHTClient.js` - Use createBootstrapClient() method + Docker network binding fix (0.0.0.0)
