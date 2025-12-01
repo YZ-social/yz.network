@@ -4681,6 +4681,38 @@ export class KademliaDHT extends EventEmitter {
         }
 
         console.log(`📊 Routing table now has ${this.routingTable.totalNodes} entries after processing find_node_response`);
+
+        // OPTIMIZATION: Immediately connect to new routing table entries for fast pub-sub startup
+        // Don't wait for 30s background maintenance - connect now!
+        const connectedPeers = this.getConnectedPeers();
+        const desiredConnections = 5; // Target 5 peers for fast pub-sub (not 18)
+
+        if (connectedPeers.length < desiredConnections) {
+          const allNodes = this.routingTable.getAllNodes();
+          const unconnectedNodes = allNodes.filter(node => {
+            const peerId = node.id.toString();
+            return !connectedPeers.includes(peerId);
+          });
+
+          const toConnect = unconnectedNodes.slice(0, desiredConnections - connectedPeers.length);
+
+          if (toConnect.length > 0) {
+            console.log(`🚀 Fast startup: Immediately connecting to ${toConnect.length} peers (${connectedPeers.length}/${desiredConnections} connected)`);
+
+            // Connect in parallel for speed
+            const connectionPromises = toConnect.map(node => {
+              const peerId = node.id.toString();
+              return this.connectToPeer(peerId).catch(err => {
+                console.warn(`Failed immediate connection to ${peerId.substring(0, 8)}:`, err.message);
+              });
+            });
+
+            // Don't await - let connections happen in background
+            Promise.all(connectionPromises).then(() => {
+              console.log(`✅ Fast startup connections complete: ${this.getConnectedPeers().length} total peers`);
+            });
+          }
+        }
       }
 
       request.resolve(message);
