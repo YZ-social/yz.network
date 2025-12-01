@@ -117,12 +117,14 @@ export class KademliaDHT extends EventEmitter {
     // Throttling and rate limiting for reducing excessive find_node traffic
     this.lastBucketRefreshTime = 0; // Track last bucket refresh for throttling
     this.findNodeRateLimit = new Map(); // Rate limit find_node requests per peer
-    this.findNodeMinInterval = 10000; // Minimum 10 seconds between find_node to same peer
+    this.findNodeMinInterval = 1000; // Minimum 1 second between find_node to same peer (reduced from 10s for fast pub-sub)
 
-    // Sleep/Wake memory protection - global message processing limiter
-    this.globalMessageCount = 0;
-    this.globalMessageLimit = 10000; // Maximum messages per session before emergency throttling
-    this.emergencyThrottleActive = false;
+    // Sleep/Wake memory protection - DISABLED
+    // NOTE: Global message limit removed - relying on per-peer rate limiting and deduplication instead
+    // If memory issues occur, implement session expiration + reconnection rather than message counting
+    // this.globalMessageCount = 0;
+    // this.globalMessageLimit = 10000;
+    // this.emergencyThrottleActive = false;
     this.lastSystemTime = Date.now(); // Track for sleep/wake detection
     this.sleepWakeThreshold = 60000; // If system time jumps >60s, assume sleep/wake
 
@@ -1649,31 +1651,15 @@ export class KademliaDHT extends EventEmitter {
    * Handle incoming message from peer
    */
   async handlePeerMessage(peerId, message) {
-    // EMERGENCY: Sleep/Wake memory protection
+    // Sleep/Wake detection for debugging (global message limit DISABLED)
     const currentTime = Date.now();
     const timeDiff = currentTime - this.lastSystemTime;
 
     // Detect sleep/wake cycle (system time jump > 60 seconds)
     if (timeDiff > this.sleepWakeThreshold) {
-      console.warn(`🛌 Sleep/wake detected: ${Math.round(timeDiff/1000)}s gap - resetting message counters`);
-      this.globalMessageCount = 0; // Reset counter after sleep/wake
-      this.emergencyThrottleActive = false; // Reset throttle
+      console.warn(`🛌 Sleep/wake detected: ${Math.round(timeDiff/1000)}s gap`);
     }
     this.lastSystemTime = currentTime;
-
-    // Global message rate limiting to prevent memory exhaustion
-    this.globalMessageCount++;
-    if (this.globalMessageCount > this.globalMessageLimit) {
-      if (!this.emergencyThrottleActive) {
-        console.error(`🚨 EMERGENCY: Message flood detected (${this.globalMessageCount} messages) - activating emergency throttle`);
-        this.emergencyThrottleActive = true;
-      }
-
-      // Drop messages during emergency throttle (except critical ones)
-      if (message.type !== 'ping' && message.type !== 'pong') {
-        return; // Silently drop non-critical messages
-      }
-    }
 
     console.log(`Message from ${peerId}:`, message.type);
 
