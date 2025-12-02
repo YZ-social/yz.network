@@ -1041,7 +1041,7 @@ export class PassiveBridgeNode extends NodeDHTClient {
    */
   async handleBootstrapMessage(peerId, message) {
     // Only process requests from authorized bootstrap servers
-    console.log(`🔍 Bootstrap message check: peerId=${peerId}, authorized=${this.authorizedBootstrap.has(peerId)}`);
+    console.log(`🔍 Bootstrap message received: type=${message.type}, peerId=${peerId}, authorized=${this.authorizedBootstrap.has(peerId)}`);
     console.log(`🔍 Authorized bootstrap servers:`, Array.from(this.authorizedBootstrap));
     if (!this.authorizedBootstrap.has(peerId)) {
       console.warn(`❌ Bootstrap server ${peerId} not authorized for message ${message.type}`);
