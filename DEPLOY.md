@@ -22,6 +22,11 @@
    - Eliminates failed connection attempts that interfere with working connections
    - Collision detection now accepts working connections over failed attempts
    - Root cause fix + symptom fix for browser find_node timeout issues
+11. ✅ **CRITICAL FIX**: Background maintenance respects canAcceptConnections flag
+   - Fixed connectToUnconnectedRoutingNodes() to use handleInvitation() instead of createConnection()
+   - Browsers have canAcceptConnections=false and cannot be WebSocket servers
+   - Node.js peers no longer timeout waiting for impossible reverse connections from browsers
+   - Fixes "0 connections, 0 routing table" issue where browser connections dropped immediately
 
 ### Files Changed:
 - `src/dht/KademliaDHT.js` - Immediate connection logic + handleInvitation() fix for browser connections
