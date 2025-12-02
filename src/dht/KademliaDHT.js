@@ -4286,8 +4286,9 @@ export class KademliaDHT extends EventEmitter {
 
         console.log(`🔗 Background connecting to routing table node: ${peerId.substring(0, 8)}...`);
         const peerNode = this.getOrCreatePeerNode(peerId, metadata);
-        // CRITICAL: Pass metadata from routing table node so connection manager has connection info
-        await peerNode.connectionManager.createConnection(peerId, true, peerNode.metadata);
+        // CRITICAL: Use handleInvitation() instead of createConnection() to respect canAcceptConnections
+        // Browsers have canAcceptConnections=false and must initiate connections themselves
+        await peerNode.connectionManager.handleInvitation(peerId, peerNode.metadata);
         console.log(`✅ Background connection successful: ${peerId.substring(0, 8)}...`);
       } catch (error) {
         console.log(`⚠️ Background connection failed for ${peerId.substring(0, 8)}...: ${error.message}`);
