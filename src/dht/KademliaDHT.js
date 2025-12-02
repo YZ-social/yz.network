@@ -2372,23 +2372,35 @@ export class KademliaDHT extends EventEmitter {
     const maxConcurrent = this.options.alpha;
 
     while (true) {
-      const candidates = Array.from(results)
+      // CONNECTED-PEERS-FIRST STRATEGY: Prioritize active connections over routing table entries
+      // Industry best practice (IPFS, BitTorrent, Ethereum): Query connected peers first for fast results
+      const allCandidates = Array.from(results)
         .filter(node => !contacted.has(node.id.toString()))
         .filter(node => !node.id.equals(this.localNodeId)) // Don't try to connect to ourselves
-        .filter(node => {
-          // CRITICAL FIX: Only query nodes that have active connections
-          const isConnected = this.isPeerConnected(node.id.toString());
-          if (!isConnected) {
-            console.log(`🔗 Skipping find_node query to non-connected node: ${node.id.toString().substring(0, 8)}...`);
-          }
-          return isConnected;
-        })
         .sort((a, b) => {
           const distA = a.id.xorDistance(target);
           const distB = b.id.xorDistance(target);
           return distA.compare(distB);
-        })
-        .slice(0, maxConcurrent);
+        });
+
+      // Split into connected and disconnected peers
+      const connectedCandidates = allCandidates.filter(node =>
+        this.isPeerConnected(node.id.toString())
+      );
+      const disconnectedCandidates = allCandidates.filter(node =>
+        !this.isPeerConnected(node.id.toString())
+      );
+
+      // Prioritize connected peers (fast path: <100ms response time)
+      let candidates = connectedCandidates.slice(0, maxConcurrent);
+
+      // Fall back to disconnected peers only if insufficient connected peers
+      // This accepts one extra hop trade-off (20-50ms) to avoid 10s timeout
+      if (candidates.length < maxConcurrent && disconnectedCandidates.length > 0) {
+        const needed = maxConcurrent - candidates.length;
+        candidates = candidates.concat(disconnectedCandidates.slice(0, needed));
+        console.log(`🔄 Connected-peers-first: Querying ${connectedCandidates.length} connected + ${Math.min(needed, disconnectedCandidates.length)} disconnected peers`);
+      }
 
       if (candidates.length === 0 || activeQueries >= maxConcurrent) {
         break;
@@ -2400,7 +2412,16 @@ export class KademliaDHT extends EventEmitter {
         activeQueries++;
 
         try {
-          const response = await this.sendFindNode(node.id.toString(), target, options);
+          // Differentiated timeout strategy (industry best practice)
+          // Connected peers: 10s timeout (should respond in <100ms, but conservative)
+          // Disconnected peers: 3s timeout (covers connection establishment + query)
+          const isConnected = this.isPeerConnected(node.id.toString());
+          const queryOptions = {
+            ...options,
+            timeout: isConnected ? 10000 : 3000
+          };
+
+          const response = await this.sendFindNode(node.id.toString(), target, queryOptions);
           for (const peer of response.nodes || []) {
             const peerNode = DHTNode.fromCompact(peer);
 
@@ -2538,7 +2559,9 @@ export class KademliaDHT extends EventEmitter {
       nodeId: this.localNodeId.toString()
     };
 
-    return this.sendRequestWithResponse(peerId, message);
+    // Use custom timeout if provided, otherwise use default (10s for connected, 3s for disconnected)
+    const timeout = options.timeout || 10000;
+    return this.sendRequestWithResponse(peerId, message, timeout);
   }
 
   /**

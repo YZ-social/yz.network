@@ -27,6 +27,11 @@
    - Browsers have canAcceptConnections=false and cannot be WebSocket servers
    - Node.js peers no longer timeout waiting for impossible reverse connections from browsers
    - Fixes "0 connections, 0 routing table" issue where browser connections dropped immediately
+12. 🔍 **INVESTIGATING**: Browser onboarding findNode timeout
+   - Added debug logging to trace get_onboarding_peer message routing
+   - Confirmed handleConnectionMessage receives bootstrap_auth and invitation_for_bridge messages
+   - Confirmed get_onboarding_peer messages NOT reaching bridge's handleConnectionMessage
+   - Next: Test browser connection to capture get_onboarding_peer in logs
 
 ### Files Changed:
 - `src/dht/KademliaDHT.js` - Immediate connection logic + handleInvitation() fix for browser connections
