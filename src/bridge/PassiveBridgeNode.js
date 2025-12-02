@@ -984,6 +984,8 @@ export class PassiveBridgeNode extends NodeDHTClient {
    * Handle messages from connected peers through connection manager
    */
   handleConnectionMessage(peerId, message) {
+    console.log(`🔍 handleConnectionMessage: peerId=${peerId}, type=${message.type}`);
+
     // Check if this is a bootstrap authentication message
     if (message.type === 'bootstrap_auth') {
       this.handleBootstrapAuth(peerId, message);
@@ -992,6 +994,7 @@ export class PassiveBridgeNode extends NodeDHTClient {
 
     // Check if this is a bootstrap server peer
     if (peerId.startsWith('bootstrap_')) {
+      console.log(`🔍 Routing to handleBootstrapMessage: ${message.type}`);
       this.handleBootstrapMessage(peerId, message);
       return;
     }
