@@ -3867,6 +3867,17 @@ export class KademliaDHT extends EventEmitter {
           }
         } else {
           console.log('✅ Already connected to bootstrap - requesting peer coordination');
+          // Request onboarding help from bootstrap (same as open network flow)
+          try {
+            const result = await this.bootstrap.requestPeersOrGenesis();
+            if (result.peers && result.peers.length > 0) {
+              console.log(`📥 Received ${result.peers.length} peers from bootstrap for reconnection`);
+            } else {
+              console.log('📭 No peers received from bootstrap (will wait for invitation from bridge)');
+            }
+          } catch (error) {
+            console.error('❌ Failed to request peers for reconnection:', error);
+          }
         }
       } else {
         console.warn('⚠️ No bootstrap client available for reconnection');
