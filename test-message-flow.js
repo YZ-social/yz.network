@@ -53,8 +53,8 @@ async function test1_WebSocketHandlerAttachment() {
   console.log('\n📝 TEST 1: WebSocket Message Handler Attachment');
   console.log('================================================');
 
-  const localNodeId = DHTNodeId.generate();
-  const peerNodeId = DHTNodeId.generate();
+  const localNodeId = new DHTNodeId();
+  const peerNodeId = new DHTNodeId();
   const manager = new WebSocketConnectionManager({
     localNodeId: localNodeId.toString(),
     localNodeType: 'nodejs',
@@ -111,7 +111,7 @@ async function test2_DHTNodeCallbackChain() {
   console.log('\n📝 TEST 2: DHTNode Callback Chain');
   console.log('====================================');
 
-  const nodeId = DHTNodeId.generate();
+  const nodeId = new DHTNodeId();
   const node = new DHTNode(nodeId);
   const mockWs = new MockWebSocket();
   const mockManager = new EventEmitter();
@@ -146,8 +146,8 @@ async function test3_RoutingTableCallbackSetup() {
   console.log('\n📝 TEST 3: RoutingTable Callback Setup');
   console.log('=========================================');
 
-  const localNodeId = DHTNodeId.generate();
-  const peerNodeId = DHTNodeId.generate();
+  const localNodeId = new DHTNodeId();
+  const peerNodeId = new DHTNodeId();
   const routingTable = new RoutingTable(localNodeId);
 
   let dhtMessageReceived = false;
@@ -193,8 +193,8 @@ async function test4_EndToEndFlow() {
   console.log('\n📝 TEST 4: Complete End-to-End Message Flow');
   console.log('==============================================');
 
-  const localNodeId = DHTNodeId.generate();
-  const peerNodeId = DHTNodeId.generate();
+  const localNodeId = new DHTNodeId();
+  const peerNodeId = new DHTNodeId();
 
   // Create routing table
   const routingTable = new RoutingTable(localNodeId);
