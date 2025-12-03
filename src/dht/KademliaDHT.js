@@ -1456,8 +1456,18 @@ export class KademliaDHT extends EventEmitter {
       }
 
       if (this.routingTable.getNode(peerId)) {
-        // Node already exists - still consider DHT signaling switch
-        console.log(`📋 Node ${peerId} already in routing table - checking signaling mode`);
+        // Node already exists - still need to ensure DHT handlers are attached!
+        console.log(`📋 Node ${peerId} already in routing table - ensuring DHT handlers attached`);
+
+        // CRITICAL FIX: Call getOrCreatePeerNode() to attach DHT message handlers
+        // Even though node exists in routing table, handlers may not be attached yet
+        try {
+          this.getOrCreatePeerNode(peerId);
+          console.log(`✅ DHT handlers ensured for existing peer ${peerId.substring(0, 8)}`);
+        } catch (error) {
+          console.error(`❌ Failed to ensure DHT handlers for ${peerId.substring(0, 8)}:`, error);
+        }
+
         this.considerDHTSignaling();
         return;
       }
