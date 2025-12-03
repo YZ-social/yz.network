@@ -202,6 +202,7 @@ export class ConnectionManager extends EventEmitter {
         case 'create_invitation_for_peer':
         case 'forward_invitation':
           // Emit to DHT for handling
+          console.log(`🔔 DEBUG: Emitting dhtMessage event for ${message.type} from ${peerId.substring(0, 8)} (manager: ${this.constructor.name}, listeners: ${this.listenerCount('dhtMessage')})`);
           this.emit('dhtMessage', { peerId, message });
           break;
         case 'connect_genesis_peer':

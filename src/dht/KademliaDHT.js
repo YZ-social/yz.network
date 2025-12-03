@@ -3556,11 +3556,18 @@ export class KademliaDHT extends EventEmitter {
 
     // CRITICAL: Set up DHT message event listener for ALL connection managers (only if not already attached)
     if (!peerNode.connectionManager._dhtMessageHandlerAttached) {
+      console.log(`🔧 DEBUG: Attaching DHT message handler to ${peerNode.connectionManager.constructor.name} for ${peerId.substring(0, 8)}`);
+      console.log(`🔧 DEBUG: Manager instance ID: ${peerNode.connectionManager.localNodeId?.substring(0,8) || 'not initialized'}`);
+      console.log(`🔧 DEBUG: Manager peerId: ${peerNode.connectionManager.peerId?.substring(0,8) || 'not set'}`);
+
       peerNode.connectionManager.on('dhtMessage', ({ peerId: msgPeerId, message }) => {
+        console.log(`📥 DHT MESSAGE HANDLER CALLED: ${message.type} from ${msgPeerId.substring(0, 8)} (manager: ${peerNode.connectionManager.constructor.name})`);
         this.handlePeerMessage(msgPeerId, message);
       });
       peerNode.connectionManager._dhtMessageHandlerAttached = true;
       console.log(`📨 DHT message handler attached for ${peerId.substring(0, 8)}`);
+    } else {
+      console.log(`🔄 DHT message handler already attached for ${peerId.substring(0, 8)}`);
     }
 
     // NOTE: Signal handling removed - WebRTC signaling should be handled by WebRTCConnectionManager itself,
