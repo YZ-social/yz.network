@@ -532,54 +532,14 @@ export class RoutingTable {
     if (existingNode) {
       console.log(`🔄 Node ${peerId.substring(0, 8)}... already exists in routing table`);
 
-      // CRITICAL: Handle collision using Perfect Negotiation Pattern
-      // If both nodes try to connect simultaneously, keep only one connection
-      // Check for connectionManager (set immediately on outgoing attempt) not connection (set after handshake)
-      if (existingNode.connectionManager) {
-        // Collision detected - use node ID comparison to decide which connection wins
-        const localNodeId = this.localNodeId || this.options?.localNodeId;
-        if (!localNodeId) {
-          console.warn(`⚠️ Cannot resolve collision - localNodeId not available`);
-          // Fallback: Accept the new connection
-          existingNode.setupConnection(manager, connection);
-          return;
-        }
-
-        const weArePolite = localNodeId.toString().localeCompare(peerId.toString()) < 0;
-        const existingIsOutgoing = existingNode.initiator; // Store initiator flag on node
-        const newIsOutgoing = initiator;
-
-        console.log(`🎭 Collision detected with ${peerId.substring(0, 8)}: we are ${weArePolite ? 'polite' : 'impolite'}, existing=${existingIsOutgoing ? 'outgoing' : 'incoming'}, new=${newIsOutgoing ? 'outgoing' : 'incoming'}`);
-
-        // Perfect Negotiation: polite peer drops outgoing, keeps incoming
-        // Impolite peer drops incoming, keeps outgoing
-        if (weArePolite) {
-          // Polite: keep incoming, drop outgoing
-          if (!newIsOutgoing) {
-            console.log(`✅ Polite: Accepting incoming connection, dropping existing ${existingIsOutgoing ? 'outgoing' : 'incoming'}`);
-            existingNode.setupConnection(manager, connection);
-            existingNode.initiator = initiator; // Store initiator flag
-          } else {
-            console.log(`🚫 Polite: Dropping new outgoing connection, keeping existing ${existingIsOutgoing ? 'outgoing' : 'incoming'}`);
-            // Don't update - keep existing connection
-          }
-        } else {
-          // Impolite: keep outgoing, drop incoming
-          if (newIsOutgoing) {
-            console.log(`✅ Impolite: Accepting outgoing connection, dropping existing ${existingIsOutgoing ? 'outgoing' : 'incoming'}`);
-            existingNode.setupConnection(manager, connection);
-            existingNode.initiator = initiator; // Store initiator flag
-          } else {
-            console.log(`🚫 Impolite: Dropping new incoming connection, keeping existing ${existingIsOutgoing ? 'outgoing' : 'incoming'}`);
-            // Don't update - keep existing connection
-          }
-        }
-      } else {
-        // No collision - just set up the connection
-        console.log(`🔗 Setting up connection for existing node ${peerId.substring(0, 8)}...`);
-        existingNode.setupConnection(manager, connection);
-        existingNode.initiator = initiator; // Store initiator flag
-      }
+      // ARCHITECTURE NOTE: Collision detection should be handled in ConnectionManager subclasses
+      // before emitting 'peerConnected', not here in RoutingTable.
+      // RoutingTable should just store nodes - connection negotiation is transport-specific.
+      //
+      // For now: Always accept new connections (ConnectionManager will handle collisions internally)
+      console.log(`🔗 Updating connection for existing node ${peerId.substring(0, 8)}...`);
+      existingNode.setupConnection(manager, connection);
+      existingNode.initiator = initiator; // Store initiator flag
 
       // Update metadata if provided
       if (metadata && Object.keys(metadata).length > 0) {
