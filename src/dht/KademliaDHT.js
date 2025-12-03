@@ -2367,6 +2367,34 @@ export class KademliaDHT extends EventEmitter {
       results.add(node);
     }
 
+    // BOOTSTRAP FIX: If initial closest nodes have no connected peers, seed with closest connected peer
+    // This allows findNode to start iterating from the best-positioned connected peer
+    // Each hop will get us closer to the target area where active nodes exist
+    const initialConnected = closest.filter(node => this.isPeerConnected(node.id.toString()));
+    if (initialConnected.length === 0 && closest.length > 0) {
+      console.log(`🔄 No connected peers close to target - finding closest connected peer to bootstrap search`);
+
+      // Get all connected peers and find the one closest to target (smallest XOR distance)
+      const allNodes = this.routingTable.getAllNodes();
+      const connectedPeers = allNodes.filter(node =>
+        this.isPeerConnected(node.id.toString()) &&
+        !node.id.equals(this.localNodeId)
+      );
+
+      if (connectedPeers.length > 0) {
+        // Sort by XOR distance to target, pick closest
+        const closestConnectedPeer = connectedPeers.sort((a, b) => {
+          const distA = a.id.xorDistance(target);
+          const distB = b.id.xorDistance(target);
+          return distA.compare(distB);
+        })[0];
+
+        results.add(closestConnectedPeer);
+        const distance = closestConnectedPeer.id.xorDistance(target);
+        console.log(`✅ Seeded findNode with closest connected peer ${closestConnectedPeer.id.toString().substring(0, 8)} (XOR distance: ${distance.toString().substring(0, 8)}...)`);
+      }
+    }
+
     // Iteratively query closer nodes
     let activeQueries = 0;
     const maxConcurrent = this.options.alpha;

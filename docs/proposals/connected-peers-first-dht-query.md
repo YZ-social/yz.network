@@ -165,18 +165,32 @@ good → questionable → bad
 
 ```javascript
 async findNode(targetId, options = {}) {
-  let candidates = getRoutingTablePeers();
-  let queried = new Set();
-  let closest = [];
+  const target = DHTNodeId.fromString(targetId);
+  const closest = this.routingTable.findClosestNodes(target, k);
+  const results = new Set(closest);
 
+  // BOOTSTRAP FIX: Seed with closest connected peer if no connected peers near target
+  const initialConnected = closest.filter(p => isConnected(p));
+  if (initialConnected.length === 0) {
+    const allConnected = getAllNodes().filter(p => isConnected(p));
+    if (allConnected.length > 0) {
+      // Pick connected peer with smallest XOR distance to target
+      const seed = allConnected.sort((a, b) =>
+        a.id.xorDistance(target).compare(b.id.xorDistance(target))
+      )[0];
+      results.add(seed);
+    }
+  }
+
+  let queried = new Set();
   while (needMoreResults()) {
+    const candidates = Array.from(results)
+      .filter(p => !queried.has(p))
+      .sort((a, b) => a.id.xorDistance(target).compare(b.id.xorDistance(target)));
+
     // 1. FILTER BY CONNECTION STATUS
-    const connected = candidates.filter(p =>
-      !queried.has(p) && isConnected(p)
-    );
-    const disconnected = candidates.filter(p =>
-      !queried.has(p) && !isConnected(p)
-    );
+    const connected = candidates.filter(p => isConnected(p));
+    const disconnected = candidates.filter(p => !isConnected(p));
 
     // 2. PRIORITIZE CONNECTED PEERS
     let toQuery = connected.slice(0, alpha);
@@ -193,8 +207,7 @@ async findNode(targetId, options = {}) {
       const timeout = isConnected(peer) ? 10000 : 3000;
       try {
         const response = await queryPeer(peer, timeout);
-        candidates.push(...response.peers);
-        closest = updateClosest(closest, response.peers);
+        response.peers.forEach(p => results.add(p));
       } catch (error) {
         // Query failed, continue to next peer
       }
@@ -202,7 +215,9 @@ async findNode(targetId, options = {}) {
     }
   }
 
-  return closest;
+  return Array.from(results).sort((a, b) =>
+    a.id.xorDistance(target).compare(b.id.xorDistance(target))
+  ).slice(0, k);
 }
 ```
 
