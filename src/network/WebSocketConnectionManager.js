@@ -271,16 +271,19 @@ export class WebSocketConnectionManager extends ConnectionManager {
             console.log(`✅ WebSocket initialized for dedicated manager`);
           }
 
-          // Set up the connection on the NEW manager (await for async initialization)
-          await peerManager.setupConnection(peerId, ws, false); // false = not initiator
-
-          // Notify routing table directly about the new connection
+          // CRITICAL FIX: Notify routing table BEFORE setupConnection to ensure handlers are attached
+          // This prevents race condition where messages arrive before DHT message handlers are ready
           if (this.routingTable) {
-            console.log(`📤 Notifying RoutingTable of new connection from ${peerId.substring(0, 8)}...`);
+            console.log(`📤 Pre-registering connection with RoutingTable for ${peerId.substring(0, 8)}...`);
             this.routingTable.handlePeerConnected(peerId, ws, peerManager, false, peerMetadata);
+            console.log(`✅ Routing table handlers configured for ${peerId.substring(0, 8)}`);
           } else {
             console.warn(`⚠️ No routing table reference - cannot handle connection from ${peerId.substring(0, 8)}`);
           }
+
+          // Set up the connection on the NEW manager (await for async initialization)
+          // By this point, DHT message handlers should be attached via routing table flow
+          await peerManager.setupConnection(peerId, ws, false); // false = not initiator
 
         } else {
           console.warn('Invalid handshake message:', message.type);
