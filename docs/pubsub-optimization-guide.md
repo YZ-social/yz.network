@@ -13,15 +13,21 @@
 **File**: `src/dht/KademliaDHT.js`
 
 **Changes Made**:
-1. ✅ **Increased parallelism**: `alpha` from 3 → 6 (line 27)
-   - Enables 6 concurrent DHT lookups instead of 3
-   - 2x faster peer discovery for channel subscriptions
+1. ✅ **Balanced parallelism**: `alpha` from 3 → 6 → 4 (line 27)
+   - Initially increased to 6 for faster peer discovery
+   - **Adjusted to 4** for optimal balance (less timeout cascades)
+   - 33% faster than baseline while avoiding excessive concurrent failures
 
 2. ✅ **Reduced rate limiting**: `findNodeMinInterval` from 1000ms → 500ms (line 120)
    - Allows more frequent queries to same peer
    - Faster channel discovery with acceptable network overhead
 
-**Expected Impact**: ~40-50% faster subscription times
+3. ✅ **Connected-peers-first strategy**: Implemented in findNode (lines 2413-2433)
+   - Always queries connected peers before disconnected routing table entries
+   - Reduces wasted timeouts on unreachable peers
+   - Industry best practice (IPFS, BitTorrent, Ethereum)
+
+**Expected Impact**: ~30-40% faster subscription times with improved reliability
 
 ---
 

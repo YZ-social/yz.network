@@ -24,7 +24,7 @@ export class KademliaDHT extends EventEmitter {
 
     this.options = {
       k: options.k || 20, // Kademlia k parameter
-      alpha: options.alpha || 6, // Parallelism parameter (increased from 3 for pub-sub performance)
+      alpha: options.alpha || 4, // Parallelism parameter (balanced for pub-sub performance)
       replicateK: options.replicateK || 20, // Replication factor (Kademlia-compliant: replicate to k closest nodes)
       refreshInterval: options.refreshInterval || 60 * 1000, // Base interval - will be adaptive
       aggressiveRefreshInterval: options.aggressiveRefreshInterval || 15 * 1000, // 15s for new/isolated nodes
