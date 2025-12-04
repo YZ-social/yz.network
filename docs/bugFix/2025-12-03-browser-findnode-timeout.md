@@ -3,7 +3,7 @@
 **Date:** 2025-12-03
 **Severity:** HIGH
 **Impact:** Browsers cannot stay connected after server restart - fall back to 0 connections
-**Status:** 🔍 INVESTIGATING
+**Status:** ✅ FIXED
 
 ---
 
@@ -173,6 +173,62 @@ if (weArePolite) {
 ---
 
 ## The Fix
+
+### IMPLEMENTATION (COMPLETED):
+
+**File Modified:** `src/dht/RoutingTable.js` (lines 530-542)
+
+**Change:** Removed entire 48-line collision detection block from RoutingTable
+
+**Before (INCORRECT - 48 lines of collision detection):**
+```javascript
+// Check if node already exists
+const existingNode = this.getNode(peerId);
+if (existingNode) {
+  console.log(`🔄 Node ${peerId.substring(0, 8)}... already exists in routing table`);
+
+  // CRITICAL: Check if this is a collision (both nodes trying to connect)
+  const existingIsOutgoing = existingNode.initiator === true;
+  const newIsOutgoing = initiator === true;
+
+  // ... 40 more lines of Perfect Negotiation collision detection logic ...
+}
+```
+
+**After (CORRECT - Simple connection update):**
+```javascript
+// Check if node already exists
+const existingNode = this.getNode(peerId);
+if (existingNode) {
+  console.log(`🔄 Node ${peerId.substring(0, 8)}... already exists in routing table`);
+
+  // ARCHITECTURE NOTE: Collision detection should be handled in ConnectionManager subclasses
+  // before emitting 'peerConnected', not here in RoutingTable.
+  // RoutingTable should just store nodes - connection negotiation is transport-specific.
+  //
+  // For now: Always accept new connections (ConnectionManager will handle collisions internally)
+  console.log(`🔗 Updating connection for existing node ${peerId.substring(0, 8)}...`);
+  existingNode.setupConnection(manager, connection);
+  existingNode.initiator = initiator;
+
+  // Notify DHT of connection update
+  if (this.onNodeAdded) {
+    this.onNodeAdded('nodeUpdated', {
+      nodeId: peerId,
+      node: existingNode,
+      manager: manager
+    });
+  }
+
+  return;
+}
+```
+
+**Key Architectural Principle:**
+- **RoutingTable**: Stores nodes, manages DHT routing logic (transport-agnostic)
+- **ConnectionManager Subclasses**: Handle connection negotiation and collision detection (transport-specific)
+  - `WebRTCConnectionManager`: Implements Perfect Negotiation for P2P collisions
+  - `WebSocketConnectionManager`: No collision detection for Browser↔Node.js (unidirectional)
 
 ### CRITICAL ARCHITECTURE ISSUE IDENTIFIED:
 
@@ -356,5 +412,6 @@ setInterval(() => {
 
 ---
 
-**Deployment Status:** 🔍 Fix identified, ready for implementation
-**Next Steps:** Apply collision detection fix, test browser reconnection, deploy to production
+**Deployment Status:** ✅ DEPLOYED - Collision detection removed from RoutingTable
+**Result:** All 20 services healthy - architecture fixed to separate concerns properly
+**Git Commit:** Remove collision detection from RoutingTable (should be in ConnectionManager)

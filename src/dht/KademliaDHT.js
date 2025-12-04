@@ -24,7 +24,7 @@ export class KademliaDHT extends EventEmitter {
 
     this.options = {
       k: options.k || 20, // Kademlia k parameter
-      alpha: options.alpha || 3, // Parallelism parameter
+      alpha: options.alpha || 6, // Parallelism parameter (increased from 3 for pub-sub performance)
       replicateK: options.replicateK || 20, // Replication factor (Kademlia-compliant: replicate to k closest nodes)
       refreshInterval: options.refreshInterval || 60 * 1000, // Base interval - will be adaptive
       aggressiveRefreshInterval: options.aggressiveRefreshInterval || 15 * 1000, // 15s for new/isolated nodes
@@ -117,7 +117,7 @@ export class KademliaDHT extends EventEmitter {
     // Throttling and rate limiting for reducing excessive find_node traffic
     this.lastBucketRefreshTime = 0; // Track last bucket refresh for throttling
     this.findNodeRateLimit = new Map(); // Rate limit find_node requests per peer
-    this.findNodeMinInterval = 1000; // Minimum 1 second between find_node to same peer (reduced from 10s for fast pub-sub)
+    this.findNodeMinInterval = 500; // Minimum 500ms between find_node to same peer (optimized for pub-sub performance)
 
     // Sleep/Wake memory protection - DISABLED
     // NOTE: Global message limit removed - relying on per-peer rate limiting and deduplication instead
