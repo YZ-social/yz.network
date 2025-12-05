@@ -2439,12 +2439,58 @@ export class KademliaDHT extends EventEmitter {
       // Prioritize connected peers (fast path: <100ms response time)
       let candidates = connectedCandidates.slice(0, maxConcurrent);
 
+      // Check if we're at max connections
+      const currentConnections = this.getConnectedPeers().length;
+      const maxConnections = this.transportOptions.maxConnections;
+      const atMaxConnections = currentConnections >= maxConnections;
+
       // Fall back to disconnected peers only if insufficient connected peers
-      // This accepts one extra hop trade-off (20-50ms) to avoid 10s timeout
+      // Industry best practice (IPFS, BitTorrent, Ethereum): connected-peers-first
       if (candidates.length < maxConcurrent && disconnectedCandidates.length > 0) {
-        const needed = maxConcurrent - candidates.length;
-        candidates = candidates.concat(disconnectedCandidates.slice(0, needed));
-        console.log(`🔄 Connected-peers-first: Querying ${connectedCandidates.length} connected + ${Math.min(needed, disconnectedCandidates.length)} disconnected peers`);
+        if (!atMaxConnections) {
+          // Not at max connections - can query disconnected peers normally
+          const needed = maxConcurrent - candidates.length;
+          candidates = candidates.concat(disconnectedCandidates.slice(0, needed));
+          console.log(`🔄 Connected-peers-first: Querying ${connectedCandidates.length} connected + ${Math.min(needed, disconnectedCandidates.length)} disconnected peers`);
+        } else {
+          // At max connections: only use disconnected if we have NO connected candidates
+          if (candidates.length === 0) {
+            console.log(`⚠️ At max connections (${currentConnections}/${maxConnections}) with NO connected candidates - attempting strategic replacement`);
+
+            // Try to free up a slot for a better candidate
+            const bestDisconnected = disconnectedCandidates[0];
+            const pruneSuccess = await this.pruneConnectionForQuery(target, bestDisconnected.id.toString());
+
+            if (pruneSuccess) {
+              const peerId = bestDisconnected.id.toString();
+              console.log(`🔄 Attempting quick connection to ${peerId.substring(0, 8)}... (closer to target)`);
+
+              try {
+                // Quick connection attempt (3 second timeout)
+                const peerNode = this.getOrCreatePeerNode(peerId);
+                const connectionPromise = peerNode.connectionManager.createConnection(peerId, true, peerNode.metadata);
+                const timeoutPromise = new Promise((_, reject) =>
+                  setTimeout(() => reject(new Error('Quick connection timeout')), 3000)
+                );
+
+                await Promise.race([connectionPromise, timeoutPromise]);
+                await new Promise(resolve => setTimeout(resolve, 500)); // Wait for connection
+
+                if (this.isPeerConnected(peerId)) {
+                  console.log(`✅ Quick connection successful - adding ${peerId.substring(0, 8)}...`);
+                  candidates.push(bestDisconnected);
+                } else {
+                  console.warn(`⏰ Quick connection failed - continuing without it`);
+                }
+              } catch (error) {
+                console.warn(`❌ Quick connection failed: ${error.message}`);
+              }
+            }
+          } else {
+            // Have some connected candidates - use only those (accept extra hop)
+            console.log(`⚠️ At max connections (${currentConnections}/${maxConnections}) - using ${candidates.length} connected candidates only (accepting extra hop vs timeout)`);
+          }
+        }
       }
 
       // Termination condition: no more uncontacted candidates to query
