@@ -2440,8 +2440,15 @@ export class KademliaDHT extends EventEmitter {
         console.log(`🔄 Connected-peers-first: Querying ${connectedCandidates.length} connected + ${Math.min(needed, disconnectedCandidates.length)} disconnected peers`);
       }
 
-      if (candidates.length === 0 || activeQueries >= maxConcurrent) {
+      // Termination condition: no more uncontacted candidates to query
+      if (candidates.length === 0) {
         break;
+      }
+
+      // Wait for active queries to finish before starting new batch
+      // This prevents exceeding maxConcurrent and ensures proper iteration
+      while (activeQueries >= maxConcurrent) {
+        await new Promise(resolve => setTimeout(resolve, 50));
       }
 
       // Query candidates in parallel
