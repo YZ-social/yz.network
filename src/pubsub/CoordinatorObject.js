@@ -263,12 +263,13 @@ export class CoordinatorObject {
     const mergedMessageHistory = Array.from(messageHistorySet);
 
     // Take most recent current collections
-    const currentSubscribers = otherCoordinator.version > this.version
-      ? otherCoordinator.currentSubscribers
+    // For equal versions, prefer non-null values to preserve data during concurrent updates
+    const currentSubscribers = otherCoordinator.version >= this.version
+      ? (otherCoordinator.currentSubscribers || this.currentSubscribers)
       : this.currentSubscribers;
 
-    const currentMessages = otherCoordinator.version > this.version
-      ? otherCoordinator.currentMessages
+    const currentMessages = otherCoordinator.version >= this.version
+      ? (otherCoordinator.currentMessages || this.currentMessages)
       : this.currentMessages;
 
     // Link to previous coordinators (prefer most recent)
