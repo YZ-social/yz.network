@@ -670,8 +670,7 @@ class App {
         if (connectionExists) {
           // Connection details handled by DHT internally
           console.log(`🔍 Connection state:`, {
-            connected: isConnected,
-            type: connection instanceof WebSocket ? 'WebSocket' : 'WebRTC'
+            connected: isConnected
           });
         }
 

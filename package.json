@@ -73,8 +73,5 @@
     "decentralized"
   ],
   "author": "YZSocialC Team",
-  "license": "MIT",
-  "optionalDependencies": {
-    "nat-upnp": "^1.1.1"
-  }
+  "license": "MIT"
 }

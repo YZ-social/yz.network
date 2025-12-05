@@ -3,6 +3,13 @@
  *
  * Uses UPnP/NAT-PMP to automatically configure router port forwarding,
  * allowing external peers to connect to local DHT nodes.
+ *
+ * NOTE: nat-upnp is NOT installed by default due to security vulnerabilities.
+ * If you need UPnP functionality, manually install: npm install nat-upnp
+ * Be aware of security risks: https://github.com/advisories/GHSA-fjxv-7rqg-78g4
+ *
+ * COMMUNITY NODES STATUS: ON HOLD due to WSS domain requirement.
+ * See: docs/proposals/community-nodes-proposal.md
  */
 
 import { createRequire } from 'module';

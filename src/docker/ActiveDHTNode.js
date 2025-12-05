@@ -437,48 +437,35 @@ export class ActiveDHTNode extends NodeDHTClient {
    */
   async findNode(targetId) {
     const startTime = Date.now();
-
-    try {
-      const result = await this.dht.findNode(targetId);
-      this.metrics.dhtFindNodes++;
-      this.recordLatency('findNode', Date.now() - startTime);
-      return result;
-    } catch (error) {
-      throw error;
-    }
+    const result = await this.dht.findNode(targetId);
+    this.metrics.dhtFindNodes++;
+    this.recordLatency('findNode', Date.now() - startTime);
+    return result;
   }
 
   /**
    * PubSub publish with metrics
    */
   async publish(topic, data, options) {
-    try {
-      const result = await this.pubsub.publish(topic, data, options);
-      this.metrics.pubsubPublishes++;
-      this.metrics.messagesSent++;
-      return result;
-    } catch (error) {
-      throw error;
-    }
+    const result = await this.pubsub.publish(topic, data, options);
+    this.metrics.pubsubPublishes++;
+    this.metrics.messagesSent++;
+    return result;
   }
 
   /**
    * PubSub subscribe with metrics
    */
   async subscribe(topic, handler, options) {
-    try {
-      const result = await this.pubsub.subscribe(topic, options);
+    const result = await this.pubsub.subscribe(topic, options);
 
-      this.pubsub.on(topic, (message) => {
-        this.metrics.messagesReceived++;
-        if (handler) handler(message);
-      });
+    this.pubsub.on(topic, (message) => {
+      this.metrics.messagesReceived++;
+      if (handler) handler(message);
+    });
 
-      this.metrics.pubsubSubscribes++;
-      return result;
-    } catch (error) {
-      throw error;
-    }
+    this.metrics.pubsubSubscribes++;
+    return result;
   }
 
   /**
