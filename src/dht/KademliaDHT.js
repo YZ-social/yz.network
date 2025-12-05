@@ -2408,8 +2408,11 @@ export class KademliaDHT extends EventEmitter {
     // Iteratively query closer nodes
     let activeQueries = 0;
     const maxConcurrent = this.options.alpha;
+    let iterationCount = 0;
+    const startTime = Date.now();
 
     while (true) {
+      iterationCount++;
       // CONNECTED-PEERS-FIRST STRATEGY: Prioritize active connections over routing table entries
       // Industry best practice (IPFS, BitTorrent, Ethereum): Query connected peers first for fast results
       const allCandidates = Array.from(results)
@@ -2429,6 +2432,10 @@ export class KademliaDHT extends EventEmitter {
         !this.isPeerConnected(node.id.toString())
       );
 
+      if (iterationCount % 5 === 0 || iterationCount <= 3) {
+        console.log(`🔍 findNode iteration ${iterationCount}: ${allCandidates.length} candidates (${connectedCandidates.length} connected, ${disconnectedCandidates.length} disconnected), ${results.size} total results, ${contacted.size} contacted`);
+      }
+
       // Prioritize connected peers (fast path: <100ms response time)
       let candidates = connectedCandidates.slice(0, maxConcurrent);
 
@@ -2442,6 +2449,8 @@ export class KademliaDHT extends EventEmitter {
 
       // Termination condition: no more uncontacted candidates to query
       if (candidates.length === 0) {
+        const elapsed = Date.now() - startTime;
+        console.log(`✅ findNode completed after ${iterationCount} iterations in ${elapsed}ms (contacted ${contacted.size} peers, found ${results.size} results)`);
         break;
       }
 
