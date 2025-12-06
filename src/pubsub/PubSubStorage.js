@@ -64,6 +64,7 @@ export class PubSubStorage {
 
   /**
    * Load coordinator from DHT
+   * Always fetches from network to get the latest version (coordinators are mutable)
    * @param {string} topicID - Topic ID
    * @returns {Promise<CoordinatorObject|null>} - Coordinator or null if not found
    */
@@ -72,7 +73,11 @@ export class PubSubStorage {
     console.log(`🔍 Loading coordinator for topic ${topicID.substring(0, 8)}...`);
 
     try {
-      const data = await this.dht.get(key);
+      // Use getFromNetwork to always fetch latest version from DHT network
+      // Coordinators are mutable data - local cache may be stale
+      const data = typeof this.dht.getFromNetwork === 'function'
+        ? await this.dht.getFromNetwork(key)
+        : await this.dht.get(key);
       if (!data) {
         console.log(`   Coordinator not found for topic ${topicID.substring(0, 8)}...`);
         return null;
@@ -156,6 +161,7 @@ export class PubSubStorage {
 
   /**
    * Load message collection from DHT
+   * Always fetches from network to get the latest version (collections are mutable)
    * @param {string} collectionID - Collection ID
    * @returns {Promise<MessageCollection|null>} - Collection or null if not found
    */
@@ -163,7 +169,11 @@ export class PubSubStorage {
     const key = `msgcoll:${collectionID}`;
 
     try {
-      const data = await this.dht.get(key);
+      // Use getFromNetwork to always fetch latest version from DHT network
+      // Message collections are mutable data - local cache may be stale
+      const data = typeof this.dht.getFromNetwork === 'function'
+        ? await this.dht.getFromNetwork(key)
+        : await this.dht.get(key);
       if (!data) {
         console.log(`   Message collection ${collectionID.substring(0, 8)}... not found`);
         return null;
@@ -206,6 +216,7 @@ export class PubSubStorage {
 
   /**
    * Load subscriber collection from DHT
+   * Always fetches from network to get the latest version (collections are mutable)
    * @param {string} collectionID - Collection ID
    * @returns {Promise<SubscriberCollection|null>} - Collection or null if not found
    */
@@ -213,7 +224,11 @@ export class PubSubStorage {
     const key = `subcoll:${collectionID}`;
 
     try {
-      const data = await this.dht.get(key);
+      // Use getFromNetwork to always fetch latest version from DHT network
+      // Subscriber collections are mutable data - local cache may be stale
+      const data = typeof this.dht.getFromNetwork === 'function'
+        ? await this.dht.getFromNetwork(key)
+        : await this.dht.get(key);
       if (!data) {
         console.log(`   Subscriber collection ${collectionID.substring(0, 8)}... not found`);
         return null;
@@ -330,6 +345,7 @@ export class PubSubStorage {
 
   /**
    * Load coordinator snapshot from DHT
+   * Always fetches from network (snapshots are versioned and shouldn't be locally cached)
    * @param {string} snapshotID - Snapshot ID
    * @returns {Promise<CoordinatorSnapshot|null>} - Snapshot or null if not found
    */
@@ -337,7 +353,10 @@ export class PubSubStorage {
     const key = `snapshot:${snapshotID}`;
 
     try {
-      const data = await this.dht.get(key);
+      // Use getFromNetwork to always fetch from DHT network
+      const data = typeof this.dht.getFromNetwork === 'function'
+        ? await this.dht.getFromNetwork(key)
+        : await this.dht.get(key);
       if (!data) {
         console.log(`   Snapshot ${snapshotID.substring(0, 8)}... not found`);
         return null;

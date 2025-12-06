@@ -2857,7 +2857,8 @@ export class KademliaDHT extends EventEmitter {
   }
 
   /**
-   * Get value from DHT
+   * Get value from DHT (checks local cache first, then network)
+   * For mutable data that may change (like PubSub coordinators), use getFromNetwork()
    */
   async get(key) {
     console.log(`🔍 GET started for key: "${key}"`);
@@ -2869,6 +2870,24 @@ export class KademliaDHT extends EventEmitter {
       return stored.value;
     }
     console.log(`❌ GET: "${key}" not in local storage, searching DHT...`);
+
+    return this._getFromDHT(key);
+  }
+
+  /**
+   * Get value from DHT network, bypassing local cache.
+   * Use this for mutable data like PubSub coordinators that may be updated by other nodes.
+   */
+  async getFromNetwork(key) {
+    console.log(`🔍 GET (network) started for key: "${key}"`);
+    return this._getFromDHT(key);
+  }
+
+  /**
+   * Internal method to search the DHT network for a value
+   */
+  async _getFromDHT(key) {
+    console.log(`🔍 DHT search for key: "${key}"`);
 
     // Search DHT
     const keyId = DHTNodeId.fromString(key);

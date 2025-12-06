@@ -167,12 +167,17 @@ export class MessageDelivery {
 
   /**
    * Load subscriber collection from DHT
+   * Always fetches from network (subscriber collections are mutable)
    * @param {string} collectionID - Collection ID to load
    * @returns {Promise<Object|null>}
    */
   async loadSubscriberCollection(collectionID) {
     try {
-      const collection = await this.dht.get(collectionID);
+      // Use getFromNetwork to always fetch latest version from DHT network
+      // Subscriber collections are mutable data - local cache may be stale
+      const collection = typeof this.dht.getFromNetwork === 'function'
+        ? await this.dht.getFromNetwork(collectionID)
+        : await this.dht.get(collectionID);
       return collection;
     } catch (error) {
       console.error(`Failed to load subscriber collection ${collectionID.substring(0, 8)}...:`, error.message);
