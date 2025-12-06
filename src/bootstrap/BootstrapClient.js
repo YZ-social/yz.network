@@ -160,6 +160,9 @@ export class BootstrapClient extends EventEmitter {
         return;
       }
 
+      // Debug: Log all incoming message types
+      console.log(`📥 [Bootstrap] Received message type: ${message.type}`);
+
       switch (message.type) {
         case 'registered':
           this.isRegistered = true; // Mark as registered when confirmation received
