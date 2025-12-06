@@ -896,7 +896,7 @@ export class KademliaDHT extends EventEmitter {
         const targetMetadata = invitationResult.data.targetPeerMetadata;
 
         // Store metadata in peer node for connection-agnostic access
-        const peerNode = this.getOrCreatePeerNode(clientId, targetMetadata);
+        this.getOrCreatePeerNode(clientId, targetMetadata);
         console.log(`📋 Stored peer metadata for ${clientId.substring(0, 8)}...:`, targetMetadata);
       }
 
@@ -914,15 +914,14 @@ export class KademliaDHT extends EventEmitter {
           const targetMetadata = invitationResult.data.targetPeerMetadata;
           console.log(`🔗 Connecting to invited peer using metadata: ${targetMetadata.nodeType}`);
 
-          // Create connection using per-node connection manager
+          // Store metadata first so connectToPeer can use it
           peerNode = this.getOrCreatePeerNode(clientId, targetMetadata);
           console.log(`🔗 Creating connection to invited peer using ${targetMetadata.nodeType || 'browser'} transport`);
 
-          // Check if connection already exists (race condition handling)
-          if (this.isPeerConnected(clientId)) {
-            console.log(`🔄 Connection to ${clientId} already exists, using existing connection`);
-          } else {
-            await peerNode.connectionManager.createConnection(clientId, true, peerNode.metadata);
+          // Use connectToPeer() which respects max connections via shouldConnectToPeer()
+          const connected = await this.connectToPeer(clientId);
+          if (!connected) {
+            console.log(`⚠️ Could not connect to invited peer ${clientId.substring(0, 8)}... (max connections or already connected)`);
           }
         } else {
           console.log(`📤 Invitation sent - waiting for peer to connect (no metadata available)`);
@@ -1225,27 +1224,21 @@ export class KademliaDHT extends EventEmitter {
   }
 
   /**
-   * Handle WebRTC start offer message from bootstrap server
+   * Handle start offer message from bootstrap server (connection-agnostic)
    */
   async handleWebRTCStartOffer(message) {
     const { targetPeer, invitationId } = message;
-    console.log(`🚀 Bootstrap server requesting WebRTC offer to ${targetPeer.substring(0, 8)}... (invitation: ${invitationId})`);
+    console.log(`🚀 Bootstrap server requesting connection to ${targetPeer.substring(0, 8)}... (invitation: ${invitationId})`);
 
-    try {
-      // Get the peer connection manager
-      const peerNode = this.getOrCreatePeerNode(targetPeer, { nodeType: 'browser' });
+    // Store metadata first so connectToPeer can use it
+    this.getOrCreatePeerNode(targetPeer, { nodeType: 'browser' });
 
-      if (peerNode && peerNode.connectionManager) {
-        // Create WebRTC offer through the connection manager
-        console.log(`📤 Creating WebRTC offer for ${targetPeer.substring(0, 8)}...`);
-        await peerNode.connectionManager.createConnection(targetPeer, true, peerNode.metadata); // true = initiator
-        console.log(`✅ WebRTC offer creation initiated for ${targetPeer.substring(0, 8)}...`);
-      } else {
-        console.error(`❌ No connection manager available for ${targetPeer.substring(0, 8)}...`);
-      }
-
-    } catch (error) {
-      console.error(`❌ Failed to create WebRTC offer for ${targetPeer}:`, error);
+    // Use connectToPeer() which respects max connections via shouldConnectToPeer()
+    const connected = await this.connectToPeer(targetPeer);
+    if (connected) {
+      console.log(`✅ Connection initiated for ${targetPeer.substring(0, 8)}...`);
+    } else {
+      console.log(`⚠️ Could not connect to ${targetPeer.substring(0, 8)}... (max connections or already connected)`);
     }
   }
 
@@ -1301,22 +1294,15 @@ export class KademliaDHT extends EventEmitter {
       console.log(`   Listening address: ${targetPeerMetadata.listeningAddress}`);
       console.log(`   Node type: ${targetPeerMetadata.nodeType}`);
 
-      try {
-        // Create peer node with the received metadata
-        const peerNode = this.getOrCreatePeerNode(targetPeer, targetPeerMetadata);
+      // Store metadata first so connectToPeer can use it
+      this.getOrCreatePeerNode(targetPeer, targetPeerMetadata);
 
-        // Initiate WebSocket connection using Perfect Negotiation
-        if (peerNode && peerNode.connectionManager) {
-          console.log(`🔗 Creating WebSocket connection to ${targetPeer.substring(0, 8)}...`);
-          // CRITICAL: Pass metadata so connection manager can use publicWssAddress for browsers
-          await peerNode.connectionManager.createConnection(targetPeer, true, peerNode.metadata);
-          console.log(`✅ WebSocket connection initiated to ${targetPeer.substring(0, 8)}...`);
-        } else {
-          console.error(`❌ No connection manager available for ${targetPeer.substring(0, 8)}...`);
-        }
-
-      } catch (error) {
-        console.error(`❌ Failed to connect to ${targetPeer}:`, error);
+      // Use connectToPeer() which respects max connections via shouldConnectToPeer()
+      const connected = await this.connectToPeer(targetPeer);
+      if (connected) {
+        console.log(`✅ WebSocket connection initiated to ${targetPeer.substring(0, 8)}...`);
+      } else {
+        console.log(`⚠️ Could not connect to ${targetPeer.substring(0, 8)}... (max connections or already connected)`);
       }
     }
 
@@ -1327,14 +1313,15 @@ export class KademliaDHT extends EventEmitter {
       console.log(`   Public WSS address: ${fromPeerMetadata.publicWssAddress || 'not set'}`);
       console.log(`   Node type: ${fromPeerMetadata.nodeType}`);
 
-      // Create peer node and let connection manager handle invitation logic
-      const peerNode = this.getOrCreatePeerNode(fromPeer, fromPeerMetadata);
+      // Store metadata first so connectToPeer can use it
+      this.getOrCreatePeerNode(fromPeer, fromPeerMetadata);
 
-      // Connection-agnostic: delegate to connection manager
-      if (peerNode.connectionManager) {
-        await peerNode.connectionManager.handleInvitation(fromPeer, fromPeerMetadata);
+      // Use connectToPeer() which respects max connections via shouldConnectToPeer()
+      const connected = await this.connectToPeer(fromPeer);
+      if (connected) {
+        console.log(`✅ Connected to inviter ${fromPeer.substring(0, 8)}...`);
       } else {
-        console.warn(`⚠️ No connection manager for peer ${fromPeer.substring(0, 8)}...`);
+        console.log(`⚠️ Could not connect to inviter ${fromPeer.substring(0, 8)}... (max connections or already connected)`);
       }
     }
   }
@@ -2195,7 +2182,7 @@ export class KademliaDHT extends EventEmitter {
   }
 
   /**
-   * Initiate the actual WebRTC connection to a peer
+   * Initiate the actual connection to a peer (connection-agnostic)
    */
   async initiateDirectedConnection(targetPeerId, retryCount = 0) {
     const maxRetries = 2;
@@ -2204,11 +2191,13 @@ export class KademliaDHT extends EventEmitter {
       // Send join request through bootstrap
       await this.bootstrap.joinPeer(targetPeerId);
 
-      // Create connection using appropriate transport
+      // Use connectToPeer() which respects max connections via shouldConnectToPeer()
       console.log(`Creating directed connection to ${targetPeerId} (attempt ${retryCount + 1}/${maxRetries + 1})`);
-      const peerNode = this.getOrCreatePeerNode(targetPeerId);
-      // CRITICAL: Pass metadata from routing table node so connection manager has connection info
-      await peerNode.connectionManager.createConnection(targetPeerId, true, peerNode.metadata);
+      const connected = await this.connectToPeer(targetPeerId);
+      if (!connected) {
+        console.log(`⚠️ Could not connect to ${targetPeerId} (max connections or already connected)`);
+        return false;
+      }
 
       // Wait a bit for connection to establish
       await new Promise(resolve => setTimeout(resolve, 5000));
@@ -2906,10 +2895,12 @@ export class KademliaDHT extends EventEmitter {
               }
             }
 
-            // Now connect to the query node
-            const peerNode = this.getOrCreatePeerNode(peerId);
-            // CRITICAL: Pass metadata from routing table node so connection manager has connection info
-            await peerNode.connectionManager.createConnection(peerId, true, peerNode.metadata);
+            // Now connect to the query node using connectToPeer() for max connection enforcement
+            const connected = await this.connectToPeer(peerId);
+            if (!connected) {
+              console.warn(`⚠️ GET: Could not connect to ${peerId.substring(0, 8)}... (max connections or already connected)`);
+              continue; // Skip to next node
+            }
 
             // Give connection a moment to establish
             await new Promise(resolve => setTimeout(resolve, 100));
@@ -4221,11 +4212,10 @@ export class KademliaDHT extends EventEmitter {
         continue;
       }
 
-      try {
-        console.log(`🤝 Attempting to connect to discovered peer: ${peerId}`);
-        await this.connectToPeerViaDHT(peerId);
-      } catch (error) {
-        console.warn(`❌ Failed to connect to discovered peer ${peerId}:`, error.message);
+      console.log(`🤝 Attempting to connect to discovered peer: ${peerId}`);
+      const connected = await this.connectToPeer(peerId);
+      if (!connected) {
+        console.log(`⚠️ Could not connect to discovered peer ${peerId} (max connections or already connected)`);
       }
     }
 
@@ -4269,13 +4259,10 @@ export class KademliaDHT extends EventEmitter {
 
           await Promise.allSettled(
             batch.map(async (peerId) => {
-              try {
-                if (!this.isPeerConnected(peerId)) {
-                  console.log(`🔗 Connecting to queued peer: ${peerId.substring(0, 8)}...`);
-                  await this.connectToPeerViaDHT(peerId);
-                }
-              } catch (error) {
-                console.warn(`⚠️ Queued connection failed for ${peerId.substring(0, 8)}...: ${error.message}`);
+              console.log(`🔗 Connecting to queued peer: ${peerId.substring(0, 8)}...`);
+              const connected = await this.connectToPeer(peerId);
+              if (!connected) {
+                console.log(`⚠️ Could not connect to queued peer ${peerId.substring(0, 8)}... (max connections or already connected)`);
               }
             })
           );
@@ -4322,18 +4309,16 @@ export class KademliaDHT extends EventEmitter {
           continue;
         }
 
-        try {
-          // Check if we should connect (respects connection limits)
-          if (!this.isPeerConnected(peerId) && await this.shouldConnectToPeer(peerId)) {
-            console.log(`🔗 Attempting connection to routing table entry: ${peerId.substring(0, 8)}... (${failures} previous failures)`);
-            await this.connectToPeerViaDHT(peerId);
-            // Success - reset failure count
-            this.connectionFailureCount.delete(peerId);
-          }
-        } catch (error) {
+        // Use connectToPeer() which includes max connection checks
+        console.log(`🔗 Attempting connection to routing table entry: ${peerId.substring(0, 8)}... (${failures} previous failures)`);
+        const connected = await this.connectToPeer(peerId);
+        if (connected) {
+          // Success - reset failure count
+          this.connectionFailureCount.delete(peerId);
+        } else {
           // Track failure
           this.connectionFailureCount.set(peerId, failures + 1);
-          console.warn(`⚠️ Connection attempt ${failures + 1}/3 failed for ${peerId.substring(0, 8)}...: ${error.message}`);
+          console.warn(`⚠️ Connection attempt ${failures + 1}/3 failed for ${peerId.substring(0, 8)}...`);
         }
       }
     } catch (error) {
@@ -4473,9 +4458,12 @@ export class KademliaDHT extends EventEmitter {
           console.log(`❌ Failed to connect to discovered peer ${peerId} via invitation`);
         }
       } else {
-        console.log(`🌐 Using DHT-based ICE candidate sharing to connect to discovered peer: ${peerId}`);
-        // For DHT-based connections, use stored ICE candidates from DHT
-        await this.connectToPeerViaDHT(peerId);
+        console.log(`🌐 Using DHT-based connection to discovered peer: ${peerId}`);
+        // Use connectToPeer() which respects max connections
+        const connected = await this.connectToPeer(peerId);
+        if (!connected) {
+          console.log(`⚠️ Could not connect to discovered peer ${peerId} (max connections or already connected)`);
+        }
       }
     } catch (error) {
       console.warn(`Failed to connect to discovered peer ${peerId}:`, error);
@@ -5210,14 +5198,11 @@ export class KademliaDHT extends EventEmitter {
     }
 
     if (shouldConnect && !this.isPeerConnected(fromPeer)) {
-      // Initiate connection using connection-agnostic approach
+      // Initiate connection using connectToPeer() for max connection enforcement
       console.log(`🤝 Initiating connection to discovered peer: ${fromPeer}`);
-      try {
-        const peerNode = this.getOrCreatePeerNode(fromPeer);
-        // CRITICAL: Pass metadata from routing table node so connection manager has connection info
-        await peerNode.connectionManager.createConnection(fromPeer, true, peerNode.metadata);
-      } catch (error) {
-        console.warn(`Failed to initiate connection to ${fromPeer}:`, error);
+      const connected = await this.connectToPeer(fromPeer);
+      if (!connected) {
+        console.warn(`⚠️ Could not connect to discovered peer ${fromPeer} (max connections or already connected)`);
       }
     }
   }
@@ -5282,31 +5267,25 @@ export class KademliaDHT extends EventEmitter {
     if (message.nodeType === 'nodejs' && message.listeningAddress) {
       // Another Node.js client is asking us to connect to their WebSocket server
       try {
-        if (typeof process === 'undefined') {
-          // Use connection-agnostic approach to connect to peer
-          console.log(`🔗 Connecting to peer server: ${message.listeningAddress}`);
-          const peerNode = this.getOrCreatePeerNode(message.senderPeer, {
-            listeningAddress: message.listeningAddress
-          });
-          // CRITICAL: Pass metadata from routing table node so connection manager has connection info
-          await peerNode.connectionManager.createConnection(message.senderPeer, true, peerNode.metadata);
+        // Store metadata first so connectToPeer can use it
+        console.log(`🔗 Connecting to peer server: ${message.listeningAddress}`);
+        this.getOrCreatePeerNode(message.senderPeer, {
+          listeningAddress: message.listeningAddress
+        });
 
+        // Use connectToPeer() which respects max connections
+        const connected = await this.connectToPeer(message.senderPeer);
+        if (connected) {
           // Send success response
           await this.sendWebSocketConnectionResponse(message.senderPeer, {
             success: true
           });
         } else {
-          // Use connection-agnostic approach to connect to peer
-          console.log(`🔗 Connecting to peer server: ${message.listeningAddress}`);
-          const peerNode = this.getOrCreatePeerNode(message.senderPeer, {
-            listeningAddress: message.listeningAddress
-          });
-          // CRITICAL: Pass metadata from routing table node so connection manager has connection info
-          await peerNode.connectionManager.createConnection(message.senderPeer, true, peerNode.metadata);
-
-          // Send success response
+          // Send failure response for max connections
           await this.sendWebSocketConnectionResponse(message.senderPeer, {
-            success: true
+            success: false,
+            error: 'Max connections reached or already connected',
+            nodeType: typeof process === 'undefined' ? 'browser' : 'nodejs'
           });
         }
 
