@@ -188,7 +188,7 @@ webserver:
 
 ### Worker Connections
 
-The nginx configuration (`nginx-ssl.conf`) includes an events block for high WebSocket load:
+The main nginx configuration (`nginx-main.conf`) includes an events block for high WebSocket load. This file is mounted to `/etc/nginx/nginx.conf` in the container:
 ```nginx
 events {
     worker_connections 65536;
@@ -203,6 +203,8 @@ events {
 - `worker_connections 65536`: Maximum simultaneous connections per worker
 - `use epoll`: Efficient event processing for Linux
 - `multi_accept on`: Accept multiple connections at once
+
+**Note**: The events block must be in the main nginx.conf, not in server config files. That's why we use a separate `nginx-main.conf` file mounted to `/etc/nginx/nginx.conf`.
 
 ---
 
