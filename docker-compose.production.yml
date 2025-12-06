@@ -188,6 +188,11 @@ services:
     restart: unless-stopped
     depends_on:
       - bootstrap
+    # Increase file descriptor limits to prevent "No file descriptors available" errors
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "https://localhost/"]
       interval: 30s
