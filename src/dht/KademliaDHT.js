@@ -1313,15 +1313,20 @@ export class KademliaDHT extends EventEmitter {
       console.log(`   Public WSS address: ${fromPeerMetadata.publicWssAddress || 'not set'}`);
       console.log(`   Node type: ${fromPeerMetadata.nodeType}`);
 
-      // Store metadata first so connectToPeer can use it
-      this.getOrCreatePeerNode(fromPeer, fromPeerMetadata);
+      // Check max connections before proceeding
+      if (!(await this.shouldConnectToPeer(fromPeer))) {
+        console.log(`⚠️ Skipping invitation from ${fromPeer.substring(0, 8)}... (max connections or already connected)`);
+        return;
+      }
 
-      // Use connectToPeer() which respects max connections via shouldConnectToPeer()
-      const connected = await this.connectToPeer(fromPeer);
-      if (connected) {
-        console.log(`✅ Connected to inviter ${fromPeer.substring(0, 8)}...`);
+      // Create peer node and let connection manager handle invitation logic
+      // CRITICAL: handleInvitation() has special browser/nodejs connection initiation logic
+      const peerNode = this.getOrCreatePeerNode(fromPeer, fromPeerMetadata);
+
+      if (peerNode.connectionManager) {
+        await peerNode.connectionManager.handleInvitation(fromPeer, fromPeerMetadata);
       } else {
-        console.log(`⚠️ Could not connect to inviter ${fromPeer.substring(0, 8)}... (max connections or already connected)`);
+        console.warn(`⚠️ No connection manager for peer ${fromPeer.substring(0, 8)}...`);
       }
     }
   }
