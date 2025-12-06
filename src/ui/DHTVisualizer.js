@@ -1354,6 +1354,15 @@ export class DHTVisualizer {
       return;
     }
 
+    const btn = this.elements.createChannelBtn;
+    if (!btn) return;
+
+    // Disable button and show loading state
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Creating...';
+    btn.classList.add('loading');
+
     try {
       // Generate a unique channel ID (use crypto for better randomness)
       const channelId = `channel-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
@@ -1391,6 +1400,11 @@ export class DHTVisualizer {
 
     } catch (error) {
       this.log(`Failed to create channel: ${error.message}`, 'error');
+    } finally {
+      // Restore button state
+      btn.disabled = false;
+      btn.textContent = originalText;
+      btn.classList.remove('loading');
     }
   }
 
