@@ -186,6 +186,24 @@ webserver:
 
 **Why this matters**: Without sufficient file descriptors, nginx will fail with "No file descriptors available" errors under high connection load, causing the site to become unreachable.
 
+### Worker Connections
+
+The nginx configuration (`nginx-ssl.conf`) includes an events block for high WebSocket load:
+```nginx
+events {
+    worker_connections 65536;
+    use epoll;
+    multi_accept on;
+}
+```
+
+**Why this matters**: The default nginx worker_connections (1024) is too low for WebSocket-heavy applications. When exhausted, nginx logs "1024 worker_connections are not enough" and connections fail with ERR_CONNECTION_RESET.
+
+**Settings explained**:
+- `worker_connections 65536`: Maximum simultaneous connections per worker
+- `use epoll`: Efficient event processing for Linux
+- `multi_accept on`: Accept multiple connections at once
+
 ---
 
 ## 📈 Scaling
