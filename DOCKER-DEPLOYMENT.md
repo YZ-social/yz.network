@@ -172,6 +172,20 @@ deploy:
       memory: 64M       # Optimized: Reserved RAM (reduced from 128M)
 ```
 
+### File Descriptor Limits (ulimits)
+
+The nginx webserver requires increased file descriptor limits to handle many concurrent WebSocket connections. The production docker-compose file includes:
+```yaml
+webserver:
+  image: nginx:alpine
+  ulimits:
+    nofile:
+      soft: 65536
+      hard: 65536
+```
+
+**Why this matters**: Without sufficient file descriptors, nginx will fail with "No file descriptors available" errors under high connection load, causing the site to become unreachable.
+
 ---
 
 ## 📈 Scaling
@@ -372,6 +386,35 @@ curl http://localhost:3001/api/metrics | jq '.aggregate.avgConnectionsPerNode'
 # Should be 15-25 connections per node
 # If too low: nodes are isolated
 # If too high: network congestion
+```
+
+### Webserver "No File Descriptors Available" Error
+
+**Symptoms:**
+- Site becomes unreachable (ERR_TIMED_OUT)
+- Webserver container shows "unhealthy"
+- Logs show: `accept4() failed (24: No file descriptors available)`
+
+**Cause:** Too many open connections exhausted the default file descriptor limit.
+
+**Solution:**
+Add `ulimits` to the webserver service in `docker-compose.production.yml`:
+```yaml
+webserver:
+  image: nginx:alpine
+  ulimits:
+    nofile:
+      soft: 65536
+      hard: 65536
+```
+
+**Quick Fix (if already running):**
+```bash
+# Restart the webserver container
+docker restart yz-webserver
+
+# Or restart all services
+cd ~/yz.network && bash DockerServerDown.sh && bash DockerServerUp.sh
 ```
 
 ### Dashboard Not Showing Nodes
