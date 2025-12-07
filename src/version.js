@@ -83,8 +83,14 @@ export function checkVersionCompatibility(clientProtocolVersion, clientBuildId, 
     };
   }
 
-  // Check build ID - must match exactly (forces refresh on server restart/redeploy)
-  if (serverBuildId && clientBuildId !== serverBuildId) {
+  // Check build ID - must match exactly for browser clients (forces refresh on server restart/redeploy)
+  // Node.js clients (bridge nodes, etc.) are exempt from BUILD_ID checking since they restart with containers
+  const isNodeClient = clientBuildId && clientBuildId.startsWith('node_');
+  const isNodeServer = serverBuildId && serverBuildId.startsWith('node_');
+
+  // Only enforce BUILD_ID match for browser clients connecting to production
+  // Node.js internal components use node_ prefix and should only check protocol version
+  if (serverBuildId && clientBuildId !== serverBuildId && !isNodeClient) {
     return {
       compatible: false,
       message: `Server has been restarted. Please refresh your browser to reconnect with the new deployment.`
