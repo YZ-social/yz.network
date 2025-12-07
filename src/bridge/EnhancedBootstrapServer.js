@@ -1131,13 +1131,41 @@ export class EnhancedBootstrapServer extends EventEmitter {
       }
 
       // Forward invitation to target peer
-      targetClient.ws.send(JSON.stringify({
-        type: 'invitation_received',
-        fromPeer: inviterNodeId,
-        invitationToken,
-        websocketCoordination,
-        message: 'You have been invited to join the DHT network'
-      }));
+      // Debug: Check WebSocket state before sending
+      const wsState = targetClient.ws.readyState;
+      const wsStateNames = ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'];
+      console.log(`📡 Target WebSocket state: ${wsStateNames[wsState]} (${wsState}) for ${targetPeerId.substring(0, 8)}...`);
+
+      if (wsState !== 1) { // 1 = OPEN
+        console.error(`❌ Cannot send invitation - WebSocket not OPEN (state: ${wsStateNames[wsState]})`);
+        ws.send(JSON.stringify({
+          type: 'response',
+          requestId: message.requestId,
+          success: false,
+          error: `Target peer WebSocket not open (state: ${wsStateNames[wsState]})`
+        }));
+        return;
+      }
+
+      try {
+        targetClient.ws.send(JSON.stringify({
+          type: 'invitation_received',
+          fromPeer: inviterNodeId,
+          invitationToken,
+          websocketCoordination,
+          message: 'You have been invited to join the DHT network'
+        }));
+        console.log(`📨 invitation_received message sent successfully to ${targetPeerId.substring(0, 8)}...`);
+      } catch (sendError) {
+        console.error(`❌ Error sending invitation to ${targetPeerId.substring(0, 8)}...:`, sendError);
+        ws.send(JSON.stringify({
+          type: 'response',
+          requestId: message.requestId,
+          success: false,
+          error: `Failed to send invitation: ${sendError.message}`
+        }));
+        return;
+      }
 
       // Send success response to inviter
       ws.send(JSON.stringify({
