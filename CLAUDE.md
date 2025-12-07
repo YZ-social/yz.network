@@ -159,6 +159,58 @@ YZSocialC implements a robust cryptographic identity system for secure peer iden
 - Tab-specific identities are for **testing only** - production should use shared identity
 - No server-side credential storage - authentication is challenge/response only
 
+### Protocol Version Checking
+
+**Overview:**
+Ensures all clients are running compatible code versions to prevent network disruption from outdated clients. When the server is updated, old clients must refresh their browser to continue.
+
+**Version Components:**
+- **PROTOCOL_VERSION**: Semantic version (e.g., "1.0.0") for protocol compatibility
+  - Manually increment when making breaking protocol changes
+  - Allows backwards compatibility within major.minor versions (patch differences OK)
+- **BUILD_ID**: Unique identifier generated at build/startup time
+  - Automatically changes with each deployment/restart
+  - Forces all clients to refresh after server restart/redeploy
+
+**How It Works:**
+1. **Build Time**: Webpack injects `BUILD_ID` into browser bundle via DefinePlugin
+2. **Registration**: Client sends `protocolVersion` and `buildId` in register message
+3. **Validation**: Bootstrap server checks both values:
+   - Protocol version must be compatible (major.minor match)
+   - Build ID must match server's BUILD_ID exactly
+4. **Rejection**: On mismatch, server sends `version_mismatch` message with refresh instruction
+5. **Refresh**: User refreshes browser → new bundle with matching BUILD_ID is loaded
+6. **Connection**: Reconnection succeeds with matching versions
+
+**Version Mismatch Response:**
+```json
+{
+  "type": "version_mismatch",
+  "clientVersion": "1.0.0",
+  "clientBuildId": "build_1765000000000",
+  "serverVersion": "1.0.0",
+  "serverBuildId": "build_1765001000000",
+  "message": "Server has been restarted. Please refresh your browser to reconnect."
+}
+```
+
+**Implementation Files:**
+- `src/version.js` - Version constants and compatibility checking
+- `src/bootstrap/BootstrapClient.js` - Sends version in registration
+- `src/bridge/EnhancedBootstrapServer.js` - Validates version on registration
+- `webpack.config.js` - Injects BUILD_ID at build time via DefinePlugin
+
+**Node.js Clients:**
+- Node.js clients (DHT nodes, bridge nodes) generate BUILD_ID at module load time
+- Each restart generates a new BUILD_ID
+- All containers in same deployment should use same Docker image (same BUILD_ID)
+
+**When to Increment PROTOCOL_VERSION:**
+- Breaking changes to message formats
+- New required message types
+- Changes to authentication flow
+- Any change that would cause older clients to malfunction
+
 ### Open Network Mode
 
 **Overview:**
@@ -634,6 +686,16 @@ await YZSocialC.deleteIdentity() // Delete identity (requires page reload)
 // Check if tab-specific identity is enabled
 console.log('Tab identity enabled:', YZSocialC.dht.identityStore.useTabIdentity)
 console.log('Storage key:', YZSocialC.dht.identityStore.storageKey)
+
+// Protocol Version Info (NEW)
+import { PROTOCOL_VERSION, BUILD_ID } from './version.js'
+console.log('Protocol version:', PROTOCOL_VERSION) // e.g., "1.0.0"
+console.log('Build ID:', BUILD_ID) // e.g., "build_1765000000000"
+// Listen for version mismatch events
+YZSocialC.dht.bootstrap.on('versionMismatch', (info) => {
+  console.error('Version mismatch:', info.message);
+  alert('Please refresh your browser to get the latest version.');
+});
 
 // DHT Signaling Control
 YZSocialC.getSignalingMode() // Check current signaling mode

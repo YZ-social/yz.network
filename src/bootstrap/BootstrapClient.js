@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events';
+import { PROTOCOL_VERSION, BUILD_ID } from '../version.js';
 
 // Polyfill WebSocket for Node.js environment
 let WebSocketImpl;
@@ -79,10 +80,12 @@ export class BootstrapClient extends EventEmitter {
           // Small delay to ensure WebSocket is fully ready
           setTimeout(() => {
             try {
-              // Register with server (include metadata like public key)
+              // Register with server (include metadata like public key, protocol version, and build ID)
               this.sendMessage({
                 type: 'register',
                 nodeId: this.localNodeId,
+                protocolVersion: PROTOCOL_VERSION,
+                buildId: BUILD_ID,
                 timestamp: Date.now(),
                 metadata: this.metadata || {}
               });
@@ -211,6 +214,19 @@ export class BootstrapClient extends EventEmitter {
         case 'error':
           console.error('Bootstrap server error:', message.error);
           this.emit('error', new Error(message.error));
+          break;
+
+        case 'version_mismatch':
+          console.error(`❌ Protocol version mismatch: ${message.message}`);
+          console.error(`   Your version: ${message.clientVersion}, Server version: ${message.serverVersion}`);
+          console.error(`   Please refresh your browser to get the latest version.`);
+          this.emit('versionMismatch', {
+            clientVersion: message.clientVersion,
+            serverVersion: message.serverVersion,
+            message: message.message
+          });
+          // Close connection - we can't continue with mismatched versions
+          this.ws?.close(4001, 'Version mismatch');
           break;
 
         case 'peer_available':

@@ -302,6 +302,16 @@ export class DHTVisualizer {
       this.dht.bootstrap.on('disconnected', () => {
         this.log('Disconnected from bootstrap server', 'warn');
       });
+
+      // Version mismatch handler - show prominent notification to refresh browser
+      this.dht.bootstrap.removeAllListeners('versionMismatch');
+      this.dht.bootstrap.on('versionMismatch', ({ clientVersion, serverVersion, message }) => {
+        console.error('❌ Version mismatch detected:', { clientVersion, serverVersion, message });
+        this.log(`⚠️ VERSION MISMATCH: ${message}`, 'error');
+
+        // Show a prominent notification to the user
+        this.showVersionMismatchAlert(message);
+      });
     }
 
     if (this.dht.connectionManager) {
@@ -868,6 +878,78 @@ export class DHTVisualizer {
 
     // Also log to console
     console.log(`[DHT UI] ${message}`);
+  }
+
+  /**
+   * Show a prominent version mismatch alert to the user
+   * This creates a modal overlay prompting them to refresh
+   */
+  showVersionMismatchAlert(message) {
+    // Remove any existing alert
+    const existingAlert = document.getElementById('version-mismatch-alert');
+    if (existingAlert) {
+      existingAlert.remove();
+    }
+
+    // Create modal overlay
+    const overlay = document.createElement('div');
+    overlay.id = 'version-mismatch-alert';
+    overlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10000;
+    `;
+
+    // Create alert box
+    const alertBox = document.createElement('div');
+    alertBox.style.cssText = `
+      background: #1a1a2e;
+      border: 2px solid #ff6b6b;
+      border-radius: 12px;
+      padding: 30px;
+      max-width: 450px;
+      text-align: center;
+      box-shadow: 0 4px 20px rgba(255, 107, 107, 0.3);
+    `;
+
+    alertBox.innerHTML = `
+      <h2 style="color: #ff6b6b; margin: 0 0 15px 0; font-size: 24px;">Update Required</h2>
+      <p style="color: #e0e0e0; margin: 0 0 20px 0; font-size: 16px; line-height: 1.5;">${message}</p>
+      <button id="refresh-btn" style="
+        background: #4CAF50;
+        color: white;
+        border: none;
+        padding: 12px 30px;
+        font-size: 16px;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: background 0.3s;
+      ">Refresh Now</button>
+    `;
+
+    overlay.appendChild(alertBox);
+    document.body.appendChild(overlay);
+
+    // Add click handler for refresh button
+    document.getElementById('refresh-btn').addEventListener('click', () => {
+      window.location.reload(true); // Force reload from server
+    });
+
+    // Add hover effect
+    const btn = document.getElementById('refresh-btn');
+    btn.addEventListener('mouseover', () => {
+      btn.style.background = '#45a049';
+    });
+    btn.addEventListener('mouseout', () => {
+      btn.style.background = '#4CAF50';
+    });
   }
 
   /**

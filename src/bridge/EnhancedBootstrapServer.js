@@ -5,6 +5,7 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { PROTOCOL_VERSION, BUILD_ID, checkVersionCompatibility } from '../version.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1266,10 +1267,28 @@ export class EnhancedBootstrapServer extends EventEmitter {
    * Handle client registration (new peers or reconnecting peers)
    */
   async handleClientRegistration(ws, message) {
-    const { nodeId, metadata, membershipToken } = message;
+    const { nodeId, metadata, membershipToken, protocolVersion, buildId } = message;
 
     if (!nodeId) {
       ws.close(1002, 'Missing nodeId');
+      return;
+    }
+
+    // Check protocol version compatibility FIRST before any other processing
+    const versionCheck = checkVersionCompatibility(protocolVersion, buildId, BUILD_ID);
+    if (!versionCheck.compatible) {
+      console.log(`❌ Version mismatch for ${nodeId?.substring(0, 8)}...: ${versionCheck.message}`);
+      console.log(`   Client: protocol=${protocolVersion}, build=${buildId}`);
+      console.log(`   Server: protocol=${PROTOCOL_VERSION}, build=${BUILD_ID}`);
+      ws.send(JSON.stringify({
+        type: 'version_mismatch',
+        clientVersion: protocolVersion,
+        clientBuildId: buildId,
+        serverVersion: PROTOCOL_VERSION,
+        serverBuildId: BUILD_ID,
+        message: versionCheck.message
+      }));
+      ws.close(4001, 'Version mismatch');
       return;
     }
 
