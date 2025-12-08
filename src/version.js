@@ -59,24 +59,26 @@ if (typeof document !== 'undefined') {
   if (BUILD_ID_VALUE === 'initializing') {
     BUILD_ID_VALUE = 'unknown_browser';
   }
-} else {
+} else if (typeof process !== 'undefined' && process.versions && process.versions.node) {
   // Node.js: Read hash from bundle-hash.json (written by webpack)
+  // Use dynamic import to avoid bundling issues
   try {
-    const fs = require('fs');
-    const path = require('path');
-    const hashFilePath = path.join(process.cwd(), 'dist', 'bundle-hash.json');
-    if (fs.existsSync(hashFilePath)) {
-      const data = JSON.parse(fs.readFileSync(hashFilePath, 'utf-8'));
+    const fs = await import('fs');
+    const path = await import('path');
+    const hashFilePath = path.default.join(process.cwd(), 'dist', 'bundle-hash.json');
+    console.log(`🔍 Looking for bundle-hash.json at: ${hashFilePath}`);
+    if (fs.default.existsSync(hashFilePath)) {
+      const data = JSON.parse(fs.default.readFileSync(hashFilePath, 'utf-8'));
       BUILD_ID_VALUE = data.hash;
       console.log(`📦 Loaded bundle hash from dist/bundle-hash.json: ${BUILD_ID_VALUE}`);
     } else {
       // No hash file - server started before build or build not run
       BUILD_ID_VALUE = `node_${Date.now()}`;
-      console.log(`⚠️ No bundle-hash.json found, using fallback BUILD_ID: ${BUILD_ID_VALUE}`);
+      console.log(`⚠️ No bundle-hash.json found at ${hashFilePath}, using fallback BUILD_ID: ${BUILD_ID_VALUE}`);
     }
   } catch (e) {
     BUILD_ID_VALUE = `node_${Date.now()}`;
-    console.log(`⚠️ Error reading bundle-hash.json, using fallback BUILD_ID: ${BUILD_ID_VALUE}`);
+    console.log(`⚠️ Error reading bundle-hash.json: ${e.message}, using fallback BUILD_ID: ${BUILD_ID_VALUE}`);
   }
 }
 
