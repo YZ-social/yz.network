@@ -83,14 +83,26 @@ export function checkVersionCompatibility(clientProtocolVersion, clientBuildId, 
     };
   }
 
-  // Check build ID - must match exactly for browser clients (forces refresh on server restart/redeploy)
-  // Node.js clients (bridge nodes, etc.) are exempt from BUILD_ID checking since they restart with containers
+  // BUILD_ID checking is DISABLED for browser↔server communication
+  //
+  // Why: Browser BUILD_ID (build_XXXX from webpack) and server BUILD_ID (node_XXXX from Node.js)
+  // are generated at different times and will NEVER match. This is by design since:
+  // 1. Webpack builds bundle.js with content hash (e.g., bundle.2e0c7630.js)
+  // 2. Content hash changes force browser to fetch new bundle
+  // 3. Node.js server generates node_XXXX at startup
+  //
+  // Browser cache busting is already handled by webpack's contenthash in the bundle filename.
+  // Protocol version checking (above) is sufficient for compatibility.
+  //
+  // BUILD_ID checking only makes sense for Node.js↔Node.js communication where
+  // both sides would have node_ prefix BUILD_IDs from the same deployment.
   const isNodeClient = clientBuildId && clientBuildId.startsWith('node_');
+  const isBrowserClient = clientBuildId && clientBuildId.startsWith('build_');
   const isNodeServer = serverBuildId && serverBuildId.startsWith('node_');
 
-  // Only enforce BUILD_ID match for browser clients connecting to production
-  // Node.js internal components use node_ prefix and should only check protocol version
-  if (serverBuildId && clientBuildId !== serverBuildId && !isNodeClient) {
+  // Only enforce BUILD_ID match for Node.js↔Node.js internal communication
+  // Browser clients are exempt since webpack contenthash handles cache busting
+  if (serverBuildId && clientBuildId !== serverBuildId && !isNodeClient && !isBrowserClient) {
     return {
       compatible: false,
       message: `Server has been restarted. Please refresh your browser to reconnect with the new deployment.`
