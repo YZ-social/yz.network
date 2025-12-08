@@ -1742,6 +1742,11 @@ export class KademliaDHT extends EventEmitter {
         case 'membership_token_granted':
           await this.handleMembershipTokenGranted(peerId, message);
           break;
+        case 'pubsub_push':
+          // Emit message event for PubSubClient to handle push notifications
+          console.log(`📥 [Push] Received pubsub_push from ${peerId.substring(0, 8)}... for topic ${message.topicID?.substring(0, 8) || 'unknown'}...`);
+          this.emit('message', message);
+          break;
         default:
           console.warn(`Unknown message type from ${peerId}: ${message.type}`);
       }
