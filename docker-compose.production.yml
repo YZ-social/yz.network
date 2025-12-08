@@ -18,6 +18,9 @@ services:
       - BRIDGE_NODE_1=bridge-node-1:8083
       - BRIDGE_NODE_2=bridge-node-2:8084
       - METRICS_PORT=9090
+    volumes:
+      # Mount bundle-hash.json for version checking synchronization
+      - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
