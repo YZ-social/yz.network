@@ -1511,6 +1511,15 @@ export class DHTVisualizer {
       return;
     }
 
+    const btn = this.elements.subscribeChannelBtn;
+    if (!btn) return;
+
+    // Disable button and show loading state
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Joining...';
+    btn.classList.add('loading');
+
     try {
       // CRITICAL FIX: Set up message listener BEFORE subscribing
       // This ensures we catch historical messages delivered during subscription
@@ -1544,6 +1553,14 @@ export class DHTVisualizer {
 
     } catch (error) {
       this.log(`Failed to join channel: ${error.message}`, 'error');
+      // Remove the channel from tracked channels if subscription failed
+      this.subscribedChannels.delete(channelId);
+      this.pubsub.removeAllListeners(channelId);
+    } finally {
+      // Restore button state
+      btn.disabled = false;
+      btn.textContent = originalText;
+      btn.classList.remove('loading');
     }
   }
 
