@@ -466,9 +466,12 @@ export class PubSubClient extends EventEmitter {
    *
    * Listens for pubsub_push messages from DHT and delivers them
    * to the appropriate topic listeners immediately.
+   *
+   * Also handles pubsub_push_request for distributed push delivery -
+   * when a publisher needs help delivering to many subscribers.
    */
   setupPushHandler() {
-    // Register handler for push messages from DHT
+    // Register handler for push messages from DHT (receiving notifications)
     this.dht.on('message', (msg) => {
       // Only handle pubsub_push messages
       if (msg.type !== 'pubsub_push') {
@@ -497,6 +500,48 @@ export class PubSubClient extends EventEmitter {
 
       } catch (error) {
         console.error(`   ❌ [Push] Error handling push message:`, error);
+      }
+    });
+
+    // Register handler for push requests (helping with distributed delivery)
+    this.dht.on('pubsub_push_request', async (request) => {
+      try {
+        const { topicID, message, subscriberCollectionID, helpers, requestedAt } = request;
+
+        console.log(`📥 [Push Helper] Received push request for topic ${topicID.substring(0, 8)}... (requested ${Date.now() - requestedAt}ms ago)`);
+        console.log(`   🤝 [Push Helper] Helpers: ${helpers.length}, we are: ${this.nodeID.substring(0, 8)}...`);
+
+        // Load subscriber collection
+        const subscriberCollection = await this.storage.loadSubscriberCollection(subscriberCollectionID);
+        if (!subscriberCollection || !subscriberCollection.subscribers) {
+          console.warn(`   ⚠️ [Push Helper] Failed to load subscriber collection`);
+          return;
+        }
+
+        // Filter active subscribers (excluding ourselves)
+        const now = Date.now();
+        const activeSubscribers = subscriberCollection.subscribers.filter(
+          sub => sub.expiresAt > now && sub.subscriberID !== this.nodeID
+        );
+
+        // Use MessageDelivery's helper push method
+        const { MessageDelivery } = await import('./MessageDelivery.js');
+        const messageDelivery = new MessageDelivery(this.dht, this.nodeID);
+
+        const result = await messageDelivery.pushToAssignedSubscribers(
+          activeSubscribers,
+          topicID,
+          message,
+          helpers
+        );
+
+        console.log(`   ✅ [Push Helper] Completed: ${result.delivered} delivered, ${result.failed} failed`);
+
+        // Update stats
+        this.stats.pushRequestsHandled = (this.stats.pushRequestsHandled || 0) + 1;
+
+      } catch (error) {
+        console.error(`   ❌ [Push Helper] Error handling push request:`, error);
       }
     });
 

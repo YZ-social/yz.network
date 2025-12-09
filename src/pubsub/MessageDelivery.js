@@ -18,6 +18,13 @@ import crypto from 'crypto';
 
 export class MessageDelivery {
   /**
+   * Threshold for when to enlist helper nodes for push delivery.
+   * Below this, publisher handles all pushes directly.
+   * Above this, distribute across multiple initiator nodes.
+   */
+  static HELPER_THRESHOLD = 10;
+
+  /**
    * Create new MessageDelivery
    * @param {KademliaDHT} dht - DHT instance for messaging
    * @param {string} localNodeId - This node's ID
@@ -33,7 +40,8 @@ export class MessageDelivery {
     this.deliveryStats = {
       attempted: 0,
       succeeded: 0,
-      failed: 0
+      failed: 0,
+      helpersEnlisted: 0
     };
   }
 
@@ -68,6 +76,12 @@ export class MessageDelivery {
   /**
    * Deliver message to subscribers via push
    *
+   * Scaling strategy:
+   * - Below HELPER_THRESHOLD subscribers: Publisher pushes to all directly
+   * - Above HELPER_THRESHOLD: Enlist helper nodes to distribute the load
+   * - Each helper (including publisher) pushes to their assigned subset
+   * - Maximum K helpers, so minimum load per helper is subscribers/K
+   *
    * @param {string} topicID - Topic ID
    * @param {Object} message - Published message
    * @param {Object} coordinator - Current coordinator object
@@ -89,31 +103,129 @@ export class MessageDelivery {
       return { delivered: 0, failed: 0 };
     }
 
-    // Filter active (non-expired) subscribers
+    // Filter active (non-expired) subscribers, excluding ourselves
     const now = Date.now();
-    const activeSubscribers = subscriberCollection.subscribers.filter(sub => sub.expiresAt > now);
+    const activeSubscribers = subscriberCollection.subscribers.filter(
+      sub => sub.expiresAt > now && sub.subscriberID !== this.localNodeId
+    );
 
     if (activeSubscribers.length === 0) {
       console.log(`   ℹ️ [Push] No active subscribers for topic ${topicID.substring(0, 8)}...`);
       return { delivered: 0, failed: 0 };
     }
 
-    console.log(`   👥 [Push] Found ${activeSubscribers.length} active subscribers`);
+    const subscriberCount = activeSubscribers.length;
+    console.log(`   👥 [Push] Found ${subscriberCount} active subscribers (excluding self)`);
 
-    // Deliver messages using deterministic assignment
+    // Decide whether to use helpers based on subscriber count
+    if (subscriberCount <= MessageDelivery.HELPER_THRESHOLD) {
+      // Small channel: publisher handles all pushes directly
+      console.log(`   📤 [Push] Direct delivery (${subscriberCount} <= ${MessageDelivery.HELPER_THRESHOLD} threshold)`);
+      return await this.pushToAllSubscribers(activeSubscribers, topicID, message);
+    }
+
+    // Large channel: distribute across helper nodes
+    // Calculate how many helpers we need (up to K)
+    const numHelpers = Math.min(
+      initiatorNodes.length,
+      Math.ceil(subscriberCount / MessageDelivery.HELPER_THRESHOLD)
+    );
+
+    // Select the helpers (first N initiator nodes, ensuring we're included)
+    const selectedHelpers = this.selectHelpers(initiatorNodes, numHelpers);
+
+    console.log(`   🤝 [Push] Enlisting ${selectedHelpers.length} helpers for ${subscriberCount} subscribers`);
+
+    // Send push requests to other helpers (not ourselves)
+    const otherHelpers = selectedHelpers.filter(h => h !== this.localNodeId);
+    if (otherHelpers.length > 0) {
+      await this.sendPushRequests(otherHelpers, topicID, message, coordinator, selectedHelpers);
+      this.deliveryStats.helpersEnlisted += otherHelpers.length;
+    }
+
+    // Handle our assigned subset of subscribers
+    return await this.pushToAssignedSubscribers(activeSubscribers, topicID, message, selectedHelpers);
+  }
+
+  /**
+   * Select helper nodes for distributed push delivery
+   * Ensures the local node is included in the selection
+   *
+   * @param {Array<string>} initiatorNodes - k-closest node IDs
+   * @param {number} numHelpers - Number of helpers needed
+   * @returns {Array<string>} - Selected helper node IDs
+   */
+  selectHelpers(initiatorNodes, numHelpers) {
+    // If we're already in the initiator list, just take first N
+    const weAreInitiator = initiatorNodes.includes(this.localNodeId);
+
+    if (weAreInitiator) {
+      return initiatorNodes.slice(0, numHelpers);
+    }
+
+    // We're not in initiator list - include ourselves and take N-1 others
+    const helpers = [this.localNodeId, ...initiatorNodes.slice(0, numHelpers - 1)];
+    return helpers;
+  }
+
+  /**
+   * Push directly to all subscribers (used for small channels)
+   *
+   * @param {Array<Object>} subscribers - Active subscribers
+   * @param {string} topicID - Topic ID
+   * @param {Object} message - Message to deliver
+   * @returns {Promise<{delivered: number, failed: number}>}
+   */
+  async pushToAllSubscribers(subscribers, topicID, message) {
     let delivered = 0;
     let failed = 0;
 
-    for (const subscriber of activeSubscribers) {
-      // Determine which initiator is responsible for this subscriber
-      const assignedInitiator = MessageDelivery.assignSubscriberToInitiator(
+    for (const subscriber of subscribers) {
+      try {
+        await this.pushMessageToSubscriber(subscriber.subscriberID, topicID, message);
+        delivered++;
+        this.deliveryStats.succeeded++;
+      } catch (error) {
+        console.warn(`   ⚠️ [Push] Failed to deliver to ${subscriber.subscriberID.substring(0, 8)}...: ${error.message}`);
+        failed++;
+        this.deliveryStats.failed++;
+      }
+    }
+
+    this.deliveryStats.attempted += subscribers.length;
+
+    if (delivered > 0 || failed > 0) {
+      console.log(`   ✅ [Push] Delivered to ${delivered}/${subscribers.length} subscribers, ${failed} failed`);
+    }
+
+    return { delivered, failed };
+  }
+
+  /**
+   * Push to subscribers assigned to us via deterministic assignment
+   *
+   * @param {Array<Object>} subscribers - Active subscribers
+   * @param {string} topicID - Topic ID
+   * @param {Object} message - Message to deliver
+   * @param {Array<string>} helpers - Helper nodes for assignment
+   * @returns {Promise<{delivered: number, failed: number}>}
+   */
+  async pushToAssignedSubscribers(subscribers, topicID, message, helpers) {
+    let delivered = 0;
+    let failed = 0;
+    let assigned = 0;
+
+    for (const subscriber of subscribers) {
+      // Determine which helper is responsible for this subscriber
+      const assignedHelper = MessageDelivery.assignSubscriberToInitiator(
         subscriber.subscriberID,
         topicID,
-        initiatorNodes
+        helpers
       );
 
-      // Only deliver if WE are the assigned initiator
-      if (assignedInitiator === this.localNodeId) {
+      // Only deliver if WE are the assigned helper
+      if (assignedHelper === this.localNodeId) {
+        assigned++;
         try {
           await this.pushMessageToSubscriber(subscriber.subscriberID, topicID, message);
           delivered++;
@@ -126,13 +238,52 @@ export class MessageDelivery {
       }
     }
 
-    this.deliveryStats.attempted += activeSubscribers.length;
+    this.deliveryStats.attempted += assigned;
 
-    if (delivered > 0 || failed > 0) {
-      console.log(`   ✅ [Push] Delivered to ${delivered} subscribers, ${failed} failed`);
-    }
+    console.log(`   ✅ [Push] Our share: ${delivered}/${assigned} delivered, ${failed} failed (of ${subscribers.length} total)`);
 
     return { delivered, failed };
+  }
+
+  /**
+   * Send push requests to helper nodes
+   *
+   * @param {Array<string>} helpers - Helper node IDs (excluding self)
+   * @param {string} topicID - Topic ID
+   * @param {Object} message - Message to deliver
+   * @param {Object} coordinator - Coordinator with subscriber collection
+   * @param {Array<string>} allHelpers - All helpers for assignment calculation
+   */
+  async sendPushRequests(helpers, topicID, message, coordinator, allHelpers) {
+    const pushRequest = {
+      type: 'pubsub_push_request',
+      topicID,
+      message: {
+        messageID: message.messageID,
+        topicID: message.topicID,
+        publisherID: message.publisherID,
+        publisherSequence: message.publisherSequence,
+        addedInVersion: message.addedInVersion,
+        data: message.data,
+        publishedAt: message.publishedAt,
+        expiresAt: message.expiresAt
+      },
+      subscriberCollectionID: coordinator.currentSubscribers,
+      helpers: allHelpers,  // So they know the full helper list for assignment
+      requestedAt: Date.now()
+    };
+
+    // Send to all helpers in parallel (fire-and-forget)
+    const sendPromises = helpers.map(async (helperId) => {
+      try {
+        await this.dht.sendMessage(helperId, pushRequest);
+        console.log(`   📨 [Push] Sent push request to helper ${helperId.substring(0, 8)}...`);
+      } catch (error) {
+        console.warn(`   ⚠️ [Push] Failed to send push request to ${helperId.substring(0, 8)}...: ${error.message}`);
+      }
+    });
+
+    await Promise.all(sendPromises);
   }
 
   /**
@@ -173,11 +324,8 @@ export class MessageDelivery {
    */
   async loadSubscriberCollection(collectionID) {
     try {
-      // Use getFromNetwork to always fetch latest version from DHT network
-      // Subscriber collections are mutable data - local cache may be stale
-      const collection = typeof this.dht.getFromNetwork === 'function'
-        ? await this.dht.getFromNetwork(collectionID)
-        : await this.dht.get(collectionID);
+      // ALWAYS fetch from network - subscriber collections are mutable data that MUST NOT be cached locally
+      const collection = await this.dht.getFromNetwork(collectionID);
       return collection;
     } catch (error) {
       console.error(`Failed to load subscriber collection ${collectionID.substring(0, 8)}...:`, error.message);

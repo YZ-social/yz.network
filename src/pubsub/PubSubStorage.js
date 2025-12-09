@@ -70,21 +70,19 @@ export class PubSubStorage {
    */
   async loadCoordinator(topicID) {
     const key = `coordinator:${topicID}`;
-    console.log(`🔍 Loading coordinator for topic ${topicID.substring(0, 8)}...`);
+    console.log(`🔍 Loading coordinator for topic ${topicID.substring(0, 8)}... (always network fetch)`);
 
     try {
-      // Use getFromNetwork to always fetch latest version from DHT network
-      // Coordinators are mutable data - local cache may be stale
-      const data = typeof this.dht.getFromNetwork === 'function'
-        ? await this.dht.getFromNetwork(key)
-        : await this.dht.get(key);
+      // ALWAYS fetch from network - coordinators are mutable data that MUST NOT be cached locally
+      // Local caching of coordinators is architecturally wrong - they change frequently
+      const data = await this.dht.getFromNetwork(key);
       if (!data) {
         console.log(`   Coordinator not found for topic ${topicID.substring(0, 8)}...`);
         return null;
       }
 
       const coordinator = CoordinatorObject.deserialize(data);
-      console.log(`   ✅ Loaded coordinator (version ${coordinator.version})`);
+      console.log(`   ✅ Loaded coordinator (version ${coordinator.version}) from network`);
       return coordinator;
     } catch (error) {
       console.error(`   ❌ Failed to load coordinator: ${error.message}`);
@@ -169,18 +167,15 @@ export class PubSubStorage {
     const key = `msgcoll:${collectionID}`;
 
     try {
-      // Use getFromNetwork to always fetch latest version from DHT network
-      // Message collections are mutable data - local cache may be stale
-      const data = typeof this.dht.getFromNetwork === 'function'
-        ? await this.dht.getFromNetwork(key)
-        : await this.dht.get(key);
+      // ALWAYS fetch from network - message collections are mutable data that MUST NOT be cached locally
+      const data = await this.dht.getFromNetwork(key);
       if (!data) {
         console.log(`   Message collection ${collectionID.substring(0, 8)}... not found`);
         return null;
       }
 
       const collection = MessageCollection.deserialize(data);
-      console.log(`   ✅ Loaded message collection (${collection.size()} messages)`);
+      console.log(`   ✅ Loaded message collection (${collection.size()} messages) from network`);
       return collection;
     } catch (error) {
       console.error(`   ❌ Failed to load message collection: ${error.message}`);
@@ -224,18 +219,15 @@ export class PubSubStorage {
     const key = `subcoll:${collectionID}`;
 
     try {
-      // Use getFromNetwork to always fetch latest version from DHT network
-      // Subscriber collections are mutable data - local cache may be stale
-      const data = typeof this.dht.getFromNetwork === 'function'
-        ? await this.dht.getFromNetwork(key)
-        : await this.dht.get(key);
+      // ALWAYS fetch from network - subscriber collections are mutable data that MUST NOT be cached locally
+      const data = await this.dht.getFromNetwork(key);
       if (!data) {
         console.log(`   Subscriber collection ${collectionID.substring(0, 8)}... not found`);
         return null;
       }
 
       const collection = SubscriberCollection.deserialize(data);
-      console.log(`   ✅ Loaded subscriber collection (${collection.size()} subscribers)`);
+      console.log(`   ✅ Loaded subscriber collection (${collection.size()} subscribers) from network`);
       return collection;
     } catch (error) {
       console.error(`   ❌ Failed to load subscriber collection: ${error.message}`);
@@ -353,17 +345,15 @@ export class PubSubStorage {
     const key = `snapshot:${snapshotID}`;
 
     try {
-      // Use getFromNetwork to always fetch from DHT network
-      const data = typeof this.dht.getFromNetwork === 'function'
-        ? await this.dht.getFromNetwork(key)
-        : await this.dht.get(key);
+      // ALWAYS fetch from network - snapshots are mutable data that MUST NOT be cached locally
+      const data = await this.dht.getFromNetwork(key);
       if (!data) {
         console.log(`   Snapshot ${snapshotID.substring(0, 8)}... not found`);
         return null;
       }
 
       const snapshot = CoordinatorSnapshot.deserialize(data);
-      console.log(`   ✅ Loaded snapshot (version ${snapshot.version})`);
+      console.log(`   ✅ Loaded snapshot (version ${snapshot.version}) from network`);
       return snapshot;
     } catch (error) {
       console.error(`   ❌ Failed to load snapshot: ${error.message}`);

@@ -1747,6 +1747,11 @@ export class KademliaDHT extends EventEmitter {
           console.log(`📥 [Push] Received pubsub_push from ${peerId.substring(0, 8)}... for topic ${message.topicID?.substring(0, 8) || 'unknown'}...`);
           this.emit('message', message);
           break;
+        case 'pubsub_push_request':
+          // Handle request from publisher to help with push delivery
+          console.log(`📥 [Push] Received push_request from ${peerId.substring(0, 8)}... for topic ${message.topicID?.substring(0, 8) || 'unknown'}...`);
+          this.emit('pubsub_push_request', message);
+          break;
         default:
           console.warn(`Unknown message type from ${peerId}: ${message.type}`);
       }
