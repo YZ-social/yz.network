@@ -248,4 +248,16 @@ export class DHTClient extends EventEmitter {
 
     return await this.dht.get(key);
   }
+
+  /**
+   * Retrieve data from DHT network, bypassing local cache.
+   * Use this for mutable data like PubSub coordinators that may be updated by other nodes.
+   */
+  async getFromNetwork(key) {
+    if (!this.dht) {
+      throw new Error('DHT not started');
+    }
+
+    return await this.dht.getFromNetwork(key);
+  }
 }
