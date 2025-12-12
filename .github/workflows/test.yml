@@ -31,8 +31,25 @@ jobs:
     - name: Run linter
       run: npm run lint
       
-    - name: Run tests
-      run: npm test
+    - name: Run basic unit tests (Jest)
+      run: |
+        echo "🧪 Running basic unit tests..."
+        npm test -- test/basic.test.js
+        
+    - name: Run core component tests (Jest)
+      run: |
+        echo "🔧 Running core component tests..."
+        npm run test:core
+        
+    - name: Run DHT algorithm concept test
+      run: |
+        echo "🔬 Running DHT algorithm concept test..."
+        node test/local/basic-dht-concept-test.js
+        
+    - name: Run simple network simulation test
+      run: |
+        echo "🌐 Running simple network simulation..."
+        node test/local/simple-network-test.js
       
     # Coverage reporting disabled for now
     # - name: Upload coverage to Codecov

@@ -1,0 +1,208 @@
+name: Playwright Browser Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:  # Allow manual trigger
+
+env:
+  # Prevent npm warnings in CI
+  CI: true
+  # Set Node.js options for better performance
+  NODE_OPTIONS: --max-old-space-size=4096
+
+jobs:
+  playwright-tests:
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    
+    services:
+      # Use a simple HTTP server for health checks
+      health-check:
+        image: nginx:alpine
+        ports:
+          - 8888:80
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Install Playwright browsers
+      run: npx playwright install --with-deps chromium firefox
+      
+    - name: Build project
+      run: npm run build
+      
+    - name: Start DHT network infrastructure
+      run: |
+        echo "🚀 Starting DHT network infrastructure..."
+        
+        # Create log directory
+        mkdir -p logs
+        
+        # Start bridge nodes in background
+        echo "📡 Starting bridge nodes..."
+        npm run bridge-nodes > logs/bridge-nodes.log 2>&1 &
+        BRIDGE_PID=$!
+        echo "BRIDGE_PID=$BRIDGE_PID" >> $GITHUB_ENV
+        echo "Bridge nodes PID: $BRIDGE_PID"
+        
+        # Wait for bridge nodes to initialize
+        echo "⏳ Waiting for bridge nodes to start..."
+        sleep 15
+        
+        # Start bootstrap server in genesis mode with open network
+        echo "🌟 Starting bootstrap server (genesis + open network)..."
+        npm run bridge-bootstrap:genesis:openNetwork > logs/bootstrap.log 2>&1 &
+        BOOTSTRAP_PID=$!
+        echo "BOOTSTRAP_PID=$BOOTSTRAP_PID" >> $GITHUB_ENV
+        echo "Bootstrap server PID: $BOOTSTRAP_PID"
+        
+        # Wait for bootstrap server to start
+        echo "⏳ Waiting for bootstrap server to start..."
+        sleep 20
+        
+        # Verify services are running with retries
+        echo "🔍 Verifying services..."
+        for i in {1..10}; do
+          if curl -f http://localhost:8080/health; then
+            echo "✅ Bootstrap server is ready"
+            break
+          else
+            echo "⏳ Attempt $i/10: Bootstrap server not ready yet, waiting..."
+            sleep 5
+          fi
+          if [ $i -eq 10 ]; then
+            echo "❌ Bootstrap server failed to start"
+            echo "=== Bridge Nodes Log ==="
+            cat logs/bridge-nodes.log || echo "No bridge nodes log"
+            echo "=== Bootstrap Log ==="
+            cat logs/bootstrap.log || echo "No bootstrap log"
+            exit 1
+          fi
+        done
+        
+        # Show process status
+        echo "📊 Process status:"
+        ps aux | grep -E "(bridge|bootstrap)" | grep -v grep || echo "No processes found"
+        
+        # Show port status
+        echo "🔌 Port status:"
+        netstat -tlnp | grep -E "(8080|8083|8084)" || echo "No ports found"
+        
+    - name: Start test server
+      run: |
+        echo "🌐 Starting test server..."
+        npm run test:server > logs/test-server.log 2>&1 &
+        TEST_SERVER_PID=$!
+        echo "TEST_SERVER_PID=$TEST_SERVER_PID" >> $GITHUB_ENV
+        
+        # Wait for test server
+        echo "⏳ Waiting for test server..."
+        for i in {1..10}; do
+          if curl -f http://localhost:3000/health; then
+            echo "✅ Test server is ready"
+            break
+          else
+            echo "⏳ Attempt $i/10: Test server not ready yet, waiting..."
+            sleep 2
+          fi
+          if [ $i -eq 10 ]; then
+            echo "❌ Test server failed to start"
+            cat logs/test-server.log || echo "No test server log"
+            exit 1
+          fi
+        done
+        
+    - name: Run Playwright tests
+      run: |
+        echo "🎭 Running Playwright tests..."
+        npx playwright test tests/browser/smoke-test.spec.js tests/browser/infrastructure.spec.js --reporter=html,list,json
+        
+    - name: Show logs on failure
+      if: failure()
+      run: |
+        echo "=== Bridge Nodes Log ==="
+        cat logs/bridge-nodes.log || echo "No bridge nodes log"
+        echo ""
+        echo "=== Bootstrap Log ==="
+        cat logs/bootstrap.log || echo "No bootstrap log"
+        echo ""
+        echo "=== Test Server Log ==="
+        cat logs/test-server.log || echo "No test server log"
+        echo ""
+        echo "=== Process Status ==="
+        ps aux | grep -E "(node|bridge|bootstrap)" | grep -v grep || echo "No processes"
+        echo ""
+        echo "=== Port Status ==="
+        netstat -tlnp | grep -E "(3000|8080|8083|8084)" || echo "No ports"
+        
+    - name: Stop all services
+      if: always()
+      run: |
+        echo "🛑 Stopping all services..."
+        
+        # Kill background processes
+        if [ ! -z "$TEST_SERVER_PID" ]; then
+          echo "Stopping test server (PID: $TEST_SERVER_PID)"
+          kill $TEST_SERVER_PID || true
+        fi
+        
+        if [ ! -z "$BOOTSTRAP_PID" ]; then
+          echo "Stopping bootstrap server (PID: $BOOTSTRAP_PID)"
+          kill $BOOTSTRAP_PID || true
+        fi
+        
+        if [ ! -z "$BRIDGE_PID" ]; then
+          echo "Stopping bridge nodes (PID: $BRIDGE_PID)"
+          kill $BRIDGE_PID || true
+        fi
+        
+        # Kill any remaining processes
+        echo "Cleaning up remaining processes..."
+        pkill -f "node.*bridge" || true
+        pkill -f "node.*bootstrap" || true
+        pkill -f "node.*test-server" || true
+        
+        # Use the project's cleanup script
+        npm run kill-ports || true
+        
+        # Wait a moment for cleanup
+        sleep 2
+        
+        echo "✅ Cleanup complete"
+        
+    - name: Upload Playwright HTML report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: playwright-report
+        path: playwright-report/
+        retention-days: 30
+        
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-results
+        path: test-results/
+        retention-days: 30
+        
+    - name: Upload logs
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: service-logs
+        path: logs/
+        retention-days: 7

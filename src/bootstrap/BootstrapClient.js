@@ -373,11 +373,13 @@ export class BootstrapClient extends EventEmitter {
 
       return {
         peers: response.peers || [],
-        isGenesis: response.isGenesis || false
+        isGenesis: response.isGenesis || false,
+        membershipToken: response.membershipToken || null,
+        onboardingHelper: response.onboardingHelper || null
       };
     } catch (error) {
       console.error('Error requesting peers or genesis status:', error);
-      return { peers: [], isGenesis: false };
+      return { peers: [], isGenesis: false, membershipToken: null, onboardingHelper: null };
     }
   }
 

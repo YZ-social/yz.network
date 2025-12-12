@@ -471,6 +471,13 @@ export class KademliaDHT extends EventEmitter {
 
       // Store our public key in DHT for others to verify our tokens
       await this.storePublicKey();
+    } else if (bootstrapResponse.membershipToken) {
+      // OpenNetwork flow - received token from bridge during onboarding
+      console.log('🎫 Received membership token from bridge (OpenNetwork mode)');
+      console.log(`   Issued by: ${bootstrapResponse.membershipToken.issuer?.substring(0, 8) || 'unknown'}...`);
+      console.log(`   Authorized by: ${bootstrapResponse.membershipToken.authorizedBy?.substring(0, 8) || 'unknown'}...`);
+      this._setMembershipToken(bootstrapResponse.membershipToken);
+      console.log('✅ Membership token stored - can reconnect via bridge if needed');
     }
 
     const initialPeers = bootstrapResponse.peers || [];
@@ -2335,11 +2342,24 @@ export class KademliaDHT extends EventEmitter {
    * Handle ping message
    */
   async handlePing(peerId, message) {
+    // Prepare metadata flags byte (for compact transmission)
+    // Bit 0: tabVisible (1 = visible/active, 0 = hidden/inactive)
+    // Bits 1-7: Reserved for future flags
+    let metaFlags = 0;
+
+    // Browser: Check actual tab visibility
+    // Node.js: Always set to true (no tab concept)
+    const tabVisible = typeof document !== 'undefined' ? !document.hidden : true;
+    if (tabVisible) {
+      metaFlags |= 0x01; // Set bit 0
+    }
+
     const response = {
       type: 'pong',
       requestId: message.requestId,
       timestamp: Date.now(),
-      nodeId: this.localNodeId.toString()
+      nodeId: this.localNodeId.toString(),
+      metaFlags: metaFlags // Single byte for all boolean flags
     };
 
     await this.sendMessage(peerId, response);
@@ -2354,6 +2374,17 @@ export class KademliaDHT extends EventEmitter {
     const node = this.routingTable.getNode(peerId);
     if (node) {
       node.recordPing(rtt);
+
+      // Extract tabVisible from metaFlags (bit 0)
+      if (message.metaFlags !== undefined) {
+        const tabVisible = (message.metaFlags & 0x01) !== 0;
+
+        // Store in node metadata for helper selection
+        if (!node.metadata) {
+          node.metadata = {};
+        }
+        node.metadata.tabVisible = tabVisible;
+      }
     }
 
     console.log(`Pong from ${peerId}, RTT: ${rtt}ms`);

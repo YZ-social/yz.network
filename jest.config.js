@@ -2,7 +2,9 @@ export default {
   testEnvironment: 'node',
   
   testMatch: [
-    '**/test/basic.test.js'
+    '**/test/basic.test.js',
+    '**/test/core/*.test.js',
+    '**/test/dht/*.test.js'
   ],
   
   collectCoverageFrom: [

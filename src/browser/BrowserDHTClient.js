@@ -66,6 +66,9 @@ export class BrowserDHTClient extends DHTClient {
     // Now call parent start() with proper node ID
     const result = await super.start();
 
+    // Setup tab visibility handling for automatic disconnect/reconnect
+    this.setupTabVisibilityHandling();
+
     return result;
   }
 
@@ -247,5 +250,129 @@ export class BrowserDHTClient extends DHTClient {
         connectedPeers: this.getConnectedPeers().length
       }
     };
+  }
+
+  /**
+   * Setup tab visibility handling for automatic disconnect/reconnect
+   *
+   * Strategy:
+   * - Tab becomes inactive → Wait 30 seconds → Disconnect to save resources
+   * - Tab becomes active → Reconnect if disconnected
+   * - During reconnection → Don't disconnect even if tab becomes inactive
+   * - Save pub/sub subscriptions before disconnect, restore after reconnect
+   */
+  setupTabVisibilityHandling() {
+    // State tracking
+    this.tabState = 'active';  // 'active' | 'disconnecting' | 'disconnected' | 'reconnecting'
+    this.disconnectTimer = null;
+    this.reconnectInProgress = false;
+    this.savedSubscriptions = [];
+
+    console.log('👁️ Tab visibility handling enabled');
+
+    document.addEventListener('visibilitychange', async () => {
+      if (document.hidden) {
+        // Tab became inactive
+        console.log('📴 Tab hidden - scheduling disconnect');
+
+        // CRITICAL: Don't disconnect if we're reconnecting
+        if (this.reconnectInProgress) {
+          console.log('⏸️ Reconnection in progress - keeping connection alive');
+          return;
+        }
+
+        // Don't disconnect immediately - wait 30 seconds
+        // Handles fast tab switching (checking email, etc.)
+        this.disconnectTimer = setTimeout(async () => {
+          console.log('⏱️ Tab inactive for 30s - disconnecting from DHT');
+          this.tabState = 'disconnecting';
+
+          try {
+            // Save current pub/sub subscriptions before disconnecting
+            if (this.dht && this.dht.pubsub) {
+              const subscriptions = this.dht.pubsub.getSubscriptions?.() || [];
+
+              // Save topic names and event listeners for each subscription
+              this.savedSubscriptions = subscriptions.map(sub => ({
+                topicID: sub.topicID,
+                // Get all listeners for this topic from the EventEmitter
+                listeners: this.dht.pubsub.listeners(sub.topicID)
+              }));
+
+              console.log(`💾 Saved ${this.savedSubscriptions.length} pub/sub subscriptions`);
+            }
+
+            // Disconnect (but keep membership token!)
+            // Note: stop() preserves membership token in dht._membershipToken
+            await this.stop();
+            this.tabState = 'disconnected';
+            console.log('✅ Disconnected from DHT (tab inactive)');
+
+          } catch (error) {
+            console.error('❌ Error during inactive tab disconnect:', error);
+            this.tabState = 'active'; // Reset state on error
+          }
+        }, 30000); // 30 second delay
+
+      } else {
+        // Tab became active
+        console.log('📱 Tab visible');
+
+        // Cancel pending disconnect if tab was just hidden briefly
+        if (this.disconnectTimer) {
+          console.log('✅ Canceled pending disconnect - tab visible again');
+          clearTimeout(this.disconnectTimer);
+          this.disconnectTimer = null;
+          return; // Still connected, nothing to do
+        }
+
+        // If we're already disconnected, reconnect FAST
+        if (this.tabState === 'disconnected') {
+          console.log('🔄 Reconnecting to DHT (tab was inactive)');
+          this.reconnectInProgress = true;
+          this.tabState = 'reconnecting';
+
+          try {
+            // PRIORITY 1: Reconnect to DHT
+            await this.start();
+            console.log('✅ DHT reconnected');
+
+            // PRIORITY 2: Restore pub/sub subscriptions IMMEDIATELY
+            if (this.savedSubscriptions && this.savedSubscriptions.length > 0 && this.dht && this.dht.pubsub) {
+              console.log(`🔄 Restoring ${this.savedSubscriptions.length} pub/sub subscriptions`);
+
+              // Resubscribe in parallel for speed
+              await Promise.all(
+                this.savedSubscriptions.map(async sub => {
+                  try {
+                    // Resubscribe to topic (creates internal message handler)
+                    await this.dht.pubsub.subscribe(sub.topicID);
+
+                    // Restore all saved event listeners
+                    if (sub.listeners && sub.listeners.length > 0) {
+                      sub.listeners.forEach(listener => {
+                        this.dht.pubsub.on(sub.topicID, listener);
+                      });
+                    }
+                  } catch (err) {
+                    console.warn(`⚠️ Failed to restore subscription to ${sub.topicID}:`, err);
+                  }
+                })
+              );
+
+              console.log('✅ Pub/sub subscriptions restored');
+            }
+
+            this.tabState = 'active';
+
+          } catch (error) {
+            console.error('❌ Reconnection failed:', error);
+            this.tabState = 'disconnected';
+          } finally {
+            this.reconnectInProgress = false;
+          }
+        }
+      }
+    });
   }
 }

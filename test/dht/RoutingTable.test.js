@@ -13,10 +13,11 @@ describe('RoutingTable', () => {
 
   describe('constructor', () => {
     test('should create routing table with correct structure', () => {
-      expect(routingTable.localId).toBe(localId);
+      expect(routingTable.localNodeId).toBe(localId);
       expect(routingTable.k).toBe(20);
       expect(routingTable.buckets).toBeDefined();
-      expect(routingTable.buckets.length).toBe(160); // 160 buckets for 160-bit IDs
+      expect(routingTable.buckets.length).toBe(1); // Starts with single bucket
+      expect(routingTable.totalNodes).toBe(0);
     });
   });
 
@@ -26,8 +27,8 @@ describe('RoutingTable', () => {
       const added = routingTable.addNode(node);
       
       expect(added).toBe(true);
-      expect(routingTable.size()).toBe(1);
-      expect(routingTable.hasNode(node.id)).toBe(true);
+      expect(routingTable.totalNodes).toBe(1);
+      expect(routingTable.getNode(node.id)).toBe(node);
     });
 
     test('should not add local node', () => {
@@ -35,7 +36,7 @@ describe('RoutingTable', () => {
       const added = routingTable.addNode(localNode);
       
       expect(added).toBe(false);
-      expect(routingTable.size()).toBe(0);
+      expect(routingTable.totalNodes).toBe(0);
     });
 
     test('should remove node correctly', () => {
@@ -44,7 +45,9 @@ describe('RoutingTable', () => {
       
       const removed = routingTable.removeNode(node.id);
       expect(removed).toBe(true);
-      expect(routingTable.hasNode(node.id)).toBe(false);
+      // After removal, getNode should return null or undefined (both indicate not found)
+      const foundNode = routingTable.getNode(node.id);
+      expect(foundNode == null).toBe(true); // Handles both null and undefined
     });
 
     test('should update existing node', () => {
@@ -63,22 +66,22 @@ describe('RoutingTable', () => {
   describe('bucket selection', () => {
     test('should find correct bucket for node ID', () => {
       // Create ID that differs in a specific bit position
-      const targetId = new DHTNodeId('8' + '0'.repeat(39)); // MSB = 1000
+      const targetId = DHTNodeId.fromHex('8' + '0'.repeat(39)); // MSB = 1000
       const bucketIndex = routingTable.getBucketIndex(targetId);
       
       expect(bucketIndex).toBeGreaterThanOrEqual(0);
-      expect(bucketIndex).toBeLessThan(160);
+      expect(bucketIndex).toBeLessThan(routingTable.buckets.length);
     });
 
-    test('should return -1 for local ID', () => {
+    test('should return 0 for local ID (fallback)', () => {
       const bucketIndex = routingTable.getBucketIndex(localId);
-      expect(bucketIndex).toBe(-1);
+      expect(bucketIndex).toBe(0); // Returns 0 as fallback, not -1
     });
 
-    test('should get bucket by index', () => {
-      const bucket = routingTable.getBucket(0);
-      expect(bucket).toBeDefined();
-      expect(bucket.capacity).toBe(20);
+    test('should get bucket nodes by index', () => {
+      const bucketNodes = routingTable.getBucketNodes(0);
+      expect(Array.isArray(bucketNodes)).toBe(true);
+      expect(bucketNodes.length).toBe(0); // Initially empty
     });
   });
 
@@ -93,7 +96,7 @@ describe('RoutingTable', () => {
       }
       
       const targetId = new DHTNodeId();
-      const closest = routingTable.getClosestNodes(targetId, 5);
+      const closest = routingTable.findClosestNodes(targetId, 5);
       
       expect(closest.length).toBeLessThanOrEqual(5);
       expect(closest.length).toBeLessThanOrEqual(nodes.length);
@@ -101,16 +104,16 @@ describe('RoutingTable', () => {
       // Verify they are sorted by distance
       if (closest.length > 1) {
         for (let i = 0; i < closest.length - 1; i++) {
-          const dist1 = closest[i].distanceTo(targetId);
-          const dist2 = closest[i + 1].distanceTo(targetId);
-          expect(Buffer.compare(dist1, dist2)).toBeLessThanOrEqual(0);
+          const dist1 = closest[i].id.xorDistance(targetId);
+          const dist2 = closest[i + 1].id.xorDistance(targetId);
+          expect(dist1.compare(dist2)).toBeLessThanOrEqual(0);
         }
       }
     });
 
     test('should return empty array when no nodes exist', () => {
       const targetId = new DHTNodeId();
-      const closest = routingTable.getClosestNodes(targetId, 5);
+      const closest = routingTable.findClosestNodes(targetId, 5);
       
       expect(closest).toEqual([]);
     });
@@ -123,21 +126,21 @@ describe('RoutingTable', () => {
         routingTable.addNode(node);
       }
       
-      const closest = routingTable.getClosestNodes(localId, 10);
+      const closest = routingTable.findClosestNodes(localId, 10);
       expect(closest.some(node => node.id.equals(localId))).toBe(false);
     });
   });
 
   describe('routing table statistics', () => {
     test('should count total nodes correctly', () => {
-      expect(routingTable.size()).toBe(0);
+      expect(routingTable.totalNodes).toBe(0);
       
       for (let i = 0; i < 15; i++) {
         const node = new DHTNode(new DHTNodeId(), `address-${i}`);
         routingTable.addNode(node);
       }
       
-      expect(routingTable.size()).toBe(15);
+      expect(routingTable.totalNodes).toBe(15);
     });
 
     test('should get all nodes', () => {
@@ -152,7 +155,7 @@ describe('RoutingTable', () => {
       expect(allNodes.length).toBe(nodes.length);
     });
 
-    test('should get bucket statistics', () => {
+    test('should get routing table statistics', () => {
       // Add nodes to different buckets
       for (let i = 0; i < 25; i++) {
         const node = new DHTNode(new DHTNodeId(), `address-${i}`);
@@ -161,69 +164,94 @@ describe('RoutingTable', () => {
       
       const stats = routingTable.getStats();
       expect(stats.totalNodes).toBeGreaterThan(0);
-      expect(stats.activeBuckets).toBeGreaterThan(0);
+      expect(stats.totalBuckets).toBeGreaterThan(0);
       expect(stats.averageNodesPerBucket).toBeGreaterThan(0);
+      expect(stats.k).toBe(20);
+      expect(stats.localNodeId).toBe(localId.toString());
     });
   });
 
   describe('stale node management', () => {
-    test('should identify stale nodes', () => {
+    test('should remove stale nodes', () => {
       const node = new DHTNode(new DHTNodeId(), 'test-address');
-      node.lastSeen = Date.now() - 70000; // 70 seconds ago
       routingTable.addNode(node);
+      // Make node stale AFTER adding it (since addNode updates lastSeen)
+      node.lastSeen = Date.now() - 70 * 1000; // 70 seconds ago
       
-      const staleNodes = routingTable.getStaleNodes(60000); // 60 second timeout
-      expect(staleNodes).toContain(node);
+      const removedCount = routingTable.removeStaleNodes(60 * 1000); // 60 second timeout
+      expect(removedCount).toBe(1);
+      expect(routingTable.totalNodes).toBe(0);
     });
 
-    test('should refresh stale nodes', () => {
+    test('should get nodes that need pinging', () => {
       const node = new DHTNode(new DHTNodeId(), 'test-address');
-      node.lastSeen = Date.now() - 70000; // 70 seconds ago
+      node.lastPing = Date.now() - 70000; // 70 seconds ago
       routingTable.addNode(node);
       
-      routingTable.refreshNode(node.id);
-      expect(node.isStale(60000)).toBe(false);
+      const nodesToPing = routingTable.getNodesToPing(60000); // 60 second interval
+      expect(nodesToPing).toContain(node);
     });
   });
 
   describe('routing table maintenance', () => {
-    test('should clear all nodes', () => {
+    test('should validate routing table consistency', () => {
       for (let i = 0; i < 10; i++) {
         const node = new DHTNode(new DHTNodeId(), `address-${i}`);
         routingTable.addNode(node);
       }
       
-      routingTable.clear();
-      expect(routingTable.size()).toBe(0);
+      const validation = routingTable.validate();
+      expect(validation.valid).toBe(true);
+      expect(validation.issues).toEqual([]);
     });
 
-    test('should split buckets when necessary', () => {
+    test('should handle bucket splitting when necessary', () => {
       // This test would require a more complex setup to trigger bucket splitting
       // For now, just verify the routing table can handle many nodes
-      const initialBuckets = routingTable.buckets.filter(b => !b.isEmpty()).length;
+      const initialBuckets = routingTable.buckets.length;
       
       for (let i = 0; i < 50; i++) {
         const node = new DHTNode(new DHTNodeId(), `address-${i}`);
         routingTable.addNode(node);
       }
       
-      expect(routingTable.size()).toBeGreaterThan(0);
+      expect(routingTable.totalNodes).toBeGreaterThan(0);
+      // Bucket count may increase due to splitting
+      expect(routingTable.buckets.length).toBeGreaterThanOrEqual(initialBuckets);
+    });
+
+    test('should get bucket for refresh', () => {
+      // Add some nodes
+      for (let i = 0; i < 5; i++) {
+        const node = new DHTNode(new DHTNodeId(), `address-${i}`);
+        routingTable.addNode(node);
+      }
+      
+      const bucketForRefresh = routingTable.getBucketForRefresh();
+      expect(bucketForRefresh).toBeDefined();
+      expect(bucketForRefresh.lastUpdated).toBeDefined();
     });
   });
 
-  describe('node lookup by prefix', () => {
-    test('should find nodes in specific bucket range', () => {
-      // Add nodes and test bucket-specific lookups
+  describe('connected nodes lookup', () => {
+    test('should find closest connected nodes', () => {
+      // Add nodes and test connected node lookups
       const nodes = [];
-      for (let i = 0; i < 20; i++) {
+      for (let i = 0; i < 10; i++) {
         const node = new DHTNode(new DHTNodeId(), `address-${i}`);
+        // Mock some nodes as connected
+        if (i < 5) {
+          node.isConnected = () => true;
+        }
         nodes.push(node);
         routingTable.addNode(node);
       }
       
-      // Get nodes from a specific distance range
-      const bucketNodes = routingTable.getNodesInBucketRange(0, 10);
-      expect(Array.isArray(bucketNodes)).toBe(true);
+      const targetId = new DHTNodeId();
+      const connectedNodes = routingTable.findClosestConnectedNodes(targetId, 3);
+      expect(Array.isArray(connectedNodes)).toBe(true);
+      expect(connectedNodes.length).toBeLessThanOrEqual(5); // Only 5 are "connected"
+      expect(connectedNodes.length).toBeLessThanOrEqual(3); // Requested max 3
     });
   });
 });

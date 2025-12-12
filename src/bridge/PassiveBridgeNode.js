@@ -648,26 +648,128 @@ export class PassiveBridgeNode extends NodeDHTClient {
         throw new Error('No active DHT members available for onboarding (all discovered peers are offline)');
       }
 
-      // 5. Select first (closest) active DHT member as helper
-      const helperPeer = activePeers[0];
-      console.log(`✅ Selected active DHT member as helper: ${helperPeer.id.toString().substring(0, 8)} (filtered ${closestPeers.length - fullDHTMembers.length} bridge nodes, ${fullDHTMembers.length - activePeers.length} inactive peers)`);
+      // 5. Apply HARD DISQUALIFIERS before selecting candidates
+      // These peers should NEVER be selected as helpers (fail fast, no retry)
+      const qualifiedPeers = activePeers.filter(peer => {
+        const peerId = peer.id.toString();
+        const now = Date.now();
 
-      // 6. Request helper peer to create invitation token for new node
-      // Bridge sends request via DHT messaging, helper peer creates token and sends invitation
-      const invitationRequest = {
-        type: 'create_invitation_for_peer',
-        targetPeer: helperPeer.id.toString(),  // Which peer should PROCESS this message
-        targetNodeId: newNodeId,                // The NEW peer joining the network
-        targetNodeMetadata: newNodeMetadata,
-        fromBridge: this.dht.localNodeId.toString(),
-        requestId: requestId,
-        timestamp: Date.now()
-      };
+        // Disqualify inactive browser tabs (slow bootstrap reconnection, throttled by browser)
+        if (peer.metadata?.nodeType === 'browser' && peer.metadata?.tabVisible === false) {
+          console.log(`❌ Disqualifying ${peerId.substring(0, 8)} - inactive browser tab`);
+          return false;
+        }
 
-      // Send request to helper peer via DHT routing (not direct connection)
-      // Use routeSignalingMessage for transport-agnostic routing through DHT overlay
-      await this.dht.routeSignalingMessage(helperPeer.id.toString(), invitationRequest);
-      console.log(`📤 Routed invitation creation request to helper peer ${helperPeer.id.toString().substring(0, 8)} via DHT`);
+        // Disqualify very new nodes (< 30 seconds uptime - unstable, may still be bootstrapping)
+        const startTime = peer.metadata?.startTime || now;
+        const uptime = now - startTime;
+        if (uptime < 30000) {
+          console.log(`❌ Disqualifying ${peerId.substring(0, 8)} - too new (${(uptime/1000).toFixed(1)}s uptime)`);
+          return false;
+        }
+
+        return true;
+      });
+
+      if (qualifiedPeers.length === 0) {
+        throw new Error('No qualified DHT members available for onboarding (all peers disqualified: inactive tabs or too new)');
+      }
+
+      console.log(`✅ Qualified ${qualifiedPeers.length} peers after disqualifiers (removed ${activePeers.length - qualifiedPeers.length})`);
+
+      // 6. Select BEST helper from qualified candidates using uptime then RTT
+      // Strategy: Pick up to 3 candidates, rank by uptime (stability) then RTT (responsiveness)
+      const candidates = qualifiedPeers.slice(0, Math.min(3, qualifiedPeers.length));
+      console.log(`🎯 Evaluating ${candidates.length} candidate helpers for onboarding...`);
+
+      // Score each candidate: higher is better
+      const scoredCandidates = candidates.map(peer => {
+        const peerId = peer.id.toString();
+        const now = Date.now();
+
+        // Get uptime from metadata.startTime (higher uptime = more stable)
+        const startTime = peer.metadata?.startTime || now;
+        const uptimeMs = now - startTime;
+        const uptimeMinutes = uptimeMs / 60000;
+
+        // Get RTT (lower is better, 0 means unknown - treat as worst case)
+        const rtt = peer.rtt || 10000; // Default 10s if unknown
+
+        // Get node type
+        const nodeType = peer.metadata?.nodeType || 'unknown';
+
+        // Score: prioritize uptime first, then RTT, then node type as tiebreaker
+        // Uptime score: 1 point per minute, max 60 points (1 hour)
+        const uptimeScore = Math.min(uptimeMinutes, 60);
+        // RTT penalty: -1 point per 100ms, max -50 points
+        const rttPenalty = Math.min(rtt / 100, 50);
+        // Node type bonus: +5 for Node.js (more reliable reconnection) as tiebreaker
+        const nodeTypeBonus = nodeType === 'nodejs' ? 5 : 0;
+
+        const totalScore = uptimeScore - rttPenalty + nodeTypeBonus;
+
+        console.log(`   📊 ${peerId.substring(0, 8)}: type=${nodeType}, uptime=${uptimeMinutes.toFixed(1)}min, RTT=${rtt}ms, score=${totalScore.toFixed(1)}`);
+
+        return { peer, uptimeMs, rtt, nodeType, totalScore };
+      });
+
+      // Sort by score descending (best first)
+      scoredCandidates.sort((a, b) => b.totalScore - a.totalScore);
+
+      // 6. Try candidates in order until one succeeds (with fast timeout)
+      // This ensures we fail fast and try next candidate if helper doesn't respond
+      const HELPER_TIMEOUT_MS = 10000; // 10 second timeout per candidate
+      let helperPeer = null;
+      let successfulCandidate = null;
+
+      for (let i = 0; i < scoredCandidates.length; i++) {
+        const candidate = scoredCandidates[i];
+        const candidatePeer = candidate.peer;
+        const candidateId = candidatePeer.id.toString();
+
+        console.log(`🎯 Trying candidate ${i + 1}/${scoredCandidates.length}: ${candidateId.substring(0, 8)} (uptime=${(candidate.uptimeMs/60000).toFixed(1)}min, RTT=${candidate.rtt}ms, score=${candidate.totalScore.toFixed(1)})`);
+
+        // Create invitation request for this candidate
+        const invitationRequest = {
+          type: 'create_invitation_for_peer',
+          targetPeer: candidateId,              // Which peer should PROCESS this message
+          targetNodeId: newNodeId,              // The NEW peer joining the network
+          targetNodeMetadata: newNodeMetadata,
+          fromBridge: this.dht.localNodeId.toString(),
+          requestId: requestId,
+          candidateIndex: i,                    // Track which candidate this is
+          timestamp: Date.now()
+        };
+
+        try {
+          // Send request to helper peer via DHT routing with timeout
+          const sendPromise = this.dht.routeSignalingMessage(candidateId, invitationRequest);
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error(`Helper ${candidateId.substring(0, 8)} timeout after ${HELPER_TIMEOUT_MS}ms`)), HELPER_TIMEOUT_MS)
+          );
+
+          await Promise.race([sendPromise, timeoutPromise]);
+          console.log(`📤 Successfully routed invitation request to helper ${candidateId.substring(0, 8)} via DHT`);
+
+          // If we get here, the send succeeded - use this candidate
+          helperPeer = candidatePeer;
+          successfulCandidate = candidate;
+          break;
+
+        } catch (sendError) {
+          console.warn(`⚠️ Candidate ${i + 1} failed: ${sendError.message}`);
+          if (i < scoredCandidates.length - 1) {
+            console.log(`   Trying next candidate...`);
+          }
+          // Continue to next candidate
+        }
+      }
+
+      if (!helperPeer) {
+        throw new Error(`All ${scoredCandidates.length} helper candidates failed to respond`);
+      }
+
+      console.log(`✅ Selected helper: ${helperPeer.id.toString().substring(0, 8)} (uptime=${(successfulCandidate.uptimeMs/60000).toFixed(1)}min, RTT=${successfulCandidate.rtt}ms) (filtered ${closestPeers.length - fullDHTMembers.length} bridge nodes, ${fullDHTMembers.length - activePeers.length} inactive peers)`);
 
       // 7. Bridge creates membership token (bridge issues this directly)
       const membershipToken = {
@@ -688,7 +790,7 @@ export class PassiveBridgeNode extends NodeDHTClient {
         message: 'Active DHT member will create invitation and coordinate connection'
       });
 
-      console.log(`✅ Onboarding coordination initiated - active helper peer ${helperPeer.id.toString().substring(0, 8)} will create invitation`);
+      console.log(`✅ Onboarding coordination initiated - helper peer ${helperPeer.id.toString().substring(0, 8)} will create invitation`);
 
     } catch (error) {
       console.error(`❌ Onboarding peer discovery failed: ${error.message}`);
