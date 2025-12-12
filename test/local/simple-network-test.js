@@ -221,7 +221,7 @@ class SimpleDHTTester {
   simulateDHTLookup(fromNode, key) {
     // Simulate DHT lookup: find closest nodes and check their storage
     const keyId = DHTNodeId.fromString(key);
-    const closestNodes = fromNode.routingTable.getClosestNodes(keyId, 5);
+    const closestNodes = fromNode.routingTable.findClosestNodes(keyId, 5);
     
     // Check if any of the closest known nodes has the data
     for (const knownNode of closestNodes) {
