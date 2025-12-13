@@ -655,9 +655,16 @@ export class PassiveBridgeNode extends NodeDHTClient {
         const now = Date.now();
 
         // Disqualify inactive browser tabs (slow bootstrap reconnection, throttled by browser)
+        // Node.js nodes are always considered active (headless, no tab visibility)
         if (peer.metadata?.nodeType === 'browser' && peer.metadata?.tabVisible === false) {
           console.log(`❌ Disqualifying ${peerId.substring(0, 8)} - inactive browser tab`);
           return false;
+        }
+        
+        // Node.js nodes are always qualified (headless, always active)
+        if (peer.metadata?.nodeType === 'nodejs') {
+          console.log(`✅ Node.js node ${peerId.substring(0, 8)} - always qualified (headless)`);
+          return true; // Skip other checks for Node.js nodes
         }
 
         // Disqualify very new nodes (< 30 seconds uptime - unstable, may still be bootstrapping)
