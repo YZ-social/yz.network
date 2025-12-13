@@ -87,7 +87,16 @@ async function discoverNodes() {
 
     for (const container of containers) {
       console.log('DEBUG: processing container =', container);
-      const [name, ports] = container.split(':');
+      
+      // Split on first colon only to separate name from ports
+      const colonIndex = container.indexOf(':');
+      if (colonIndex === -1) {
+        console.log('DEBUG: no colon found, skipping container =', container);
+        continue;
+      }
+      
+      const name = container.substring(0, colonIndex);
+      const ports = container.substring(colonIndex + 1);
       console.log('DEBUG: name =', name, ', ports =', ports);
 
       // Extract metrics port (defaults to 9090)
