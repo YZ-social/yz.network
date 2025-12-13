@@ -50,14 +50,34 @@ const metrics = {
  */
 async function discoverNodes() {
   try {
+    // First, let's see what containers are actually running
+    console.log('🔍 Checking all running containers...');
+    const { stdout: allContainers } = await execAsync('docker ps --format "{{.Names}}"');
+    console.log('All running containers:', allContainers.trim().split('\n'));
+
     // Find all containers running DHT nodes
     const { stdout } = await execAsync(
-      `docker ps --filter "name=yznetwork[-_]dht-node" --format "{{.Names}}:{{.Ports}}"`
+      `docker ps --filter "name=yz-dht-node" --format "{{.Names}}:{{.Ports}}"`
     );
 
-    console.log('DEBUG: stdout =', JSON.stringify(stdout));
+    console.log('DEBUG: DHT node search stdout =', JSON.stringify(stdout));
     console.log('DEBUG: stdout length =', stdout.length);
-    console.log('DEBUG: stdout trimmed length =', stdout.trim().length);
+
+    if (stdout.trim().length === 0) {
+      console.log('⚠️ No DHT nodes found. Trying broader search...');
+      
+      // Try broader search patterns
+      const patterns = ['dht-node', 'yz-', 'node'];
+      for (const pattern of patterns) {
+        const { stdout: broadStdout } = await execAsync(
+          `docker ps --filter "name=${pattern}" --format "{{.Names}}:{{.Ports}}"`
+        );
+        if (broadStdout.trim().length > 0) {
+          console.log(`Found containers with pattern "${pattern}":`, broadStdout.trim());
+        }
+      }
+      return [];
+    }
 
     const containers = stdout.trim().split('\n').filter(Boolean);
     console.log('DEBUG: containers array =', containers);
@@ -78,7 +98,7 @@ async function discoverNodes() {
         name,
         host: name,  // Docker container name is DNS name
         port: 9090,  // Internal port
-        metricsUrl: `http://${name}:9090`
+        metricsUrl: `http://${name}:9090/metrics`
       });
     }
 
@@ -96,15 +116,21 @@ async function discoverNodes() {
  */
 async function fetchNodeMetrics(node) {
   try {
-    const response = await fetch(`${node.metricsUrl}/metrics`, {
+    console.log(`📊 Fetching metrics from ${node.name} at ${node.metricsUrl}`);
+    
+    const response = await fetch(node.metricsUrl, {
       signal: AbortSignal.timeout(5000)
     });
 
+    console.log(`📊 Response from ${node.name}: ${response.status} ${response.statusText}`);
+
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+      throw new Error(`HTTP ${response.status} ${response.statusText}`);
     }
 
     const data = await response.json();
+    console.log(`✅ Successfully fetched metrics from ${node.name}`);
+    
     return {
       ...data,
       nodeName: node.name,
@@ -112,7 +138,32 @@ async function fetchNodeMetrics(node) {
       healthy: data.node_healthy === 1
     };
   } catch (error) {
-    console.warn(`Failed to fetch metrics from ${node.name}:`, error.message);
+    console.warn(`❌ Failed to fetch metrics from ${node.name}:`, error.message);
+    
+    // Try health endpoint as fallback
+    try {
+      console.log(`🔄 Trying health endpoint for ${node.name}...`);
+      const healthUrl = node.metricsUrl.replace('/metrics', '/health');
+      const healthResponse = await fetch(healthUrl, {
+        signal: AbortSignal.timeout(3000)
+      });
+      
+      if (healthResponse.ok) {
+        console.log(`✅ Health endpoint accessible for ${node.name}`);
+        const healthData = await healthResponse.json();
+        return {
+          nodeName: node.name,
+          timestamp: Date.now(),
+          healthy: healthData.healthy || false,
+          error: 'Metrics endpoint failed, using health data',
+          node_healthy: healthData.healthy ? 1 : 0,
+          dht_connected_peers: healthData.connectedPeers || 0
+        };
+      }
+    } catch (healthError) {
+      console.warn(`❌ Health endpoint also failed for ${node.name}:`, healthError.message);
+    }
+    
     return {
       nodeName: node.name,
       timestamp: Date.now(),
