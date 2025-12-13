@@ -4,7 +4,9 @@ export default {
   testMatch: [
     '**/test/basic.test.js',
     '**/test/core/*.test.js',
-    '**/test/dht/*.test.js'
+    '**/test/dht/*.test.js',
+    '**/test/local/*.test.js',
+    '**/test/Howard/*.test.js'
   ],
   
   collectCoverageFrom: [

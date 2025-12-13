@@ -29,44 +29,44 @@ const TEST_PARAMS = {
 };
 
 class SimpleDHTTester {
-  constructor() {
-    this.nodes = [];
-    this.data = new Map(); // Simulated distributed storage
-    this.stats = {
-      nodesCreated: 0,
-      dataStored: 0,
-      lookupSuccesses: 0,
-      lookupFailures: 0
-    };
-  }
-
-  async runTest() {
-    console.log('🚀 Simple DHT Test - Core Logic Verification');
-    console.log(`Parameters: ${TEST_PARAMS.NODE_COUNT} nodes, ${TEST_PARAMS.DATA_COUNT} data items`);
-    
-    try {
-      // Step 1: Create virtual DHT nodes
-      await this.createVirtualNodes();
-      
-      // Step 2: Build routing tables
-      await this.buildRoutingTables();
-      
-      // Step 3: Store test data
-      await this.storeTestData();
-      
-      // Step 4: Verify data reachability
-      await this.verifyDataReachability();
-      
-      // Step 5: Print results
-      this.printResults();
-      
-      return this.stats;
-      
-    } catch (error) {
-      console.error('❌ Test failed:', error);
-      throw error;
+    constructor() {
+      this.nodes = [];
+      this.data = new Map(); // Simulated distributed storage
+      this.stats = {
+        nodesCreated: 0,
+        dataStored: 0,
+        lookupSuccesses: 0,
+        lookupFailures: 0
+      };
     }
-  }
+
+    async runTest() {
+      console.log('🚀 Simple DHT Test - Core Logic Verification');
+      console.log(`Parameters: ${TEST_PARAMS.NODE_COUNT} nodes, ${TEST_PARAMS.DATA_COUNT} data items`);
+      
+      try {
+        // Step 1: Create virtual DHT nodes
+        await this.createVirtualNodes();
+        
+        // Step 2: Build routing tables
+        await this.buildRoutingTables();
+        
+        // Step 3: Store test data
+        await this.storeTestData();
+        
+        // Step 4: Verify data reachability
+        await this.verifyDataReachability();
+        
+        // Step 5: Print results
+        this.printResults();
+        
+        return this.stats;
+        
+      } catch (error) {
+        console.error('❌ Test failed:', error);
+        throw error;
+      }
+    }
 
   async createVirtualNodes() {
     console.log(`\n📦 Creating ${TEST_PARAMS.NODE_COUNT} virtual DHT nodes...`);
@@ -242,64 +242,65 @@ class SimpleDHTTester {
     return null;
   }
 
-  printResults() {
-    console.log('\n📋 Simple DHT Test Results:');
-    console.log('==========================================');
-    console.log(`Virtual nodes: ${this.stats.nodesCreated}/${TEST_PARAMS.NODE_COUNT}`);
-    console.log(`Data stored: ${this.stats.dataStored}/${TEST_PARAMS.DATA_COUNT}`);
-    console.log(`Lookup successes: ${this.stats.lookupSuccesses}`);
-    console.log(`Lookup failures: ${this.stats.lookupFailures}`);
-    
-    if (this.stats.lookupSuccesses + this.stats.lookupFailures > 0) {
-      const successRate = (this.stats.lookupSuccesses / (this.stats.lookupSuccesses + this.stats.lookupFailures) * 100).toFixed(1);
-      console.log(`Success rate: ${successRate}%`);
+    printResults() {
+      console.log('\n📋 Simple DHT Test Results:');
+      console.log('==========================================');
+      console.log(`Virtual nodes: ${this.stats.nodesCreated}/${TEST_PARAMS.NODE_COUNT}`);
+      console.log(`Data stored: ${this.stats.dataStored}/${TEST_PARAMS.DATA_COUNT}`);
+      console.log(`Lookup successes: ${this.stats.lookupSuccesses}`);
+      console.log(`Lookup failures: ${this.stats.lookupFailures}`);
       
-      if (successRate >= 95) {
-        console.log('🎉 EXCELLENT - DHT logic working perfectly!');
-      } else if (successRate >= 85) {
-        console.log('✅ GOOD - DHT logic working well');
-      } else if (successRate >= 70) {
-        console.log('⚠️  FAIR - DHT logic has minor issues');
-      } else {
-        console.log('❌ POOR - DHT logic needs improvement');
+      if (this.stats.lookupSuccesses + this.stats.lookupFailures > 0) {
+        const successRate = (this.stats.lookupSuccesses / (this.stats.lookupSuccesses + this.stats.lookupFailures) * 100).toFixed(1);
+        console.log(`Success rate: ${successRate}%`);
+        
+        if (successRate >= 95) {
+          console.log('🎉 EXCELLENT - DHT logic working perfectly!');
+        } else if (successRate >= 85) {
+          console.log('✅ GOOD - DHT logic working well');
+        } else if (successRate >= 70) {
+          console.log('⚠️  FAIR - DHT logic has minor issues');
+        } else {
+          console.log('❌ POOR - DHT logic needs improvement');
+        }
       }
+      
+      console.log('==========================================');
+      
+      // Additional insights
+      console.log('\n📊 Network Analysis:');
+      const avgRoutingTableSize = this.nodes.reduce((sum, node) => sum + (node.routingTable.totalNodes || 0), 0) / this.nodes.length;
+      console.log(`Average routing table size: ${avgRoutingTableSize.toFixed(1)}`);
+      
+      const storageDistribution = this.nodes.map(node => node.storage.size);
+      const avgStorage = storageDistribution.reduce((a, b) => a + b, 0) / storageDistribution.length;
+      const maxStorage = Math.max(...storageDistribution);
+      const minStorage = Math.min(...storageDistribution);
+      
+      console.log(`Storage distribution: avg=${avgStorage.toFixed(1)}, min=${minStorage}, max=${maxStorage}`);
     }
-    
-    console.log('==========================================');
-    
-    // Additional insights
-    console.log('\n📊 Network Analysis:');
-    const avgRoutingTableSize = this.nodes.reduce((sum, node) => sum + (node.routingTable.totalNodes || 0), 0) / this.nodes.length;
-    console.log(`Average routing table size: ${avgRoutingTableSize.toFixed(1)}`);
-    
-    const storageDistribution = this.nodes.map(node => node.storage.size);
-    const avgStorage = storageDistribution.reduce((a, b) => a + b, 0) / storageDistribution.length;
-    const maxStorage = Math.max(...storageDistribution);
-    const minStorage = Math.min(...storageDistribution);
-    
-    console.log(`Storage distribution: avg=${avgStorage.toFixed(1)}, min=${minStorage}, max=${maxStorage}`);
   }
-}
 
-// Run the test
-async function main() {
-  console.log('🔧 Starting Simple DHT Test...');
-  
-  const tester = new SimpleDHTTester();
-  
-  try {
+describe('Simple DHT Network', () => {
+  test('should run complete DHT network simulation', async () => {
+    console.log('🔧 Starting Simple DHT Test...');
+    
+    const tester = new SimpleDHTTester();
+    
     const stats = await tester.runTest();
-    console.log('\n🎯 Simple test completed successfully!');
-    process.exit(0);
-  } catch (error) {
-    console.error('\n💥 Simple test failed:', error);
-    console.error('Stack:', error.stack);
-    process.exit(1);
-  }
-}
-
-if (import.meta.url.includes(process.argv[1].replace(/\\/g, '/'))) {
-  main();
-}
+    
+    // Assert the test completed successfully
+    expect(stats.nodesCreated).toBe(TEST_PARAMS.NODE_COUNT);
+    expect(stats.dataStored).toBe(TEST_PARAMS.DATA_COUNT);
+    expect(stats.lookupSuccesses + stats.lookupFailures).toBeGreaterThan(0);
+    
+    // Assert reasonable success rate
+    const totalLookups = stats.lookupSuccesses + stats.lookupFailures;
+    const successRate = (stats.lookupSuccesses / totalLookups) * 100;
+    expect(successRate).toBeGreaterThanOrEqual(70); // At least 70% success rate
+    
+    console.log('\n🎯 Simple test completed with proper assertions!');
+  });
+});
 
 export { SimpleDHTTester, TEST_PARAMS };

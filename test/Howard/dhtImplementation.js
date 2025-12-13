@@ -4,9 +4,72 @@
 // This section certainly needs to be modified for any given implementation.
 //
 
-// In the present case, these manipulate a Contact that directly contains a
-// DHT node with simulated networking.
-import { SimulatedConnectionContact as Contact, Node } from '../index.js';
+// Adapted for our YZSocialC DHT implementation
+import { createHash } from 'crypto';
+
+// Configure @noble/ed25519 for Node.js - simplified approach
+import * as ed25519 from '@noble/ed25519';
+if (!ed25519.etc || !ed25519.etc.sha512Sync) {
+  if (ed25519.etc) {
+    ed25519.etc.sha512Sync = (...m) => createHash('sha512').update(Buffer.concat(m)).digest();
+  }
+}
+
+import { NodeDHTClient } from '../../src/node/NodeDHTClient.js';
+import { DHTNodeId } from '../../src/core/DHTNodeId.js';
+
+// Contact wrapper to match Howard test expectations
+class Contact {
+  constructor(dhtClient) {
+    this.dhtClient = dhtClient;
+    this.node = dhtClient; // For compatibility with test expectations
+    this.name = dhtClient.nodeId.toString().substring(0, 8);
+  }
+
+  static async create({ name, refreshTimeIntervalMS, isServerNode = false }) {
+    const options = {
+      refreshInterval: refreshTimeIntervalMS || 60000,
+      bootstrapServers: ['ws://localhost:8080'],
+      // Server nodes get more connections and longer timeouts
+      maxConnections: isServerNode ? 100 : 50,
+      timeout: isServerNode ? 60000 : 30000
+    };
+
+    const dhtClient = new NodeDHTClient(options);
+    const contact = new Contact(dhtClient);
+    contact.isServerNode = isServerNode;
+    return contact;
+  }
+
+  async join(bootstrapContact) {
+    if (bootstrapContact && bootstrapContact.dhtClient) {
+      // Add the bootstrap contact's node info to our bootstrap options
+      const bootstrapNodeId = bootstrapContact.dhtClient.nodeId;
+      // For now, we rely on the bootstrap server for discovery
+      // In a real implementation, we might add direct peer connections here
+    }
+    await this.dhtClient.start();
+  }
+
+  async disconnect() {
+    await this.dhtClient.stop();
+  }
+
+  // DHT operations that match Howard test expectations
+  async storeValue(key, value) {
+    if (!this.dhtClient.dht) {
+      throw new Error('DHT not started');
+    }
+    await this.dhtClient.dht.store(String(key), value);
+  }
+
+  async locateValue(key) {
+    if (!this.dhtClient.dht) {
+      throw new Error('DHT not started');
+    }
+    return await this.dhtClient.dht.get(String(key));
+  }
+}
 
 export async function start1(name, bootstrapContact, refreshTimeIntervalMS, isServerNode = false) {
   const contact = await Contact.create({name, refreshTimeIntervalMS, isServerNode});
@@ -25,11 +88,11 @@ export async function stop1(contact) {
 export async function write1(contact, key, value) {
   // Make a request through contact to store value under key in the DHT
   // resolving when ready. (See test suite definitions.)
-  await contact.node.storeValue(key, value);
+  await contact.storeValue(key, value);
 }
 export async function read1(contact, key) {
   // Promise the result of requesting key from the DHT through contact.
-  return await contact.node.locateValue(key);
+  return await contact.locateValue(key);
 }
 
 
@@ -98,10 +161,12 @@ export async function setupServerNodes(nServerNodes, refreshTimeIntervalMS) {
   // Set up nServerNodes, returning a promise that resolves when they are ready to use.
   // See definitions in test suite.
 
-  Node.contacts = contacts = []; // Quirk of simulation code.
+  contacts = []; // Reset contacts array
   
   for (let i = 0; i < nServerNodes; i++) {
     contacts.push(await startServerNode(i, contacts[i - 1], refreshTimeIntervalMS));
+    // Add a small delay to prevent overwhelming the bootstrap server
+    await new Promise(resolve => setTimeout(resolve, 100));
   }
 }
 export async function shutdownServerNodes(nServerNodes) {

@@ -101,8 +101,8 @@ test.describe('Test Infrastructure', () => {
       console.log('⚠️ Console errors detected:', criticalErrors);
     }
 
-    // Don't fail on console errors for now, just log them
-    // expect(criticalErrors.length).toBe(0);
+    // FIXED: Actually assert that there are no critical errors
+    expect(criticalErrors.length).toBe(0);
 
     console.log(`✅ Page loaded with ${consoleErrors.length} console messages`);
   });

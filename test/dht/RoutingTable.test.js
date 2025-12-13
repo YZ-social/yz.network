@@ -50,16 +50,16 @@ describe('RoutingTable', () => {
       expect(foundNode == null).toBe(true); // Handles both null and undefined
     });
 
-    test('should update existing node', () => {
+    test('should update existing node', async () => {
       const node = new DHTNode(new DHTNodeId(), 'test-address');
       routingTable.addNode(node);
       
       const initialLastSeen = node.lastSeen;
       
-      setTimeout(() => {
-        routingTable.addNode(node); // Re-adding should update
-        expect(node.lastSeen).toBeGreaterThan(initialLastSeen);
-      }, 10);
+      // FIXED: Properly await the timeout
+      await new Promise(resolve => setTimeout(resolve, 10));
+      routingTable.addNode(node); // Re-adding should update
+      expect(node.lastSeen).toBeGreaterThan(initialLastSeen);
     });
   });
 

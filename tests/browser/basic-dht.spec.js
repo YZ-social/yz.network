@@ -141,8 +141,9 @@ test.describe('Basic DHT Functionality', () => {
       routingTableSize: stats.routingTable?.size || 0
     });
 
-    // Should have at least some connections in open network mode
-    expect(stats.connections?.total).toBeGreaterThanOrEqual(0);
+    // Should have meaningful connection stats (not just undefined/null)
+    expect(stats.connections).toBeTruthy();
+    expect(typeof stats.connections.total).toBe('number');
   });
 
   test('should handle multiple DHT operations', async ({ page }) => {

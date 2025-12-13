@@ -1,9 +1,11 @@
-// Defines a repeatable suite of tests that confirm DHT operations and log performance data.
+/**
+ * DHT Acceptance Tests - Howard's comprehensive DHT test suite
+ * 
+ * Defines a repeatable suite of tests that confirm DHT operations and log performance data.
+ * Adapted for Jest and our YZSocialC DHT implementation.
+ */
 
-// Defined by the generic test framework. See https://jasmine.github.io/
-// One does not import these definitions from a file, but rather they are
-// defined globally by the jasmine program or browser page that runs the tests.
-const { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach} = globalThis; // For linters.
+import { spawn } from 'child_process';
 
 // The file dhtImplementation.js exports functions that perform setup operations whose
 // implementation changes for different DHTs.
@@ -11,6 +13,56 @@ import { setupServerNodes, shutdownServerNodes,
 	 setupClientsByTime, shutdownClientNodes,
 	 getContacts, getRandomLiveContact,
 	 startThrashing, write1, read1 } from './dhtImplementation.js';
+
+// DHT infrastructure management
+let bootstrapProcess = null;
+
+// Global setup for DHT infrastructure
+beforeAll(async () => {
+  console.log('🚀 Starting DHT infrastructure for Howard tests...');
+  
+  // Start bootstrap server with genesis and open network (includes bridge nodes)
+  console.log('🌟 Starting complete DHT infrastructure...');
+  bootstrapProcess = spawn('npm', ['run', 'bridge:genesis:openNetwork'], {
+    stdio: 'pipe',
+    shell: true
+  });
+  
+  // Wait for bootstrap server to be ready
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('Bootstrap server timeout')), 60000);
+    
+    const checkServer = async () => {
+      try {
+        const response = await fetch('http://localhost:8080/health');
+        if (response.ok) {
+          clearTimeout(timeout);
+          console.log('✅ DHT infrastructure ready');
+          resolve();
+        } else {
+          setTimeout(checkServer, 1000);
+        }
+      } catch (error) {
+        setTimeout(checkServer, 1000);
+      }
+    };
+    
+    checkServer();
+  });
+}, 90000); // 90 second timeout for full infrastructure
+
+afterAll(async () => {
+  console.log('🛑 Stopping DHT infrastructure...');
+  
+  if (bootstrapProcess) {
+    console.log('  Stopping DHT infrastructure...');
+    bootstrapProcess.kill();
+    bootstrapProcess = null;
+  }
+  
+  // Give processes time to clean up
+  await new Promise(resolve => setTimeout(resolve, 2000));
+});
 
 // Some definitions:
 //

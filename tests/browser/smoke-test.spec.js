@@ -76,9 +76,9 @@ test.describe('Smoke Test', () => {
       console.log('⚠️ Page errors:', criticalPageErrors);
     }
 
-    // Don't fail on non-critical errors for now
-    // expect(criticalErrors.length).toBe(0);
-    // expect(criticalPageErrors.length).toBe(0);
+    // FIXED: Actually assert that there are no critical errors
+    expect(criticalErrors.length).toBe(0);
+    expect(criticalPageErrors.length).toBe(0);
   });
 
   test('should have working UI elements', async ({ page }) => {
