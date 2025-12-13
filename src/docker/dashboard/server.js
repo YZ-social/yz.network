@@ -55,9 +55,9 @@ async function discoverNodes() {
     const { stdout: allContainers } = await execAsync('docker ps --format "{{.Names}}"');
     console.log('All running containers:', allContainers.trim().split('\n'));
 
-    // Find all containers running DHT nodes
+    // Find all containers running DHT nodes - use simpler approach
     const { stdout } = await execAsync(
-      `docker ps --filter "name=yz-dht-node" --format "{{.Names}}:{{.Ports}}"`
+      'docker ps --filter "name=yz-dht-node" --format "{{.Names}}"'
     );
 
     console.log('DEBUG: DHT node search stdout =', JSON.stringify(stdout));
@@ -79,35 +79,22 @@ async function discoverNodes() {
       return [];
     }
 
-    const containers = stdout.trim().split('\n').filter(Boolean);
-    console.log('DEBUG: containers array =', containers);
-    console.log('DEBUG: containers count =', containers.length);
+    const containerNames = stdout.trim().split('\n').filter(Boolean);
+    console.log('DEBUG: container names =', containerNames);
+    console.log('DEBUG: container count =', containerNames.length);
 
     const nodes = [];
 
-    for (const container of containers) {
-      console.log('DEBUG: processing container =', container);
+    for (const name of containerNames) {
+      console.log('DEBUG: processing container =', name);
       
-      // Split on first colon only to separate name from ports
-      const colonIndex = container.indexOf(':');
-      if (colonIndex === -1) {
-        console.log('DEBUG: no colon found, skipping container =', container);
-        continue;
-      }
-      
-      const name = container.substring(0, colonIndex);
-      const ports = container.substring(colonIndex + 1);
-      console.log('DEBUG: name =', name, ', ports =', ports);
-
-      // Extract metrics port (defaults to 9090)
-      const portMatch = ports.match(/0\.0\.0\.0:(\d+)->9090/);
-      const metricsPort = portMatch ? portMatch[1] : '9090';
-
+      // For now, use default metrics port 9090 (internal port)
+      // We can get the external port later if needed
       nodes.push({
-        name,
-        host: name,  // Docker container name is DNS name
+        name: name.trim(),
+        host: name.trim(),  // Docker container name is DNS name
         port: 9090,  // Internal port
-        metricsUrl: `http://${name}:9090/metrics`
+        metricsUrl: `http://${name.trim()}:9090/metrics`
       });
     }
 
