@@ -1099,7 +1099,7 @@ export class PassiveBridgeNode extends NodeDHTClient {
     // Check if this is a bootstrap authentication message
     if (message.type === 'bootstrap_auth') {
       this.handleBootstrapAuth(peerId, message);
-      // Don't return - let other bootstrap messages fall through
+      return; // Return early - bootstrap_auth is handled, don't route to handleBootstrapMessage
     }
 
     // Check if this is a bootstrap server peer
