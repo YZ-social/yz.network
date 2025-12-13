@@ -668,11 +668,16 @@ export class PassiveBridgeNode extends NodeDHTClient {
         }
 
         // Disqualify very new nodes (< 30 seconds uptime - unstable, may still be bootstrapping)
-        const startTime = peer.metadata?.startTime || now;
-        const uptime = now - startTime;
-        if (uptime < 30000) {
-          console.log(`❌ Disqualifying ${peerId.substring(0, 8)} - too new (${(uptime/1000).toFixed(1)}s uptime)`);
-          return false;
+        // Skip uptime check if startTime is missing (assume node is stable)
+        if (peer.metadata?.startTime) {
+          const startTime = peer.metadata.startTime;
+          const uptime = now - startTime;
+          if (uptime < 30000) {
+            console.log(`❌ Disqualifying ${peerId.substring(0, 8)} - too new (${(uptime/1000).toFixed(1)}s uptime)`);
+            return false;
+          }
+        } else {
+          console.log(`⚠️ Peer ${peerId.substring(0, 8)} missing startTime metadata - assuming stable`);
         }
 
         return true;
@@ -695,7 +700,8 @@ export class PassiveBridgeNode extends NodeDHTClient {
         const now = Date.now();
 
         // Get uptime from metadata.startTime (higher uptime = more stable)
-        const startTime = peer.metadata?.startTime || now;
+        // Use reasonable default if startTime is missing
+        const startTime = peer.metadata?.startTime || (now - 300000); // Default to 5 minutes uptime
         const uptimeMs = now - startTime;
         const uptimeMinutes = uptimeMs / 60000;
 
