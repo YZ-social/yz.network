@@ -43,3 +43,7 @@ temp/
 
 # WebRTC/DHT specific
 # Add any test data or temporary network files here
+
+# Test results
+test-results/
+playwright-report/
