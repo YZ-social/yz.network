@@ -6,14 +6,14 @@
 // Default log levels for different components
 export const LOG_CONFIG = {
   // Connection management (most verbose)
-  CONNECTION_MANAGER: 'WARN',    // Only warnings and errors
-  WEBSOCKET_MANAGER: 'WARN',     // Only warnings and errors  
-  WEBRTC_MANAGER: 'WARN',        // Only warnings and errors
+  CONNECTION_MANAGER: 'ERROR',   // Only errors (too verbose)
+  WEBSOCKET_MANAGER: 'ERROR',    // Only errors (too verbose)  
+  WEBRTC_MANAGER: 'ERROR',       // Only errors (too verbose)
   
   // DHT operations (moderate)
-  DHT_CORE: 'INFO',              // Important operations only
-  ROUTING_TABLE: 'WARN',         // Only warnings and errors
-  PEER_DISCOVERY: 'INFO',        // Peer connections are important
+  DHT_CORE: 'WARN',              // Warnings and errors only
+  ROUTING_TABLE: 'ERROR',        // Only errors (too verbose)
+  PEER_DISCOVERY: 'WARN',        // Warnings and errors only
   
   // PubSub (important for debugging)
   PUBSUB: 'INFO',                // Keep PubSub logs for debugging
@@ -21,7 +21,7 @@ export const LOG_CONFIG = {
   // Maintenance (very verbose)
   PING_PONG: 'ERROR',            // Only errors (pings are too frequent)
   METRICS: 'ERROR',              // Only errors (metrics are too frequent)
-  MAINTENANCE: 'WARN',           // Only warnings and errors
+  MAINTENANCE: 'ERROR',          // Only errors (too verbose)
   
   // Bootstrap and auth (important)
   BOOTSTRAP: 'INFO',             // Keep bootstrap logs
@@ -102,5 +102,33 @@ if (typeof window !== 'undefined') {
       LOG_CONFIG[component] = 'DEBUG';
     });
     console.log('🔊 Verbose mode enabled - full logging');
+  };
+  
+  // PubSub debugging helpers
+  window.enablePubSubDebug = () => {
+    LOG_CONFIG.PUBSUB = 'DEBUG';
+    LOG_CONFIG.DHT_CORE = 'INFO';
+    console.log('🔊 PubSub debug mode enabled');
+  };
+  
+  window.fixPubSubConnections = () => {
+    if (window.YZSocialC && window.YZSocialC.dht) {
+      console.log('🔧 Cleaning up routing table to fix PubSub connections...');
+      const cleaned = window.YZSocialC.dht.cleanupRoutingTable();
+      console.log(`✅ Cleaned up ${cleaned} stale routing table entries`);
+      
+      // Also trigger peer discovery
+      if (window.YZSocialC.dht.discoverPeersViaDHT) {
+        console.log('🔍 Triggering peer discovery...');
+        window.YZSocialC.dht.discoverPeersViaDHT().catch(err => {
+          console.warn('Peer discovery failed:', err.message);
+        });
+      }
+      
+      return cleaned;
+    } else {
+      console.error('DHT not available');
+      return 0;
+    }
   };
 }

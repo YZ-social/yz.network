@@ -1429,6 +1429,7 @@ export class DHTVisualizer {
 
   /**
    * Create a new channel
+   * IMPROVED: Better error handling and connection diagnostics
    */
   async createChannel() {
     if (!this.pubsub) {
@@ -1446,6 +1447,14 @@ export class DHTVisualizer {
     btn.classList.add('loading');
 
     try {
+      // Check DHT connectivity first
+      const connectedPeers = this.dht ? this.dht.getConnectedPeers().length : 0;
+      if (connectedPeers === 0) {
+        throw new Error('No DHT connections available. Please wait for peers to connect or try fixPubSubConnections()');
+      }
+
+      this.log(`Creating channel with ${connectedPeers} DHT connections...`, 'info');
+
       // Generate a unique channel ID (use crypto for better randomness)
       const channelId = `channel-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
 
@@ -1458,8 +1467,13 @@ export class DHTVisualizer {
       // Add to our tracked channels (before subscribe so displayMessage can use it)
       this.subscribedChannels.set(channelId, { messages: [] });
 
-      // Subscribe to the channel (this will deliver historical messages to the listener we just registered)
-      await this.pubsub.subscribe(channelId);
+      // Subscribe to the channel with timeout
+      const subscribePromise = this.pubsub.subscribe(channelId);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Channel creation timeout (30s)')), 30000)
+      );
+
+      await Promise.race([subscribePromise, timeoutPromise]);
 
       // Update UI
       this.updateChannelsList();
@@ -1482,6 +1496,13 @@ export class DHTVisualizer {
 
     } catch (error) {
       this.log(`Failed to create channel: ${error.message}`, 'error');
+      
+      // Provide helpful suggestions
+      if (error.message.includes('timeout') || error.message.includes('No connection')) {
+        this.log('💡 Try: fixPubSubConnections() in console to clean up connections', 'info');
+        this.log('💡 Or: enablePubSubDebug() for detailed logging', 'info');
+      }
+      
     } finally {
       // Restore button state
       btn.disabled = false;

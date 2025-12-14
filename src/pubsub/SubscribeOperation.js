@@ -92,8 +92,8 @@ export class SubscribeOperation {
       signature
     };
 
-    // Load or create coordinator
-    let coordinator = await this.storage.loadCoordinator(topicID);
+    // Load or create coordinator (use resilient loading for better reliability)
+    let coordinator = await this.storage.loadCoordinatorResilient(topicID);
     if (!coordinator) {
       console.log(`   📝 Creating initial coordinator for topic ${topicID.substring(0, 8)}...`);
       coordinator = CoordinatorObject.createInitial(topicID);

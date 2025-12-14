@@ -13,7 +13,7 @@ export class Logger {
   };
 
   // Set default log level (can be overridden via URL param or localStorage)
-  static currentLevel = Logger.levels.INFO;
+  static currentLevel = Logger.levels.WARN; // Start with WARN to reduce spam
 
   static init() {
     // Check URL params for log level

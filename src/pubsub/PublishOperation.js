@@ -150,8 +150,8 @@ export class PublishOperation {
       console.log(`   🔄 Coordinator update attempt ${attempt}...`);
 
       try {
-        // Load current coordinator (or create if doesn't exist)
-        let coordinator = await this.storage.loadCoordinator(topicID);
+        // Load current coordinator (or create if doesn't exist) - use resilient loading
+        let coordinator = await this.storage.loadCoordinatorResilient(topicID);
         if (!coordinator) {
           console.log(`   📝 Creating initial coordinator for topic ${topicID.substring(0, 8)}...`);
           coordinator = CoordinatorObject.createInitial(topicID);

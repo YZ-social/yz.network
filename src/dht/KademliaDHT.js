@@ -2926,6 +2926,7 @@ export class KademliaDHT extends EventEmitter {
 
   /**
    * Internal method to search the DHT network for a value
+   * IMPROVED: Prioritizes connected peers and handles disconnections gracefully
    */
   async _getFromDHT(key) {
     console.log(`🔍 DHT search for key: "${key}"`);
@@ -2936,59 +2937,96 @@ export class KademliaDHT extends EventEmitter {
     const closestNodes = await this.findNode(keyId);
     console.log(`✅ GET: findNode returned ${closestNodes.length} closest nodes`);
 
-    // Query nodes for the value (connect on-demand with intelligent pruning if needed)
-    let queriesAttempted = 0;
+    // IMPROVEMENT: Separate connected and disconnected nodes, prioritize connected
+    const connectedNodes = [];
+    const disconnectedNodes = [];
+    
     for (const node of closestNodes) {
-      try {
-        const peerId = node.id.toString();
-
-        // Connect to node if not already connected (Kademlia-compliant: routing table nodes should be queryable)
-        if (!this.isPeerConnected(peerId)) {
-          console.log(`🔗 GET: Node ${peerId.substring(0, 8)}... not connected, attempting connection...`);
-          try {
-            // First check if we can connect without pruning
-            const shouldConnect = await this.shouldConnectToPeer(peerId);
-
-            if (!shouldConnect) {
-              // At connection limit - use intelligent pruning to make room
-              console.log(`🔄 GET: At connection limit, evaluating pruning for query node ${peerId.substring(0, 8)}...`);
-              const slotFreed = await this.pruneConnectionForQuery(keyId, peerId);
-
-              if (!slotFreed) {
-                console.warn(`⚠️ GET: Cannot free a connection slot for ${peerId.substring(0, 8)}... (current connections more valuable)`);
-                continue; // Try next node
-              }
-            }
-
-            // Now connect to the query node using connectToPeer() for max connection enforcement
-            const connected = await this.connectToPeer(peerId);
-            if (!connected) {
-              console.warn(`⚠️ GET: Could not connect to ${peerId.substring(0, 8)}... (max connections or already connected)`);
-              continue; // Skip to next node
-            }
-
-            // Give connection a moment to establish
-            await new Promise(resolve => setTimeout(resolve, 100));
-          } catch (connError) {
-            console.warn(`⚠️ GET: Failed to connect to ${peerId.substring(0, 8)}...: ${connError.message}`);
-            continue; // Skip to next node
-          }
-        }
-
-        queriesAttempted++;
-        console.log(`📤 GET: Querying node ${peerId.substring(0, 8)}... (${queriesAttempted}/${closestNodes.length})`);
-        const response = await this.sendFindValue(peerId, key);
-        console.log(`📥 GET: Response from ${peerId.substring(0, 8)}...: found=${response.found}`);
-        if (response.found && response.value !== undefined) {
-          console.log(`✅ GET: Successfully retrieved "${key}" from ${peerId.substring(0, 8)}...`);
-          return response.value;
-        }
-      } catch (error) {
-        console.warn(`⚠️ GET: Find value query failed for ${node.id.toString().substring(0, 8)}...:`, error.message);
+      const peerId = node.id.toString();
+      if (this.isPeerConnected(peerId)) {
+        connectedNodes.push(node);
+      } else {
+        disconnectedNodes.push(node);
       }
     }
 
-    console.log(`❌ GET: Failed to find "${key}" after querying ${queriesAttempted} nodes`);
+    console.log(`📊 GET: ${connectedNodes.length} connected, ${disconnectedNodes.length} disconnected nodes`);
+
+    // Query connected nodes first (fast path)
+    let queriesAttempted = 0;
+    let successfulQueries = 0;
+
+    // Phase 1: Query connected nodes (should be fast and reliable)
+    for (const node of connectedNodes) {
+      try {
+        const peerId = node.id.toString();
+        queriesAttempted++;
+        console.log(`📤 GET: Querying connected node ${peerId.substring(0, 8)}... (${queriesAttempted}/${closestNodes.length})`);
+        
+        const response = await this.sendFindValue(peerId, key);
+        successfulQueries++;
+        
+        console.log(`📥 GET: Response from ${peerId.substring(0, 8)}...: found=${response.found}`);
+        if (response.found && response.value !== undefined) {
+          console.log(`✅ GET: Successfully retrieved "${key}" from connected node ${peerId.substring(0, 8)}...`);
+          return response.value;
+        }
+      } catch (error) {
+        console.warn(`⚠️ GET: Query failed for connected node ${node.id.toString().substring(0, 8)}...: ${error.message}`);
+      }
+    }
+
+    // Phase 2: Try disconnected nodes only if we have few successful queries
+    // This prevents wasting time on connection attempts when we already have good coverage
+    const minSuccessfulQueries = Math.min(3, Math.ceil(closestNodes.length / 2));
+    
+    if (successfulQueries < minSuccessfulQueries && disconnectedNodes.length > 0) {
+      console.log(`🔄 GET: Only ${successfulQueries} successful queries, trying disconnected nodes...`);
+      
+      // Limit connection attempts to avoid timeout cascade
+      const maxConnectionAttempts = Math.min(3, disconnectedNodes.length);
+      
+      for (let i = 0; i < maxConnectionAttempts; i++) {
+        const node = disconnectedNodes[i];
+        const peerId = node.id.toString();
+        
+        try {
+          console.log(`🔗 GET: Attempting connection to ${peerId.substring(0, 8)}... (${i + 1}/${maxConnectionAttempts})`);
+          
+          // Quick connection attempt with shorter timeout
+          const connectionPromise = this.connectToPeer(peerId);
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Connection timeout')), 3000) // 3s timeout
+          );
+          
+          await Promise.race([connectionPromise, timeoutPromise]);
+          
+          // Give connection a moment to establish
+          await new Promise(resolve => setTimeout(resolve, 100));
+          
+          // Query the newly connected node
+          queriesAttempted++;
+          console.log(`📤 GET: Querying newly connected node ${peerId.substring(0, 8)}...`);
+          
+          const response = await this.sendFindValue(peerId, key);
+          successfulQueries++;
+          
+          console.log(`📥 GET: Response from ${peerId.substring(0, 8)}...: found=${response.found}`);
+          if (response.found && response.value !== undefined) {
+            console.log(`✅ GET: Successfully retrieved "${key}" from newly connected node ${peerId.substring(0, 8)}...`);
+            return response.value;
+          }
+          
+        } catch (error) {
+          console.warn(`⚠️ GET: Failed to connect/query ${peerId.substring(0, 8)}...: ${error.message}`);
+          // Continue to next node
+        }
+      }
+    } else {
+      console.log(`✅ GET: Sufficient coverage with ${successfulQueries} successful queries, skipping disconnected nodes`);
+    }
+
+    console.log(`❌ GET: Failed to find "${key}" after ${queriesAttempted} queries (${successfulQueries} successful)`);
     return null;
   }
 
@@ -3713,19 +3751,24 @@ export class KademliaDHT extends EventEmitter {
 
   /**
    * Send request and wait for response
-   * NOTE: Reduced timeout to 10s for faster failure detection on localhost
-   * (30s was causing test script to hang during node setup)
+   * IMPROVED: Better timeout handling and connection validation
    */
-  async sendRequestWithResponse(peerId, message, timeout = 10000) {
+  async sendRequestWithResponse(peerId, message, timeout = 5000) {
     // CRITICAL: Never send requests to ourselves
     if (peerId === this.localNodeId.toString()) {
       throw new Error(`Cannot send ${message.type} request to self: ${peerId}`);
     }
 
+    // IMPROVEMENT: Check connection before creating timeout
+    if (!this.isPeerConnected(peerId)) {
+      throw new Error(`No connection to peer ${peerId}`);
+    }
+
     return new Promise((resolve, reject) => {
       const timeoutHandle = setTimeout(() => {
         this.pendingRequests.delete(message.requestId);
-        reject(new Error(`Request timeout for ${message.type}`));
+        // IMPROVEMENT: More specific timeout message
+        reject(new Error(`Request timeout for ${message.type} to ${peerId.substring(0, 8)}... (${timeout}ms)`));
       }, timeout);
 
       this.pendingRequests.set(message.requestId, {

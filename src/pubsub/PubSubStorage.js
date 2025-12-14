@@ -91,6 +91,58 @@ export class PubSubStorage {
   }
 
   /**
+   * Load coordinator with resilient fallback strategy
+   * IMPROVED: Handles connection failures gracefully for PubSub channel creation
+   * @param {string} topicID - Topic ID
+   * @returns {Promise<CoordinatorObject|null>} - Coordinator or null if not found
+   */
+  async loadCoordinatorResilient(topicID) {
+    const key = `coordinator:${topicID}`;
+    console.log(`🔍 Loading coordinator (resilient) for topic ${topicID.substring(0, 8)}...`);
+
+    try {
+      // First attempt: Try normal network fetch
+      const data = await this.dht.getFromNetwork(key);
+      if (data) {
+        const coordinator = CoordinatorObject.deserialize(data);
+        console.log(`   ✅ Loaded coordinator (version ${coordinator.version}) from network`);
+        return coordinator;
+      }
+      
+      console.log(`   Coordinator not found for topic ${topicID.substring(0, 8)}...`);
+      return null;
+      
+    } catch (error) {
+      console.warn(`   ⚠️ Network fetch failed: ${error.message}`);
+      
+      // Fallback: Clean up routing table and try local cache as last resort
+      console.log(`   🔄 Cleaning up routing table and retrying...`);
+      
+      try {
+        // Clean up stale routing table entries
+        this.dht.cleanupRoutingTable();
+        
+        // Wait a moment for cleanup to complete
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Try local cache as absolute last resort (may be stale but better than nothing)
+        const localData = await this.dht.get(key);
+        if (localData) {
+          const coordinator = CoordinatorObject.deserialize(localData);
+          console.log(`   ⚠️ Using local cache coordinator (version ${coordinator.version}) - may be stale`);
+          return coordinator;
+        }
+        
+      } catch (fallbackError) {
+        console.error(`   ❌ Fallback also failed: ${fallbackError.message}`);
+      }
+      
+      console.error(`   ❌ All coordinator loading attempts failed for topic ${topicID.substring(0, 8)}...`);
+      return null;
+    }
+  }
+
+  /**
    * Store coordinator with version check (optimistic locking)
    * @param {CoordinatorObject} newCoordinator - New coordinator to store
    * @param {number} expectedVersion - Expected current version
