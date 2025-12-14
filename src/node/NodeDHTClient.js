@@ -343,7 +343,7 @@ export class NodeDHTClient extends DHTClient {
    * Store data in DHT
    */
   async store(key, value) {
-    if (!this.dht) {
+    if (!this.dht || !this.dht.isStarted) {
       throw new Error('DHT not started');
     }
     return this.dht.store(key, value);
@@ -353,7 +353,7 @@ export class NodeDHTClient extends DHTClient {
    * Get data from DHT
    */
   async get(key) {
-    if (!this.dht) {
+    if (!this.dht || !this.dht.isStarted) {
       throw new Error('DHT not started');
     }
     return this.dht.get(key);
@@ -363,7 +363,7 @@ export class NodeDHTClient extends DHTClient {
    * Invite new client to join DHT
    */
   async inviteNewClient(targetNodeId) {
-    if (!this.dht) {
+    if (!this.dht || !this.dht.isStarted) {
       throw new Error('DHT not started');
     }
     return this.dht.inviteNewClient(targetNodeId);

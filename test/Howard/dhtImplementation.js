@@ -57,14 +57,14 @@ class Contact {
 
   // DHT operations that match Howard test expectations
   async storeValue(key, value) {
-    if (!this.dhtClient.dht) {
+    if (!this.dhtClient.dht || !this.dhtClient.dht.isStarted) {
       throw new Error('DHT not started');
     }
     await this.dhtClient.dht.store(String(key), value);
   }
 
   async locateValue(key) {
-    if (!this.dhtClient.dht) {
+    if (!this.dhtClient.dht || !this.dhtClient.dht.isStarted) {
       throw new Error('DHT not started');
     }
     return await this.dhtClient.dht.get(String(key));

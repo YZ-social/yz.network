@@ -182,7 +182,7 @@ export class DHTClient extends EventEmitter {
    * Get connection statistics
    */
   getStats() {
-    if (!this.dht) {
+    if (!this.dht || !this.dht.isStarted) {
       return { error: 'DHT not started' };
     }
 
@@ -198,7 +198,7 @@ export class DHTClient extends EventEmitter {
    * Create invitation token for new peer
    */
   async createInvitationToken(targetNodeId, expiration = 30 * 60 * 1000) {
-    if (!this.dht) {
+    if (!this.dht || !this.dht.isStarted) {
       throw new Error('DHT not started');
     }
 
@@ -209,7 +209,7 @@ export class DHTClient extends EventEmitter {
    * Send invitation to new peer
    */
   async inviteNewClient(clientId) {
-    if (!this.dht) {
+    if (!this.dht || !this.dht.isStarted) {
       throw new Error('DHT not started');
     }
 
@@ -220,7 +220,7 @@ export class DHTClient extends EventEmitter {
    * Get connected peers
    */
   getConnectedPeers() {
-    if (!this.dht) {
+    if (!this.dht || !this.dht.isStarted) {
       return [];
     }
 
@@ -231,7 +231,7 @@ export class DHTClient extends EventEmitter {
    * Store data in DHT
    */
   async store(key, value) {
-    if (!this.dht) {
+    if (!this.dht || !this.dht.isStarted) {
       throw new Error('DHT not started');
     }
 
@@ -242,7 +242,7 @@ export class DHTClient extends EventEmitter {
    * Retrieve data from DHT
    */
   async get(key) {
-    if (!this.dht) {
+    if (!this.dht || !this.dht.isStarted) {
       throw new Error('DHT not started');
     }
 
@@ -254,7 +254,7 @@ export class DHTClient extends EventEmitter {
    * Use this for mutable data like PubSub coordinators that may be updated by other nodes.
    */
   async getFromNetwork(key) {
-    if (!this.dht) {
+    if (!this.dht || !this.dht.isStarted) {
       throw new Error('DHT not started');
     }
 
