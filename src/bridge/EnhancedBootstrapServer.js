@@ -42,13 +42,8 @@ export class EnhancedBootstrapServer extends EventEmitter {
     this.server = null;
     this.genesisAssigned = false; // Track if genesis has been successfully assigned (for open network mode)
 
-    // Bridge node management
-    this.bridgeConnections = new Map(); // bridgeAddr -> WebSocket
-    this.bridgeReconnectTimers = new Map(); // bridgeAddr -> timer
-    this.pendingReconnections = new Map(); // requestId -> { ws, resolve, reject, timeout }
-    this.pendingGenesisRequests = new Map(); // nodeId -> { ws, message, timestamp }
+    // Bridge node management (stateless)
     this.pendingInvitations = new Map(); // invitationId -> { inviterNodeId, inviteeNodeId, inviterWs, inviteeWs, status, timestamp }
-    this.pendingBridgeQueries = new Map(); // requestId -> { ws, nodeId, metadata, clientMessage, resolve, reject, timeout }
 
     // Authentication management
     this.authChallenges = new Map(); // nodeId -> { nonce, timestamp, publicKey, ws }
@@ -184,6 +179,29 @@ export class EnhancedBootstrapServer extends EventEmitter {
         // Stats endpoint
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(this.getStats()));
+      } else if (url === '/bridge-health') {
+        // IMPROVEMENT: Bridge availability endpoint for monitoring (stateless)
+        (async () => {
+          try {
+            const availabilityStatus = await this.checkBridgeAvailability();
+            const isHealthy = availabilityStatus.unavailable === 0;
+            
+            res.writeHead(isHealthy ? 200 : 503, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              healthy: isHealthy,
+              bridgeAvailability: availabilityStatus,
+              timestamp: Date.now(),
+              message: isHealthy ? 'All bridge nodes available' : `${availabilityStatus.unavailable} bridge nodes unavailable`
+            }));
+          } catch (error) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              healthy: false,
+              error: error.message,
+              timestamp: Date.now()
+            }));
+          }
+        })();
       } else {
         // Not found
         res.writeHead(404, { 'Content-Type': 'text/plain' });
@@ -595,17 +613,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
     }
     this.peers.clear();
 
-    // Close bridge connections
-    for (const [addr, ws] of this.bridgeConnections) {
-      ws.close(1000, 'Server shutdown');
-    }
-    this.bridgeConnections.clear();
-
-    // Clear timers
-    for (const timer of this.bridgeReconnectTimers.values()) {
-      clearTimeout(timer);
-    }
-    this.bridgeReconnectTimers.clear();
+    // No persistent bridge connections to clean up
 
     // Close WebSocket server
     if (this.server) {
@@ -624,43 +632,117 @@ export class EnhancedBootstrapServer extends EventEmitter {
   }
 
   /**
-   * Connect to internal bridge nodes
+   * Test bridge node availability (stateless)
+   * FIXED: No persistent connections - just test reachability
    */
-  async connectToBridgeNodes() {
-    console.log(`🌉 Connecting to ${this.options.bridgeNodes.length} bridge nodes`);
+  async testBridgeAvailability() {
+    console.log(`🌉 Testing availability of ${this.options.bridgeNodes.length} bridge nodes`);
 
-    const connectionPromises = this.options.bridgeNodes.map(bridgeAddr =>
-      this.connectToBridgeNode(bridgeAddr)
+    const availabilityPromises = this.options.bridgeNodes.map(bridgeAddr =>
+      this.testSingleBridge(bridgeAddr)
     );
 
-    // Wait for at least one bridge connection
-    const results = await Promise.allSettled(connectionPromises);
-    const successfulConnections = results.filter(r => r.status === 'fulfilled').length;
+    const results = await Promise.allSettled(availabilityPromises);
+    const availableBridges = results.filter(r => r.status === 'fulfilled').length;
 
-    if (successfulConnections === 0) {
-      console.warn('⚠️ No bridge nodes connected - reconnection services unavailable');
+    if (availableBridges === 0) {
+      console.warn('⚠️ No bridge nodes available - reconnection services unavailable');
     } else {
-      console.log(`✅ Connected to ${successfulConnections}/${this.options.bridgeNodes.length} bridge nodes`);
+      console.log(`✅ ${availableBridges}/${this.options.bridgeNodes.length} bridge nodes available`);
     }
+
+    return availableBridges;
   }
 
   /**
-   * Connect to a single bridge node
+   * Test a single bridge node availability (stateless)
+   * FIXED: No persistent connections - connect, test, disconnect
    */
-  async connectToBridgeNode(bridgeAddr) {
-    try {
-      console.log(`🔗 Connecting to bridge node: ${bridgeAddr}`);
+  async testSingleBridge(bridgeAddr) {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error(`Bridge availability test timeout: ${bridgeAddr}`));
+      }, 5000); // Shorter timeout for availability test
 
-      // Use raw WebSocket connection for bootstrap authentication (not DHT protocol)
-      const ws = new WebSocket(`ws://${bridgeAddr}`);
-
-      return new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          reject(new Error(`Bridge connection timeout: ${bridgeAddr}`));
-        }, 10000);
+      try {
+        const ws = new WebSocket(`ws://${bridgeAddr}`);
 
         ws.onopen = () => {
-          // Send bootstrap authentication immediately
+          // Send a simple ping to test connectivity
+          ws.send(JSON.stringify({
+            type: 'ping',
+            timestamp: Date.now()
+          }));
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const message = JSON.parse(event.data);
+            if (message.type === 'pong') {
+              clearTimeout(timeout);
+              ws.close(1000, 'Availability test complete');
+              resolve(bridgeAddr);
+            }
+          } catch (error) {
+            // Ignore parsing errors during availability test
+          }
+        };
+
+        ws.onerror = (error) => {
+          clearTimeout(timeout);
+          reject(new Error(`Bridge unavailable: ${bridgeAddr}`));
+        };
+
+        ws.onclose = () => {
+          // Connection closed - this is expected after successful test
+        };
+
+      } catch (error) {
+        clearTimeout(timeout);
+        reject(error);
+      }
+    });
+  }
+
+  /**
+   * Request onboarding peer from bridge (stateless)
+   * FIXED: Connect, request, get response, disconnect
+   */
+  async requestOnboardingPeerFromBridge(nodeId, metadata) {
+    console.log(`🎲 Requesting onboarding peer for ${nodeId.substring(0, 8)}... from bridge nodes`);
+
+    // Try each bridge node until one responds
+    for (const bridgeAddr of this.options.bridgeNodes) {
+      try {
+        const result = await this.queryBridgeForOnboardingPeer(bridgeAddr, nodeId, metadata);
+        if (result) {
+          console.log(`✅ Got onboarding peer from bridge ${bridgeAddr}`);
+          return result;
+        }
+      } catch (error) {
+        console.warn(`❌ Bridge ${bridgeAddr} failed: ${error.message}`);
+        continue; // Try next bridge
+      }
+    }
+
+    throw new Error('No bridge nodes available for onboarding coordination');
+  }
+
+  /**
+   * Query a single bridge for onboarding peer (stateless)
+   */
+  async queryBridgeForOnboardingPeer(bridgeAddr, nodeId, metadata) {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error(`Bridge query timeout: ${bridgeAddr}`));
+      }, 10000);
+
+      try {
+        const ws = new WebSocket(`ws://${bridgeAddr}`);
+        let authenticated = false;
+
+        ws.onopen = () => {
+          // Authenticate first
           ws.send(JSON.stringify({
             type: 'bootstrap_auth',
             auth_token: this.options.bridgeAuth,
@@ -669,107 +751,123 @@ export class EnhancedBootstrapServer extends EventEmitter {
         };
 
         ws.onmessage = (event) => {
-          const message = JSON.parse(event.data);
+          try {
+            const message = JSON.parse(event.data);
 
-          if (message.type === 'auth_success') {
+            if (message.type === 'auth_success' && !authenticated) {
+              authenticated = true;
+              // Now request onboarding peer
+              ws.send(JSON.stringify({
+                type: 'get_onboarding_peer',
+                nodeId: nodeId,
+                metadata: metadata,
+                requestId: `onboarding_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+              }));
+            } else if (message.type === 'onboarding_peer_response') {
+              clearTimeout(timeout);
+              ws.close(1000, 'Request complete');
+              resolve(message.data);
+            } else if (message.type === 'error') {
+              clearTimeout(timeout);
+              ws.close(1000, 'Request failed');
+              reject(new Error(message.message || 'Bridge request failed'));
+            }
+          } catch (error) {
             clearTimeout(timeout);
-
-            // CRITICAL: Store bridge node ID and both addresses from auth response
-            ws.bridgeNodeId = message.bridgeNodeId;
-            ws.listeningAddress = message.listeningAddress;  // Internal Docker address
-            ws.publicWssAddress = message.publicWssAddress || message.listeningAddress;  // Public WSS for browsers
-            console.log(`🔍 Stored bridge node ID: ${message.bridgeNodeId?.substring(0, 8)}...`);
-            console.log(`   Internal: ${message.listeningAddress}`);
-            console.log(`   Public: ${ws.publicWssAddress}`);
-
-            // Store the connection AFTER successful authentication (FIX: moved from outside event handler)
-            this.bridgeConnections.set(bridgeAddr, ws);
-            console.log(`✅ Bridge node connected and authenticated: ${bridgeAddr}`);
-
-            // Set up ongoing message handler for bridge communication
-            ws.onmessage = (event) => {
-              try {
-                const bridgeMessage = JSON.parse(event.data);
-
-                // Handle pong responses
-                if (bridgeMessage.type === 'pong') {
-                  ws.lastPong = Date.now();
-                  return;
-                }
-
-                this.handleBridgeResponse(bridgeAddr, bridgeMessage);
-              } catch (error) {
-                console.error(`Error parsing bridge message from ${bridgeAddr}:`, error);
-              }
-            };
-
-            // Set up keep-alive ping/pong mechanism (FIX: prevents idle connection timeouts)
-            ws.keepAliveInterval = setInterval(() => {
-              if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
-
-                // Check if last pong is too old (30 seconds)
-                if (ws.lastPong && (Date.now() - ws.lastPong > 30000)) {
-                  console.warn(`⚠️ Bridge node ${bridgeAddr} not responding to pings, closing connection`);
-                  ws.close(1000, 'Keep-alive timeout');
-                }
-              }
-            }, 10000); // Ping every 10 seconds
-            ws.lastPong = Date.now();
-
-            resolve(ws);
-          } else if (message.type === 'pong') {
-            // Handle pong during initial connection (before onmessage is reassigned)
-            ws.lastPong = Date.now();
-          } else {
-            this.handleBridgeResponse(bridgeAddr, message);
+            ws.close(1000, 'Parse error');
+            reject(error);
           }
         };
 
         ws.onerror = (error) => {
           clearTimeout(timeout);
-          reject(error);
+          reject(new Error(`Bridge connection failed: ${bridgeAddr}`));
         };
 
         ws.onclose = () => {
-          console.warn(`🔌 Bridge node disconnected: ${bridgeAddr}`);
-
-          // Clean up keep-alive interval
-          if (ws.keepAliveInterval) {
-            clearInterval(ws.keepAliveInterval);
-          }
-
-          this.bridgeConnections.delete(bridgeAddr);
-          this.scheduleBridgeReconnect(bridgeAddr);
+          // Connection closed - this is expected after request
         };
+
+      } catch (error) {
+        clearTimeout(timeout);
+        reject(error);
+      }
+    });
+  }
+
+  /**
+   * Coordinate onboarding invitation between new peer and selected helper
+   * FIXED: Stateless coordination without persistent bridge connections
+   */
+  async coordinateOnboardingInvitation(newPeerWs, newPeerNodeId, onboardingResult) {
+    try {
+      const { inviterPeerId, inviterMetadata } = onboardingResult;
+      
+      console.log(`🤝 Coordinating invitation: ${inviterPeerId.substring(0, 8)}... → ${newPeerNodeId.substring(0, 8)}...`);
+
+      // Find the inviter peer connection
+      const inviterClient = this.connectedClients.get(inviterPeerId);
+      if (!inviterClient) {
+        throw new Error(`Inviter peer ${inviterPeerId.substring(0, 8)}... not connected`);
+      }
+
+      // Create invitation tracking
+      const invitationId = `${inviterPeerId}_${newPeerNodeId}_${Date.now()}`;
+      this.pendingInvitations.set(invitationId, {
+        inviterNodeId: inviterPeerId,
+        inviteeNodeId: newPeerNodeId,
+        inviterWs: inviterClient.ws,
+        inviteeWs: newPeerWs,
+        inviterMetadata: inviterMetadata || {},
+        inviteeMetadata: {},
+        status: 'coordinating',
+        timestamp: Date.now()
       });
 
+      // Ask inviter to send invitation to new peer
+      inviterClient.ws.send(JSON.stringify({
+        type: 'send_invitation_request',
+        targetPeerId: newPeerNodeId,
+        requestId: `invite_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        message: 'Please invite this new peer to join the DHT network'
+      }));
+
+      console.log(`✅ Onboarding invitation coordinated: ${invitationId}`);
+
     } catch (error) {
-      console.error(`❌ Failed to connect to bridge node ${bridgeAddr}:`, error);
-      this.scheduleBridgeReconnect(bridgeAddr);
+      console.error(`❌ Failed to coordinate onboarding invitation: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Schedule bridge node reconnection
+   * Check bridge availability (stateless)
+   * FIXED: No persistent connections - test availability on demand
    */
-  scheduleBridgeReconnect(bridgeAddr) {
-    if (this.bridgeReconnectTimers.has(bridgeAddr)) {
-      return; // Already scheduled
-    }
+  async checkBridgeAvailability() {
+    console.log(`🏥 Testing bridge availability (${this.options.bridgeNodes.length} bridges)...`);
 
-    const timer = setTimeout(async () => {
-      this.bridgeReconnectTimers.delete(bridgeAddr);
+    const availabilityPromises = this.options.bridgeNodes.map(async (bridgeAddr) => {
       try {
-        await this.connectToBridgeNode(bridgeAddr);
+        await this.testSingleBridge(bridgeAddr);
+        return { address: bridgeAddr, available: true };
       } catch (error) {
-        console.warn(`Bridge reconnection failed: ${bridgeAddr}`);
-        this.scheduleBridgeReconnect(bridgeAddr); // Try again
+        return { address: bridgeAddr, available: false, error: error.message };
       }
-    }, 30000); // 30 second delay
+    });
 
-    this.bridgeReconnectTimers.set(bridgeAddr, timer);
+    const results = await Promise.allSettled(availabilityPromises);
+    const availableCount = results.filter(r => r.status === 'fulfilled' && r.value.available).length;
+    const unavailableCount = this.options.bridgeNodes.length - availableCount;
+
+    console.log(`🏥 Bridge availability: ${availableCount} available, ${unavailableCount} unavailable`);
+
+    return {
+      available: availableCount,
+      unavailable: unavailableCount,
+      total: this.options.bridgeNodes.length,
+      results: results.map(r => r.status === 'fulfilled' ? r.value : { available: false, error: 'Promise rejected' })
+    };
   }
 
   /**
@@ -939,24 +1037,23 @@ export class EnhancedBootstrapServer extends EventEmitter {
           }
         });
 
-        // Handle bridge connections asynchronously (don't block response)
+        // Handle bridge coordination asynchronously (don't block response)
         setTimeout(async () => {
           try {
-            console.log(`🌉 Genesis peer designated, now connecting to bridge nodes...`);
+            console.log(`🌉 Genesis peer designated, testing bridge availability...`);
 
-            // Connect to bridge nodes first
-            await this.connectToBridgeNodes();
+            // Test bridge availability (stateless)
+            const availableBridges = await this.testBridgeAvailability();
 
-            console.log(`🔍 Bridge connections status: ${this.bridgeConnections.size} connected`);
-            for (const [addr, bridgeWs] of this.bridgeConnections) {
-              console.log(`   ${addr}: ${bridgeWs.readyState === 1 ? 'OPEN' : 'NOT_OPEN'}`);
+            if (availableBridges > 0) {
+              console.log(`✅ ${availableBridges} bridge nodes available for genesis coordination`);
+              // Genesis can operate independently - bridge coordination is optional
+            } else {
+              console.warn(`⚠️ No bridge nodes available - genesis will operate independently`);
             }
-
-            // Then connect genesis to bridge
-            await this.connectGenesisToBridge(ws, nodeId, message.metadata || {}, message);
           } catch (error) {
-            console.error(`❌ Failed to connect genesis to bridge: ${error.message}`);
-            // Bridge connection failure doesn't affect genesis status - genesis can operate independently
+            console.error(`❌ Bridge availability test failed: ${error.message}`);
+            // Genesis can operate independently without bridge coordination
           }
         }, 2000); // Give genesis peer time to complete setup
 
@@ -988,8 +1085,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
       console.log(`   bridgeConnections.size: ${this.bridgeConnections.size}`);
 
       // Open network mode - connect subsequent peers via random onboarding peer (after genesis)
-      // BUT ONLY if bridge nodes are available for coordination
-      if (this.options.openNetwork && this.genesisAssigned && this.bridgeConnections.size > 0) {
+      if (this.options.openNetwork && this.genesisAssigned) {
         console.log(`🌐 Open network mode: Finding random onboarding peer for ${nodeId?.substring(0, 8)}...`);
 
         // CRITICAL FIX: Send immediate response to prevent client timeout
@@ -1009,19 +1105,19 @@ export class EnhancedBootstrapServer extends EventEmitter {
         // Handle onboarding coordination asynchronously (don't block response)
         setTimeout(async () => {
           try {
-            console.log(`🎲 Querying bridge for random onboarding peer (avoids bridge bottleneck)...`);
+            console.log(`🎲 Requesting onboarding peer from bridge nodes (stateless)...`);
 
-            // Ensure bridge nodes are connected
-            await this.connectToBridgeNodes();
-
-            console.log(`🔍 Bridge connections status: ${this.bridgeConnections.size} connected`);
-            for (const [addr, bridgeWs] of this.bridgeConnections) {
-              console.log(`   ${addr}: ${bridgeWs.readyState === 1 ? 'OPEN' : 'NOT_OPEN'}`);
+            // Use stateless bridge request
+            const onboardingResult = await this.requestOnboardingPeerFromBridge(nodeId, message.metadata || {});
+            
+            if (onboardingResult && onboardingResult.inviterPeerId) {
+              console.log(`✅ Bridge provided onboarding peer: ${onboardingResult.inviterPeerId.substring(0, 8)}...`);
+              
+              // Send invitation request to the selected peer
+              await this.coordinateOnboardingInvitation(ws, nodeId, onboardingResult);
+            } else {
+              throw new Error('No suitable onboarding peer available');
             }
-
-            // Ask bridge to select random active peer to invite this new node
-            // This prevents bridge nodes from becoming connection bottlenecks
-            await this.getOnboardingPeerFromBridge(ws, nodeId, message.metadata || {}, message);
           } catch (error) {
             console.error(`❌ Failed to get onboarding peer from bridge: ${error.message}`);
             // Send follow-up message about onboarding failure
@@ -1036,14 +1132,6 @@ export class EnhancedBootstrapServer extends EventEmitter {
         }, 500); // Small delay to ensure peer registration is complete
 
         return;
-      }
-
-      // Open network mode fallback - when no bridge nodes are available
-      if (this.options.openNetwork && this.genesisAssigned && this.bridgeConnections.size === 0) {
-        console.log(`🌐 Open network mode: No bridge nodes available - falling back to direct peer connection`);
-        console.log(`📤 Sending available peers for direct connection (bridge-less mode)`);
-        
-        // Fall through to standard mode to return available peers
       }
 
       // Standard mode (not open network) - return existing peers or empty list
@@ -2412,6 +2500,23 @@ export class EnhancedBootstrapServer extends EventEmitter {
     setInterval(() => {
       this.logStatus();
     }, 5 * 60000);
+
+    // IMPROVEMENT: Test bridge availability periodically (stateless)
+    setInterval(async () => {
+      try {
+        const availabilityStatus = await this.checkBridgeAvailability();
+        
+        if (availabilityStatus.unavailable > 0) {
+          console.warn(`⚠️ ${availabilityStatus.unavailable}/${availabilityStatus.total} bridge nodes unavailable`);
+          
+          // Log details for monitoring
+          const unavailableBridges = availabilityStatus.results.filter(r => !r.available);
+          console.warn('Unavailable bridges:', unavailableBridges.map(b => b.address));
+        }
+      } catch (error) {
+        console.error('❌ Bridge availability check failed:', error);
+      }
+    }, 5 * 60000); // Every 5 minutes (less frequent since stateless)
   }
 
   /**
