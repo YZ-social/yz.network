@@ -5761,6 +5761,7 @@ export class KademliaDHT extends EventEmitter {
           });
 
           await this.sendMessage(connectedPeer, findNodeRequest);
+          console.log(`📤 Sent find_node request to ${connectedPeer.substring(0, 8)}... (requestId: ${findNodeRequest.requestId})`);
         } catch (error) {
           console.warn(`Failed to request nodes from ${connectedPeer}:`, error);
         }

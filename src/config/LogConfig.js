@@ -131,4 +131,36 @@ if (typeof window !== 'undefined') {
       return 0;
     }
   };
+  
+  // Debug peer discovery issues
+  window.debugPeerDiscovery = () => {
+    if (window.YZSocialC && window.YZSocialC.dht) {
+      const dht = window.YZSocialC.dht;
+      console.log('🔍 Peer Discovery Debug:');
+      console.log(`   Connected peers: ${dht.getConnectedPeers().length}`);
+      console.log(`   Routing table size: ${dht.routingTable.totalNodes}`);
+      console.log(`   Pending requests: ${dht.pendingRequests.size}`);
+      
+      // Show pending requests
+      if (dht.pendingRequests.size > 0) {
+        console.log('   Pending requests:');
+        for (const [requestId, request] of dht.pendingRequests) {
+          console.log(`     - ${requestId}`);
+        }
+      }
+      
+      // Trigger discovery with verbose logging
+      LOG_CONFIG.DHT_CORE = 'DEBUG';
+      console.log('🔊 Enabled DHT debug logging');
+      
+      return {
+        connectedPeers: dht.getConnectedPeers().length,
+        routingTableSize: dht.routingTable.totalNodes,
+        pendingRequests: dht.pendingRequests.size
+      };
+    } else {
+      console.error('DHT not available');
+      return null;
+    }
+  };
 }
