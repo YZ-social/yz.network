@@ -863,23 +863,39 @@ export class WebSocketConnectionManager extends ConnectionManager {
   }
 
   /**
-   * Override handlePong to update routing table
+   * Override handlePong to update routing table and record metrics
    */
   handlePong(peerId, message) {
-    // Call base class implementation
+    // Call base class implementation (calculates RTT and emits pong event)
     super.handlePong(peerId, message);
     
-    // Update routing table with RTT
+    // Calculate RTT
     const rtt = Date.now() - (message.originalTimestamp || message.timestamp);
     this.currentRTT = rtt;
     this.lastPingTime = Date.now();
     
+    console.log(`🏓 Pong received from ${peerId.substring(0, 8)}... RTT: ${rtt}ms`);
+    
+    // Update routing table with RTT
     if (this.routingTable && peerId) {
       const peerNode = this.routingTable.getNode(peerId);
       if (peerNode) {
         peerNode.rtt = rtt;
         peerNode.lastPing = Date.now();
       }
+    }
+
+    // Record ping latency in global metrics if available
+    if (global.activeDHTNodeMetrics) {
+      global.activeDHTNodeMetrics.pingLatencies.push(rtt);
+      console.log(`📊 Recorded ping latency: ${rtt}ms (total samples: ${global.activeDHTNodeMetrics.pingLatencies.length})`);
+      
+      // Keep only recent samples (last 100)
+      if (global.activeDHTNodeMetrics.pingLatencies.length > 100) {
+        global.activeDHTNodeMetrics.pingLatencies.shift();
+      }
+    } else {
+      console.warn(`⚠️ No global metrics available to record ping latency: ${rtt}ms`);
     }
   }
 

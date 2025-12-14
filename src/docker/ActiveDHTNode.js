@@ -363,11 +363,18 @@ export class ActiveDHTNode extends NodeDHTClient {
    * Calculate percentile from latency samples
    */
   calculatePercentile(samples, percentile) {
-    if (samples.length === 0) return 0;
+    if (!samples || samples.length === 0) return 0;
 
     const sorted = [...samples].sort((a, b) => a - b);
     const index = Math.ceil((percentile / 100) * sorted.length) - 1;
-    return sorted[Math.max(0, index)];
+    const result = sorted[Math.max(0, index)];
+    
+    // Debug logging for ping latencies
+    if (samples === this.metrics.pingLatencies && samples.length > 0) {
+      console.log(`📊 Ping latency P${percentile}: ${result}ms (from ${samples.length} samples: [${samples.slice(-5).join(', ')}])`);
+    }
+    
+    return result;
   }
 
   /**
@@ -481,53 +488,9 @@ export class ActiveDHTNode extends NodeDHTClient {
    * Set up ping latency collection from connection managers
    */
   setupPingLatencyCollection() {
-    if (!this.dht || !this.dht.routingTable) {
-      return;
-    }
-
-    // Listen for pong events from all connection managers
-    // The routing table manages all peer connections
-    const allNodes = this.dht.routingTable.getAllNodes();
-    
-    for (const node of allNodes) {
-      if (node.connectionManager) {
-        this.setupPingListenerForManager(node.connectionManager);
-      }
-    }
-
-    // Listen for new peer connections to set up ping listeners
-    this.dht.on('peerConnected', (peerId) => {
-      const peerNode = this.dht.routingTable.getNode(peerId);
-      if (peerNode && peerNode.connectionManager) {
-        this.setupPingListenerForManager(peerNode.connectionManager);
-      }
-    });
-
-    console.log('🏓 Ping latency collection set up');
-  }
-
-  /**
-   * Set up ping listener for a specific connection manager
-   */
-  setupPingListenerForManager(manager) {
-    // Avoid duplicate listeners
-    if (manager._pingListenerAttached) {
-      return;
-    }
-
-    manager.on('pong', (data) => {
-      const { rtt } = data;
-      
-      // Record ping latency
-      this.metrics.pingLatencies.push(rtt);
-      
-      // Keep only recent samples (last 100)
-      if (this.metrics.pingLatencies.length > this.maxLatencySamples) {
-        this.metrics.pingLatencies.shift();
-      }
-    });
-
-    manager._pingListenerAttached = true;
+    // Expose metrics globally so WebSocketConnectionManager can record ping latencies
+    global.activeDHTNodeMetrics = this.metrics;
+    console.log('🏓 Ping latency collection set up (global metrics exposed)');
   }
 
   /**
