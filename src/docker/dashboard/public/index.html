@@ -329,7 +329,7 @@
               <div class="metrics">
                 <span class="metric-badge">Peers: ${node.dht_connected_peers || 0}</span>
                 <span class="metric-badge">Uptime: ${formatUptime(node.node_uptime_seconds)}</span>
-                <span class="metric-badge">Latency: ${(node.dht_store_latency_p50 || 0).toFixed(1)}ms</span>
+                <span class="metric-badge">Latency: ${(node.ping_latency_p50 || 0).toFixed(1)}ms</span>
               </div>
             </div>
           `).join('');

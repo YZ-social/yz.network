@@ -75,6 +75,7 @@ export class ActiveDHTNode extends NodeDHTClient {
       storeLatencies: [],
       getLatencies: [],
       findNodeLatencies: [],
+      pingLatencies: [], // Peer ping latencies
 
       // Throughput (operations per second)
       opsLastMinute: [],
@@ -136,6 +137,9 @@ export class ActiveDHTNode extends NodeDHTClient {
 
     // Start metrics HTTP server
     await this.startMetricsServer();
+
+    // Set up ping latency collection
+    this.setupPingLatencyCollection();
 
     // Start background tasks
     this.startBackgroundTasks();
@@ -344,6 +348,11 @@ export class ActiveDHTNode extends NodeDHTClient {
       dht_get_latency_p50: this.calculatePercentile(this.metrics.getLatencies, 50),
       dht_get_latency_p95: this.calculatePercentile(this.metrics.getLatencies, 95),
       dht_get_latency_p99: this.calculatePercentile(this.metrics.getLatencies, 99),
+      
+      // Ping latency (peer-to-peer connection latency)
+      ping_latency_p50: this.calculatePercentile(this.metrics.pingLatencies, 50),
+      ping_latency_p95: this.calculatePercentile(this.metrics.pingLatencies, 95),
+      ping_latency_p99: this.calculatePercentile(this.metrics.pingLatencies, 99),
 
       // Throughput
       operations_per_second: this.calculateOpsPerSecond()
@@ -466,6 +475,59 @@ export class ActiveDHTNode extends NodeDHTClient {
 
     this.metrics.pubsubSubscribes++;
     return result;
+  }
+
+  /**
+   * Set up ping latency collection from connection managers
+   */
+  setupPingLatencyCollection() {
+    if (!this.dht || !this.dht.routingTable) {
+      return;
+    }
+
+    // Listen for pong events from all connection managers
+    // The routing table manages all peer connections
+    const allNodes = this.dht.routingTable.getAllNodes();
+    
+    for (const node of allNodes) {
+      if (node.connectionManager) {
+        this.setupPingListenerForManager(node.connectionManager);
+      }
+    }
+
+    // Listen for new peer connections to set up ping listeners
+    this.dht.on('peerConnected', (peerId) => {
+      const peerNode = this.dht.routingTable.getNode(peerId);
+      if (peerNode && peerNode.connectionManager) {
+        this.setupPingListenerForManager(peerNode.connectionManager);
+      }
+    });
+
+    console.log('🏓 Ping latency collection set up');
+  }
+
+  /**
+   * Set up ping listener for a specific connection manager
+   */
+  setupPingListenerForManager(manager) {
+    // Avoid duplicate listeners
+    if (manager._pingListenerAttached) {
+      return;
+    }
+
+    manager.on('pong', (data) => {
+      const { rtt } = data;
+      
+      // Record ping latency
+      this.metrics.pingLatencies.push(rtt);
+      
+      // Keep only recent samples (last 100)
+      if (this.metrics.pingLatencies.length > this.maxLatencySamples) {
+        this.metrics.pingLatencies.shift();
+      }
+    });
+
+    manager._pingListenerAttached = true;
   }
 
   /**

@@ -223,13 +223,13 @@ function calculateAggregates() {
 
     // Average latencies
     avgLatencyP50: healthyNodes.length > 0
-      ? healthyNodes.reduce((sum, n) => sum + (n.dht_store_latency_p50 || 0), 0) / healthyNodes.length
+      ? healthyNodes.reduce((sum, n) => sum + (n.ping_latency_p50 || 0), 0) / healthyNodes.length
       : 0,
     avgLatencyP95: healthyNodes.length > 0
-      ? healthyNodes.reduce((sum, n) => sum + (n.dht_store_latency_p95 || 0), 0) / healthyNodes.length
+      ? healthyNodes.reduce((sum, n) => sum + (n.ping_latency_p95 || 0), 0) / healthyNodes.length
       : 0,
     avgLatencyP99: healthyNodes.length > 0
-      ? healthyNodes.reduce((sum, n) => sum + (n.dht_store_latency_p99 || 0), 0) / healthyNodes.length
+      ? healthyNodes.reduce((sum, n) => sum + (n.ping_latency_p99 || 0), 0) / healthyNodes.length
       : 0,
 
     // Throughput

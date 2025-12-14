@@ -43,6 +43,14 @@ export class WebSocketConnectionManager extends ConnectionManager {
     this.reconnectAttempts = new Map(); // Keep Map for reconnect tracking
     this.maxReconnectAttempts = 3;
 
+    // Ping/latency tracking for WebSocket connections
+    this.pingInterval = options.pingInterval || 30000; // 30 seconds
+    this.pingTimeout = options.pingTimeout || 10000; // 10 seconds
+    this.pingIntervalId = null;
+    this.pendingPings = new Map(); // pingId -> { timestamp, timeoutId }
+    this.lastPingTime = null;
+    this.currentRTT = null; // Current round-trip time in milliseconds
+
     // NOTE: Metadata now passed directly in peerConnected events to RoutingTable
     // No intermediate storage needed - clean architecture!
 
@@ -693,6 +701,9 @@ export class WebSocketConnectionManager extends ConnectionManager {
       };
     }
 
+    // Start periodic ping to measure latency
+    this.startPing();
+
     // Emit connection event with connection details and metadata
     this.emit('peerConnected', { peerId, initiator, connection: ws, manager: this, metadata });
   }
@@ -787,7 +798,96 @@ export class WebSocketConnectionManager extends ConnectionManager {
       this.connectionTimeouts.delete(this.peerId);
       this.reconnectAttempts.delete(this.peerId);
     }
+    
+    // Clean up ping state
+    this.stopPing();
+    
     // Note: Don't clear this.peerId here - it identifies which peer this manager was for
+  }
+
+  /**
+   * Start periodic ping to measure latency
+   */
+  startPing() {
+    if (this.pingIntervalId || !this.isConnected()) {
+      return;
+    }
+
+    console.log(`🏓 Starting ping for ${this.peerId?.substring(0, 8)}... (interval: ${this.pingInterval}ms)`);
+
+    // Send initial ping immediately
+    this.sendPingToConnectedPeer();
+
+    // Set up periodic pings
+    this.pingIntervalId = setInterval(() => {
+      this.sendPingToConnectedPeer();
+    }, this.pingInterval);
+  }
+
+  /**
+   * Stop periodic ping
+   */
+  stopPing() {
+    if (this.pingIntervalId) {
+      clearInterval(this.pingIntervalId);
+      this.pingIntervalId = null;
+    }
+  }
+
+  /**
+   * Send ping to connected peer using base class method
+   */
+  async sendPingToConnectedPeer() {
+    if (!this.isConnected() || !this.peerId) {
+      return;
+    }
+
+    try {
+      const result = await this.ping(this.peerId);
+      if (result.success) {
+        this.currentRTT = result.rtt;
+        this.lastPingTime = Date.now();
+        
+        // Update peer RTT in routing table if available
+        if (this.routingTable && this.peerId) {
+          const peerNode = this.routingTable.getNode(this.peerId);
+          if (peerNode) {
+            peerNode.rtt = result.rtt;
+            peerNode.lastPing = Date.now();
+          }
+        }
+      }
+    } catch (error) {
+      console.error(`❌ Failed to ping ${this.peerId}:`, error);
+    }
+  }
+
+  /**
+   * Override handlePong to update routing table
+   */
+  handlePong(peerId, message) {
+    // Call base class implementation
+    super.handlePong(peerId, message);
+    
+    // Update routing table with RTT
+    const rtt = Date.now() - (message.originalTimestamp || message.timestamp);
+    this.currentRTT = rtt;
+    this.lastPingTime = Date.now();
+    
+    if (this.routingTable && peerId) {
+      const peerNode = this.routingTable.getNode(peerId);
+      if (peerNode) {
+        peerNode.rtt = rtt;
+        peerNode.lastPing = Date.now();
+      }
+    }
+  }
+
+  /**
+   * Get current RTT (round-trip time) in milliseconds
+   */
+  getRTT() {
+    return this.currentRTT;
   }
 
   /**
