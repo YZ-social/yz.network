@@ -847,6 +847,35 @@ export class EnhancedBootstrapServer extends EventEmitter {
 
     console.log(`📋 Received get_peers_or_genesis request from ${nodeId?.substring(0, 8) || 'unknown'}...`);
 
+    // Track responded requests to prevent duplicates
+    if (!this.respondedRequests) {
+      this.respondedRequests = new Set();
+    }
+
+    const requestKey = `${nodeId}_${message.requestId}`;
+    if (this.respondedRequests.has(requestKey)) {
+      console.warn(`⚠️ Duplicate request detected: ${requestKey} - ignoring`);
+      return;
+    }
+
+    // Helper function to send response and mark as responded
+    const sendResponse = (responseData) => {
+      if (this.respondedRequests.has(requestKey)) {
+        console.warn(`⚠️ Attempted duplicate response for ${requestKey} - prevented`);
+        return false;
+      }
+      
+      this.respondedRequests.add(requestKey);
+      ws.send(JSON.stringify(responseData));
+      
+      // Clean up old requests after 5 minutes to prevent memory leaks
+      setTimeout(() => {
+        this.respondedRequests.delete(requestKey);
+      }, 5 * 60 * 1000);
+      
+      return true;
+    };
+
     try {
       // Add client to connected clients if not already present
       if (nodeId && !this.connectedClients.has(nodeId)) {
@@ -899,7 +928,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
 
         // CRITICAL FIX: Send immediate response to prevent client timeout
         console.log(`📤 Sending immediate genesis response to prevent timeout`);
-        ws.send(JSON.stringify({
+        sendResponse({
           type: 'response',
           requestId: message.requestId,
           success: true,
@@ -908,7 +937,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
             isGenesis: true,
             message: 'Genesis peer designated - bridge connections will be established'
           }
-        }));
+        });
 
         // Handle bridge connections asynchronously (don't block response)
         setTimeout(async () => {
@@ -939,7 +968,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
         console.log(`🌉 Bridge node ${nodeId?.substring(0, 8)}... registered - waiting for genesis peer (passive nodes cannot be genesis)`);
 
         // Send empty peer list - bridges will be invited by genesis peer
-        ws.send(JSON.stringify({
+        sendResponse({
           type: 'response',
           requestId: message.requestId,
           success: true,
@@ -947,7 +976,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
             peers: [],
             isGenesis: false
           }
-        }));
+        });
 
         return;
       }
@@ -965,7 +994,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
 
         // CRITICAL FIX: Send immediate response to prevent client timeout
         console.log(`📤 Sending immediate response - onboarding coordination will happen separately`);
-        ws.send(JSON.stringify({
+        sendResponse({
           type: 'response',
           requestId: message.requestId,
           success: true,
@@ -975,7 +1004,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
             status: 'helper_coordinating',
             message: 'Onboarding helper being selected - invitation will arrive shortly'
           }
-        }));
+        });
 
         // Handle onboarding coordination asynchronously (don't block response)
         setTimeout(async () => {
@@ -1029,7 +1058,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
       console.log(`📤 Sending ${availablePeers.length} available peers to ${nodeId?.substring(0, 8)}...`);
 
       // Send standard BootstrapClient-compatible response
-      ws.send(JSON.stringify({
+      sendResponse({
         type: 'response',
         requestId: message.requestId,
         success: true,
@@ -1037,18 +1066,18 @@ export class EnhancedBootstrapServer extends EventEmitter {
           peers: availablePeers,
           isGenesis: false
         }
-      }));
+      });
 
     } catch (error) {
       console.error('Error handling get_peers_or_genesis request:', error);
 
       // Send error response in BootstrapClient format
-      ws.send(JSON.stringify({
+      sendResponse({
         type: 'response',
         requestId: message.requestId,
         success: false,
         error: error.message
-      }));
+      });
     }
   }
 
