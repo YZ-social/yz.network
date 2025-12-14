@@ -76,7 +76,7 @@ export function logPing(component, message, ...args) {
 // Global function to change log levels at runtime
 if (typeof window !== 'undefined') {
   window.setComponentLogLevel = (component, level) => {
-    if (LOG_CONFIG.hasOwnProperty(component) && ['ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE'].includes(level)) {
+    if (Object.prototype.hasOwnProperty.call(LOG_CONFIG, component) && ['ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE'].includes(level)) {
       LOG_CONFIG[component] = level;
       console.log(`🔧 Set ${component} log level to ${level}`);
     } else {

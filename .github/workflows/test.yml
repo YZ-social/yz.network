@@ -44,12 +44,12 @@ jobs:
     - name: Run DHT algorithm concept test
       run: |
         echo "🔬 Running DHT algorithm concept test..."
-        node test/local/basic-dht-concept-test.js
+        npm test -- test/local/basic-dht-concept.test.js
         
     - name: Run simple network simulation test
       run: |
         echo "🌐 Running simple network simulation..."
-        node test/local/simple-network-test.js
+        npm test -- test/local/simple-network.test.js
       
     # Coverage reporting disabled for now
     # - name: Upload coverage to Codecov
