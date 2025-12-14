@@ -489,6 +489,30 @@ export class KademliaDHT extends EventEmitter {
     const initialPeers = bootstrapResponse.peers || [];
     console.log(`Received ${initialPeers.length} bootstrap peers`);
 
+    // CRITICAL FIX: Check if bootstrap server is coordinating onboarding asynchronously
+    if (bootstrapResponse.status === 'helper_coordinating') {
+      console.log('🤝 Bootstrap server is coordinating onboarding with DHT peer - waiting for invitation...');
+      console.log(`   Helper peer: ${bootstrapResponse.onboardingHelper?.substring(0, 8) || 'unknown'}...`);
+      console.log('   💡 Stay connected to bootstrap to receive invitation');
+      
+      // Don't complete startup yet - wait for invitation to arrive
+      // The invitation will be handled by the 'invitationReceived' event handler
+      // which will trigger peer connection and complete the bootstrap process
+      
+      // Set a timeout in case invitation never arrives
+      setTimeout(() => {
+        if (!this.isBootstrapped && this.getConnectedPeers().length === 0) {
+          console.warn('⏰ Onboarding timeout - no invitation received, continuing with empty peer list');
+          this.connectToInitialPeers([]).catch(err => {
+            console.error('Failed to complete onboarding after timeout:', err);
+          });
+        }
+      }, 30000); // 30 second timeout
+      
+      // Don't continue with startup - wait for invitation
+      return;
+    }
+
     // Connect to initial peers (but genesis nodes skip this if no peers available)
     if (initialPeers.length > 0 || !this.isGenesisPeer) {
       await this.connectToInitialPeers(initialPeers);
@@ -1155,6 +1179,27 @@ export class KademliaDHT extends EventEmitter {
       } catch (error) {
         console.error(`❌ Failed to notify bootstrap server of invitation acceptance:`, error);
         // Don't fail the invitation processing if notification fails
+      }
+
+      // CRITICAL FIX: Complete startup process after receiving invitation
+      // This handles the case where client was waiting for onboarding coordination
+      if (!this.isStarted) {
+        console.log('🚀 Completing DHT startup after receiving invitation...');
+        
+        // Initialize overlay network if not already done
+        if (!this.overlayNetwork) {
+          console.log('🌐 Initializing overlay network for WebRTC signaling...');
+          this.overlayNetwork = new OverlayNetwork(this, this.overlayOptions);
+        }
+
+        // Start maintenance tasks if not already started
+        if (!this.refreshTimer) {
+          this.startMaintenanceTasks();
+        }
+
+        this.isStarted = true;
+        this.emit('started');
+        console.log('✅ DHT startup completed after invitation processing');
       }
 
       return true;
