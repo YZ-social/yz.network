@@ -14,7 +14,10 @@ const __dirname = path.dirname(__filename);
  * Enhanced Bootstrap Server with Bridge Integration
  *
  * Provides WebRTC signaling for new peers and reconnection services through bridge nodes.
- * Public-facing server that routes reconnection requests to internal bridge nodes.
+ * Public-facing server that uses stateless requests to coordinate with bridge nodes.
+ * 
+ * ARCHITECTURE: Bootstrap server maintains NO persistent connections to bridge nodes.
+ * All bridge interactions use connect-request-response-disconnect pattern for security.
  */
 export class EnhancedBootstrapServer extends EventEmitter {
   constructor(options = {}) {
@@ -63,7 +66,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
 
     console.log('🚀 Starting Enhanced Bootstrap Server');
 
-    // Bridge connections will use raw WebSocket for bootstrap authentication
+    // FIXED: Bridge interactions now use stateless requests (no persistent connections)
 
     // Create HTTP server that handles installer downloads
     this.httpServer = http.createServer((req, res) => {
@@ -119,7 +122,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
       });
     });
 
-    // Bridge nodes will be connected on-demand when genesis peer arrives
+    // FIXED: Bridge nodes will be queried on-demand using stateless requests
 
     // Start maintenance tasks
     this.startMaintenanceTasks();
@@ -1033,7 +1036,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
           data: {
             peers: [], // Empty initially - bridge connections will be established separately
             isGenesis: true,
-            message: 'Genesis peer designated - bridge connections will be established'
+            message: 'Genesis peer designated - bridge coordination available if needed'
           }
         });
 
@@ -1082,7 +1085,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
       console.log(`🔍 Open network mode check for ${nodeId?.substring(0, 8)}...:`);
       console.log(`   options.openNetwork: ${this.options.openNetwork}`);
       console.log(`   genesisAssigned: ${this.genesisAssigned}`);
-      console.log(`   bridgeConnections.size: ${this.bridgeConnections.size}`);
+      console.log(`   Bridge availability: tested on-demand (stateless)`);
 
       // Open network mode - connect subsequent peers via random onboarding peer (after genesis)
       if (this.options.openNetwork && this.genesisAssigned) {
@@ -1758,11 +1761,8 @@ export class EnhancedBootstrapServer extends EventEmitter {
     try {
       console.log(`🎲 Requesting random onboarding peer from bridge for ${nodeId.substring(0, 8)}...`);
 
-      // Get available bridge node
-      const bridgeNode = this.getAvailableBridgeNode();
-      if (!bridgeNode) {
-        throw new Error('No bridge nodes available for onboarding peer query');
-      }
+      // FIXED: Use stateless bridge request instead of persistent connection
+      // Bridge availability will be tested during the actual request
 
       const requestId = `onboarding_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
@@ -1900,17 +1900,8 @@ export class EnhancedBootstrapServer extends EventEmitter {
    * Handle reconnecting peer
    */
   async handleReconnectingPeer(ws, { nodeId, membershipToken, metadata }) {
-    // Get available bridge node
-    const bridgeNode = this.getAvailableBridgeNode();
-    if (!bridgeNode) {
-      ws.send(JSON.stringify({
-        type: 'reconnection_result',
-        success: false,
-        reason: 'No bridge nodes available'
-      }));
-      ws.close(1000, 'Service unavailable');
-      return;
-    }
+    // FIXED: Use stateless bridge request for reconnection validation
+    // Bridge availability will be tested during the actual request
 
     // Store reconnecting peer
     this.peers.set(nodeId, {
@@ -1967,57 +1958,11 @@ export class EnhancedBootstrapServer extends EventEmitter {
     }
   }
 
-  /**
-   * Get available bridge node
-   */
-  getAvailableBridgeNode() {
-    for (const [, ws] of this.bridgeConnections) {
-      if (ws.readyState === WebSocket.OPEN) {
-        return ws;
-      }
-    }
-    return null;
-  }
+  // REMOVED: getAvailableBridgeNode() and getAllAvailableBridgeNodes()
+  // REASON: No persistent connections - bridge availability tested on-demand
 
-  /**
-   * Get ALL available bridge nodes for redundancy
-   */
-  getAllAvailableBridgeNodes() {
-    const bridgeNodes = [];
-    for (const [, ws] of this.bridgeConnections) {
-      if (ws.readyState === WebSocket.OPEN) {
-        bridgeNodes.push(ws);
-      }
-    }
-    return bridgeNodes;
-  }
-
-  /**
-   * Get metadata for all connected bridge nodes
-   */
-  async getAllBridgeNodeMetadata() {
-    const bridgeMetadata = [];
-    for (const [addr, ws] of this.bridgeConnections) {
-      if (ws.readyState === WebSocket.OPEN && ws.bridgeNodeId) {
-        // Use the listening address advertised by the bridge node (supports Docker service names)
-        const listeningAddress = ws.listeningAddress || `ws://localhost:${addr.includes(':8083') ? '8083' : '8084'}`;
-        bridgeMetadata.push({
-          nodeId: ws.bridgeNodeId,
-          metadata: {
-            nodeType: 'bridge',
-            listeningAddress: listeningAddress,
-            publicWssAddress: ws.publicWssAddress,  // CRITICAL: Browsers need WSS address
-            capabilities: ['websocket'],
-            isBridgeNode: true,
-            bridgeAuthToken: 'bridge_auth_' + (this.options.bridgeAuth || 'default-bridge-auth-key'),
-            bridgeSignature: await this.generateBridgeAuthSignature(ws.bridgeNodeId),
-            bridgeStartTime: Date.now()
-          }
-        });
-      }
-    }
-    return bridgeMetadata;
-  }
+  // REMOVED: getAllBridgeNodeMetadata()
+  // REASON: No persistent connections - bridge metadata obtained via stateless requests
 
   /**
    * Generate authentication signature for bridge node
@@ -2105,26 +2050,8 @@ export class EnhancedBootstrapServer extends EventEmitter {
     }
   }
 
-  /**
-   * Handle ping from bridge node
-   */
-  handleBridgePing(bridgeAddr, pingMessage) {
-    // Send pong response back to bridge
-    const bridge = this.bridgeConnections.get(bridgeAddr);
-    if (bridge && bridge.ws && bridge.ws.readyState === 1) {
-      const pongMessage = {
-        type: 'pong',
-        pingId: pingMessage.pingId,
-        originalTimestamp: pingMessage.timestamp,
-        responseTimestamp: Date.now()
-      };
-      
-      bridge.ws.send(JSON.stringify(pongMessage));
-      console.log(`🏓 Sent pong to bridge ${bridgeAddr}`);
-    } else {
-      console.warn(`⚠️ Cannot send pong to bridge ${bridgeAddr} - connection not available`);
-    }
-  }
+  // REMOVED: handleBridgePing()
+  // REASON: No persistent connections - no ping/pong mechanism needed
 
   /**
    * Handle genesis connection result from bridge node
@@ -2550,8 +2477,8 @@ export class EnhancedBootstrapServer extends EventEmitter {
    * Log server status
    */
   logStatus() {
-    const bridgeCount = Array.from(this.bridgeConnections.values())
-      .filter(ws => ws.readyState === WebSocket.OPEN).length;
+    // FIXED: No persistent bridge connections - show configured bridge count
+    const bridgeCount = this.options.bridgeNodes.length;
 
     const peerTypes = {
       new: 0,
@@ -2637,10 +2564,11 @@ export class EnhancedBootstrapServer extends EventEmitter {
    * Get server statistics
    */
   getStats() {
-    const bridgeStats = Array.from(this.bridgeConnections.entries()).map(([addr, ws]) => ({
+    // FIXED: No persistent connections - show configured bridge nodes
+    const bridgeStats = this.options.bridgeNodes.map(addr => ({
       address: addr,
-      connected: ws.readyState === WebSocket.OPEN,
-      readyState: ws.readyState
+      connected: 'tested_on_demand', // Stateless - no persistent connection state
+      readyState: 'stateless'
     }));
 
     return {
