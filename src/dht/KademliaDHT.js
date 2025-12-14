@@ -6,7 +6,7 @@ import { BootstrapClient } from '../bootstrap/BootstrapClient.js';
 import { InvitationToken } from '../core/InvitationToken.js';
 import { ConnectionManagerFactory } from '../network/ConnectionManagerFactory.js';
 import { OverlayNetwork } from '../network/OverlayNetwork.js';
-import Logger from '../utils/Logger.js';
+import { Logger } from '../utils/Logger.js';
 
 /**
  * Main Kademlia DHT implementation with connection-agnostic transport
