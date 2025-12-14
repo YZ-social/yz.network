@@ -299,16 +299,26 @@ export class BootstrapClient extends EventEmitter {
    * Handle response to pending request
    */
   handleResponse(message) {
+    console.log(`📥 Processing response for request ${message.requestId}:`, {
+      success: message.success,
+      hasData: !!message.data,
+      error: message.error
+    });
+    
     const request = this.pendingRequests.get(message.requestId);
     if (request) {
       clearTimeout(request.timeout);
       this.pendingRequests.delete(message.requestId);
 
       if (message.success) {
+        console.log(`✅ Request ${message.requestId} succeeded`);
         request.resolve(message.data);
       } else {
+        console.error(`❌ Request ${message.requestId} failed:`, message.error);
         request.reject(new Error(message.error || 'Request failed'));
       }
+    } else {
+      console.warn(`⚠️ Received response for unknown request ${message.requestId}`);
     }
   }
 
@@ -345,12 +355,25 @@ export class BootstrapClient extends EventEmitter {
       this.pendingRequests.set(requestId, {
         resolve,
         reject,
-        timeout: timeoutHandle
+        timeout: timeoutHandle,
+        messageType: message.type,
+        timestamp: Date.now()
       });
+      
+      console.log(`📋 Tracking request ${requestId} (${message.type}), ${this.pendingRequests.size} pending`);
+      
+      // Debug: Log pending requests after 5 seconds
+      setTimeout(() => {
+        if (this.pendingRequests.has(requestId)) {
+          console.warn(`⏰ Request ${requestId} (${message.type}) still pending after 5s...`);
+        }
+      }, 5000);
 
       try {
+        console.log(`📤 Sending request ${message.type} (ID: ${requestId}) with ${timeout}ms timeout`);
         this.sendMessage(message);
       } catch (error) {
+        console.error(`❌ Failed to send request ${message.type}:`, error);
         clearTimeout(timeoutHandle);
         this.pendingRequests.delete(requestId);
         reject(error);
@@ -362,25 +385,43 @@ export class BootstrapClient extends EventEmitter {
    * Request list of available peers or genesis status
    */
   async requestPeersOrGenesis(maxPeers = 20) {
-    try {
-      // Use longer timeout for genesis setup (bridge connection takes time)
-      const response = await this.sendRequest({
-        type: 'get_peers_or_genesis',
-        maxPeers,
-        nodeId: this.localNodeId,
-        metadata: this.metadata || {}
-      }, 30000); // 30 second timeout for genesis/bridge setup
+    const maxRetries = 3;
+    const retryDelay = 5000; // 5 seconds between retries
 
-      return {
-        peers: response.peers || [],
-        isGenesis: response.isGenesis || false,
-        membershipToken: response.membershipToken || null,
-        onboardingHelper: response.onboardingHelper || null
-      };
-    } catch (error) {
-      console.error('Error requesting peers or genesis status:', error);
-      return { peers: [], isGenesis: false, membershipToken: null, onboardingHelper: null };
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`🔄 Requesting peers/genesis (attempt ${attempt}/${maxRetries})...`);
+        
+        // Use longer timeout for genesis setup (bridge connection takes time)
+        const response = await this.sendRequest({
+          type: 'get_peers_or_genesis',
+          maxPeers,
+          nodeId: this.localNodeId,
+          metadata: this.metadata || {}
+        }, 30000); // 30 second timeout for genesis/bridge setup
+
+        console.log(`✅ Bootstrap request successful on attempt ${attempt}`);
+        return {
+          peers: response.peers || [],
+          isGenesis: response.isGenesis || false,
+          membershipToken: response.membershipToken || null,
+          onboardingHelper: response.onboardingHelper || null,
+          status: response.status || null
+        };
+      } catch (error) {
+        console.warn(`⚠️ Bootstrap request attempt ${attempt}/${maxRetries} failed:`, error.message);
+        
+        if (attempt < maxRetries) {
+          console.log(`⏳ Waiting ${retryDelay/1000}s before retry...`);
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
+        } else {
+          console.error('❌ All bootstrap request attempts failed:', error);
+        }
+      }
     }
+
+    // All retries failed
+    return { peers: [], isGenesis: false, membershipToken: null, onboardingHelper: null };
   }
 
   /**

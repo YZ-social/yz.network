@@ -463,7 +463,14 @@ export class KademliaDHT extends EventEmitter {
     // (This will be determined by bootstrap server based on -createNewDHT flag)
 
     // Request initial peers or genesis status
+    console.log('📡 Requesting initial peers or genesis status from bootstrap server...');
     const bootstrapResponse = await this.bootstrap.requestPeersOrGenesis(this.options.k);
+    console.log('📥 Bootstrap response received:', {
+      peersCount: bootstrapResponse.peers?.length || 0,
+      isGenesis: bootstrapResponse.isGenesis,
+      hasToken: !!bootstrapResponse.membershipToken,
+      status: bootstrapResponse.status
+    });
 
     if (bootstrapResponse.isGenesis) {
       console.log('🌟 Bootstrap server designated this node as Genesis Peer');
@@ -622,6 +629,10 @@ export class KademliaDHT extends EventEmitter {
       }, 1000); // Short delay to let routing table settle
     } else {
       console.warn('No peers available for bootstrap');
+      
+      // Set up periodic retry to get peers from bootstrap server
+      // This helps when the second client starts before the first client is ready
+      this.setupBootstrapRetry();
     }
   }
 
@@ -4864,6 +4875,12 @@ export class KademliaDHT extends EventEmitter {
     // Note: Individual connection managers are cleaned up with their DHTNodes
     this.bootstrap.destroy();
 
+    // Clear timers
+    if (this.bootstrapRetryTimer) {
+      clearInterval(this.bootstrapRetryTimer);
+      this.bootstrapRetryTimer = null;
+    }
+
     // Clear data
     this.storage.clear();
     this.republishQueue.clear();
@@ -5821,6 +5838,47 @@ export class KademliaDHT extends EventEmitter {
     } catch (error) {
       console.error(`Error during DHT peer discovery:`, error);
     }
+  }
+
+  /**
+   * Setup periodic retry to get peers from bootstrap server
+   * This helps when clients start before other peers are ready
+   */
+  setupBootstrapRetry() {
+    if (this.bootstrapRetryTimer) {
+      clearInterval(this.bootstrapRetryTimer);
+    }
+
+    console.log('🔄 Setting up bootstrap peer retry (every 10 seconds)...');
+    
+    this.bootstrapRetryTimer = setInterval(async () => {
+      try {
+        // Only retry if we have no connections and DHT is started
+        const connectedPeers = this.getConnectedPeers().length;
+        if (connectedPeers > 0 || !this.isStarted) {
+          console.log('✅ Bootstrap retry no longer needed - clearing timer');
+          clearInterval(this.bootstrapRetryTimer);
+          this.bootstrapRetryTimer = null;
+          return;
+        }
+
+        console.log('🔄 Retrying bootstrap peer request (no connections)...');
+        const bootstrapResponse = await this.bootstrap.requestPeersOrGenesis(this.options.k);
+        
+        if (bootstrapResponse.peers && bootstrapResponse.peers.length > 0) {
+          console.log(`📥 Bootstrap retry found ${bootstrapResponse.peers.length} peers!`);
+          await this.connectToInitialPeers(bootstrapResponse.peers);
+          
+          // Clear the retry timer since we found peers
+          clearInterval(this.bootstrapRetryTimer);
+          this.bootstrapRetryTimer = null;
+        } else {
+          console.log('⏳ Bootstrap retry: still no peers available');
+        }
+      } catch (error) {
+        console.warn('⚠️ Bootstrap retry failed:', error.message);
+      }
+    }, 10000); // Retry every 10 seconds
   }
 
   /**

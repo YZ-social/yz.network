@@ -890,10 +890,23 @@ export class EnhancedBootstrapServer extends EventEmitter {
           peer.isGenesisPeer = true;
         }
 
-        // DON'T send immediate response - wait for bridge connection to complete
-        // The response will be sent in handleGenesisConnectionResult()
+        // Mark genesis as assigned immediately to prevent race conditions
+        this.genesisAssigned = true;
 
-        // After genesis peer is set up, connect to bridge nodes and establish genesis-bridge connection
+        // CRITICAL FIX: Send immediate response to prevent client timeout
+        console.log(`📤 Sending immediate genesis response to prevent timeout`);
+        ws.send(JSON.stringify({
+          type: 'response',
+          requestId: message.requestId,
+          success: true,
+          data: {
+            peers: [], // Empty initially - bridge connections will be established separately
+            isGenesis: true,
+            message: 'Genesis peer designated - bridge connections will be established'
+          }
+        }));
+
+        // Handle bridge connections asynchronously (don't block response)
         setTimeout(async () => {
           try {
             console.log(`🌉 Genesis peer designated, now connecting to bridge nodes...`);
@@ -909,34 +922,8 @@ export class EnhancedBootstrapServer extends EventEmitter {
             // Then connect genesis to bridge
             await this.connectGenesisToBridge(ws, nodeId, message.metadata || {}, message);
           } catch (error) {
-            console.log(`❌ Failed to connect genesis to bridge: ${error.message}`);
-            console.log(`   Entering catch block for genesis ${nodeId?.substring(0, 8)}...`);
-            console.log(`   Setting genesisAssigned = true`);
-
-            // Mark genesis as assigned to prevent subsequent peers from also trying
-            this.genesisAssigned = true;
-
-            console.log(`   genesisAssigned set, now checking WebSocket state...`);
-            console.log(`   ws exists: ${!!ws}, ws.readyState: ${ws?.readyState}`);
-
-            // Send response to genesis peer so they don't timeout waiting
-            try {
-              if (ws && ws.readyState === 1) {  // WebSocket.OPEN = 1
-                console.log(`   WebSocket is OPEN, sending genesis_response...`);
-                ws.send(JSON.stringify({
-                  type: 'genesis_response',
-                  isGenesisPeer: true,
-                  peers: [],  // Empty for now - bridges will be available later
-                  bootstrapServers: [`ws://${this.options.host}:${this.options.port}`],
-                  message: 'Genesis peer registered. Bridge nodes not yet available - they will connect shortly.'
-                }));
-                console.log(`⚠️ Genesis peer ${nodeId?.substring(0, 8)}... registered but bridge connection pending`);
-              } else {
-                console.log(`⚠️ Cannot send genesis response - WebSocket not open (exists: ${!!ws}, state: ${ws?.readyState})`);
-              }
-            } catch (sendError) {
-              console.log(`❌ Error sending genesis response: ${sendError.message}`);
-            }
+            console.error(`❌ Failed to connect genesis to bridge: ${error.message}`);
+            // Bridge connection failure doesn't affect genesis status - genesis can operate independently
           }
         }, 2000); // Give genesis peer time to complete setup
 
@@ -965,10 +952,21 @@ export class EnhancedBootstrapServer extends EventEmitter {
       if (this.options.openNetwork && this.genesisAssigned) {
         console.log(`🌐 Open network mode: Finding random onboarding peer for ${nodeId?.substring(0, 8)}...`);
 
-        // DON'T send immediate response - wait for bridge to find helper peer
-        // The response will be sent in handleOnboardingPeerResult()
+        // CRITICAL FIX: Send immediate response to prevent client timeout
+        console.log(`📤 Sending immediate response - onboarding coordination will happen separately`);
+        ws.send(JSON.stringify({
+          type: 'response',
+          requestId: message.requestId,
+          success: true,
+          data: {
+            peers: [], // Empty initially - onboarding will be coordinated separately
+            isGenesis: false,
+            status: 'helper_coordinating',
+            message: 'Onboarding helper being selected - invitation will arrive shortly'
+          }
+        }));
 
-        // Query bridge for random peer selection (distributes load across DHT)
+        // Handle onboarding coordination asynchronously (don't block response)
         setTimeout(async () => {
           try {
             console.log(`🎲 Querying bridge for random onboarding peer (avoids bridge bottleneck)...`);
@@ -986,13 +984,14 @@ export class EnhancedBootstrapServer extends EventEmitter {
             await this.getOnboardingPeerFromBridge(ws, nodeId, message.metadata || {}, message);
           } catch (error) {
             console.error(`❌ Failed to get onboarding peer from bridge: ${error.message}`);
-            // Send error response
-            ws.send(JSON.stringify({
-              type: 'response',
-              requestId: message.requestId,
-              success: false,
-              error: `Onboarding failed: ${error.message}`
-            }));
+            // Send follow-up message about onboarding failure
+            if (ws && ws.readyState === 1) {
+              ws.send(JSON.stringify({
+                type: 'onboarding_failed',
+                nodeId: nodeId,
+                error: `Onboarding failed: ${error.message}`
+              }));
+            }
           }
         }, 500); // Small delay to ensure peer registration is complete
 
