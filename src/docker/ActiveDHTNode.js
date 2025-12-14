@@ -438,10 +438,12 @@ export class ActiveDHTNode extends NodeDHTClient {
     try {
       const result = await this.dht.store(key, value, ttl);
       this.metrics.dhtStores++;
+      console.log(`📦 DHT store operation completed: key=${key.substring(0, 16)}... (total stores: ${this.metrics.dhtStores})`);
       this.recordLatency('store', Date.now() - startTime);
       return result;
     } catch (error) {
       this.metrics.dhtStoreFails++;
+      console.log(`❌ DHT store operation failed: key=${key.substring(0, 16)}... (total failures: ${this.metrics.dhtStoreFails})`);
       throw error;
     }
   }
@@ -455,10 +457,12 @@ export class ActiveDHTNode extends NodeDHTClient {
     try {
       const result = await this.dht.get(key);
       this.metrics.dhtGets++;
+      console.log(`🔍 DHT get operation completed: key=${key.substring(0, 16)}... (total gets: ${this.metrics.dhtGets})`);
       this.recordLatency('get', Date.now() - startTime);
       return result;
     } catch (error) {
       this.metrics.dhtGetFails++;
+      console.log(`❌ DHT get operation failed: key=${key.substring(0, 16)}... (total failures: ${this.metrics.dhtGetFails})`);
       throw error;
     }
   }
@@ -470,6 +474,7 @@ export class ActiveDHTNode extends NodeDHTClient {
     const startTime = Date.now();
     const result = await this.dht.findNode(targetId);
     this.metrics.dhtFindNodes++;
+    console.log(`🔍 DHT findNode operation completed: target=${targetId.substring(0, 16)}... found ${result.length} nodes (total findNodes: ${this.metrics.dhtFindNodes})`);
     this.recordLatency('findNode', Date.now() - startTime);
     return result;
   }
@@ -481,6 +486,7 @@ export class ActiveDHTNode extends NodeDHTClient {
     const result = await this.pubsub.publish(topic, data, options);
     this.metrics.pubsubPublishes++;
     this.metrics.messagesSent++;
+    console.log(`📤 PubSub publish completed: topic=${topic} (total publishes: ${this.metrics.pubsubPublishes}, messages sent: ${this.metrics.messagesSent})`);
     return result;
   }
 
@@ -492,10 +498,12 @@ export class ActiveDHTNode extends NodeDHTClient {
 
     this.pubsub.on(topic, (message) => {
       this.metrics.messagesReceived++;
+      console.log(`📥 PubSub message received: topic=${topic} (total received: ${this.metrics.messagesReceived})`);
       if (handler) handler(message);
     });
 
     this.metrics.pubsubSubscribes++;
+    console.log(`📬 PubSub subscribe completed: topic=${topic} (total subscriptions: ${this.metrics.pubsubSubscribes})`);
     return result;
   }
 
@@ -580,7 +588,31 @@ export class ActiveDHTNode extends NodeDHTClient {
       const testValue = { timestamp: Date.now(), nodeId: this.nodeId.toString().substring(0, 8) };
       await this.store(testKey, JSON.stringify(testValue), 300); // 5 minute TTL
       
-      console.log('✅ Throughput test operations completed');
+      // Perform PubSub test operations if PubSub is available
+      if (this.pubsub) {
+        console.log('📊 Performing PubSub test operations...');
+        
+        // Test publish operation
+        const testTopic = `test_topic_${this.nodeId.toString().substring(0, 8)}`;
+        const testMessage = { 
+          type: 'throughput_test', 
+          timestamp: Date.now(), 
+          nodeId: this.nodeId.toString().substring(0, 8) 
+        };
+        
+        await this.publish(testTopic, testMessage);
+        
+        // Test subscribe operation (subscribe to our own test topic)
+        await this.subscribe(`test_topic_global`, (message) => {
+          console.log(`📬 Received test message:`, message);
+        });
+        
+        console.log('✅ PubSub test operations completed');
+      } else {
+        console.log('⚠️ PubSub not available for test operations');
+      }
+      
+      console.log('✅ All throughput test operations completed');
     } catch (error) {
       console.warn('⚠️ Throughput test failed:', error.message);
     }

@@ -215,7 +215,7 @@ function calculateAggregates() {
 
     // DHT operation statistics
     totalDHTOps: healthyNodes.reduce((sum, n) =>
-      sum + (n.dht_store_operations_total || 0) + (n.dht_get_operations_total || 0), 0),
+      sum + (n.dht_store_operations_total || 0) + (n.dht_get_operations_total || 0) + (n.dht_findnode_operations_total || 0), 0),
 
     // PubSub operation statistics
     totalPubSubOps: healthyNodes.reduce((sum, n) =>
