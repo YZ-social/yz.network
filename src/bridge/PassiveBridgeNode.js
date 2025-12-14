@@ -797,7 +797,8 @@ export class PassiveBridgeNode extends NodeDHTClient {
       // 8. Notify bootstrap that helper peer will coordinate the invitation
       // The helper peer will create the invitation token and send it to the new node
       await this.sendOnboardingPeerResult(bootstrapPeerId, requestId, true, {
-        helperPeerId: helperPeer.id.toString(),
+        inviterPeerId: helperPeer.id.toString(),
+        inviterMetadata: helperPeer.metadata || {},
         membershipToken,
         status: 'invitation_request_sent_to_helper',
         message: 'Active DHT member will create invitation and coordinate connection'
@@ -816,10 +817,10 @@ export class PassiveBridgeNode extends NodeDHTClient {
    */
   async sendOnboardingPeerResult(bootstrapPeerId, requestId, success, result, error = null) {
     const message = {
-      type: 'onboarding_peer_result',
+      type: 'onboarding_peer_response',
       requestId,
       success,
-      result,
+      data: result,
       error,
       timestamp: Date.now()
     };

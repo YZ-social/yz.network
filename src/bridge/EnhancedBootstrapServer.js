@@ -659,35 +659,42 @@ export class EnhancedBootstrapServer extends EventEmitter {
 
   /**
    * Test a single bridge node availability (stateless)
-   * FIXED: No persistent connections - connect, test, disconnect
+   * FIXED: Use proper authentication for availability test
    */
   async testSingleBridge(bridgeAddr) {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(new Error(`Bridge availability test timeout: ${bridgeAddr}`));
-      }, 5000); // Shorter timeout for availability test
+      }, 5000);
 
       try {
         const ws = new WebSocket(`ws://${bridgeAddr}`);
+        let authenticated = false;
 
         ws.onopen = () => {
-          // Send a simple ping to test connectivity
+          // Send bootstrap authentication (required for bridge nodes)
           ws.send(JSON.stringify({
-            type: 'ping',
-            timestamp: Date.now()
+            type: 'bootstrap_auth',
+            auth_token: this.options.bridgeAuth,
+            bootstrapServer: `${this.options.host}:${this.options.port}`
           }));
         };
 
         ws.onmessage = (event) => {
           try {
             const message = JSON.parse(event.data);
-            if (message.type === 'pong') {
+            
+            if (message.type === 'auth_success' && !authenticated) {
+              authenticated = true;
+              // Bridge is available and authenticated successfully
               clearTimeout(timeout);
               ws.close(1000, 'Availability test complete');
               resolve(bridgeAddr);
             }
           } catch (error) {
-            // Ignore parsing errors during availability test
+            clearTimeout(timeout);
+            ws.close(1000, 'Parse error');
+            reject(new Error(`Bridge response parse error: ${bridgeAddr}`));
           }
         };
 
@@ -762,8 +769,8 @@ export class EnhancedBootstrapServer extends EventEmitter {
               // Now request onboarding peer
               ws.send(JSON.stringify({
                 type: 'get_onboarding_peer',
-                nodeId: nodeId,
-                metadata: metadata,
+                newNodeId: nodeId,
+                newNodeMetadata: metadata,
                 requestId: `onboarding_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
               }));
             } else if (message.type === 'onboarding_peer_response') {
