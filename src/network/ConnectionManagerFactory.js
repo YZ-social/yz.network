@@ -77,6 +77,10 @@ export class ConnectionManagerFactory {
     //   return ConnectionManagerFactory.managerCache.get(peerId);
     // }
 
+    // DEBUG: Log metadata to understand the structure
+    console.log(`🔍 ConnectionManagerFactory.getManagerForPeer() called for ${peerId.substring(0, 8)}...`);
+    console.log(`🔍 peerMetadata:`, peerMetadata);
+
     // Determine target node type from metadata
     let targetNodeType = 'browser'; // default
     if (peerMetadata) {
@@ -84,6 +88,8 @@ export class ConnectionManagerFactory {
         targetNodeType = 'nodejs';
       }
     }
+
+    console.log(`🔍 Determined targetNodeType: ${targetNodeType} (local: ${ConnectionManagerFactory.localNodeType})`);
 
     // DEBUG: Log each time we create a new manager (should help track the multiple-instance bug)
     console.log(`⚠️ ConnectionManagerFactory creating NEW manager for ${peerId.substring(0, 8)}... (no caching enabled)`);
