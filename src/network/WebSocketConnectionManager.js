@@ -894,6 +894,18 @@ export class WebSocketConnectionManager extends ConnectionManager {
       if (global.activeDHTNodeMetrics.pingLatencies.length > 100) {
         global.activeDHTNodeMetrics.pingLatencies.shift();
       }
+      
+      // Record ping as an operation for throughput calculation
+      global.activeDHTNodeMetrics.opsLastMinute.push(Date.now());
+      console.log(`📊 Recorded ping operation for throughput (total ops: ${global.activeDHTNodeMetrics.opsLastMinute.length})`);
+      
+      // Cleanup old operation timestamps
+      const oneMinuteAgo = Date.now() - 60000;
+      const oldLength = global.activeDHTNodeMetrics.opsLastMinute.length;
+      global.activeDHTNodeMetrics.opsLastMinute = global.activeDHTNodeMetrics.opsLastMinute.filter(t => t > oneMinuteAgo);
+      if (oldLength !== global.activeDHTNodeMetrics.opsLastMinute.length) {
+        console.log(`📊 Cleaned up old operations: ${oldLength} -> ${global.activeDHTNodeMetrics.opsLastMinute.length}`);
+      }
     } else {
       console.warn(`⚠️ No global metrics available to record ping latency: ${rtt}ms`);
     }

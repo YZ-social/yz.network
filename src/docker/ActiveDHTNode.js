@@ -381,15 +381,21 @@ export class ActiveDHTNode extends NodeDHTClient {
    * Calculate operations per second (last minute)
    */
   calculateOpsPerSecond() {
-    if (this.metrics.opsLastMinute.length === 0) return 0;
+    if (this.metrics.opsLastMinute.length === 0) {
+      console.log(`📊 No operations recorded in opsLastMinute array`);
+      return 0;
+    }
 
     const now = Date.now();
     const oneMinuteAgo = now - 60000;
 
     // Filter to last minute
     const recentOps = this.metrics.opsLastMinute.filter(t => t > oneMinuteAgo);
+    
+    const opsPerSecond = recentOps.length / 60;
+    console.log(`📊 Throughput calculation: ${recentOps.length} operations in last minute = ${opsPerSecond.toFixed(2)} ops/sec`);
 
-    return recentOps.length / 60;
+    return opsPerSecond;
   }
 
   /**
@@ -397,9 +403,13 @@ export class ActiveDHTNode extends NodeDHTClient {
    */
   recordLatency(type, latencyMs) {
     const bucket = this.metrics[`${type}Latencies`];
-    if (!bucket) return;
+    if (!bucket) {
+      console.warn(`⚠️ No latency bucket for operation type: ${type}`);
+      return;
+    }
 
     bucket.push(latencyMs);
+    console.log(`📊 Recorded ${type} operation: ${latencyMs}ms (bucket size: ${bucket.length})`);
 
     // Keep only recent samples
     if (bucket.length > this.maxLatencySamples) {
@@ -408,10 +418,15 @@ export class ActiveDHTNode extends NodeDHTClient {
 
     // Record operation timestamp for throughput
     this.metrics.opsLastMinute.push(Date.now());
+    console.log(`📊 Recorded ${type} operation for throughput (total ops: ${this.metrics.opsLastMinute.length})`);
 
     // Cleanup old operation timestamps
     const oneMinuteAgo = Date.now() - 60000;
+    const oldLength = this.metrics.opsLastMinute.length;
     this.metrics.opsLastMinute = this.metrics.opsLastMinute.filter(t => t > oneMinuteAgo);
+    if (oldLength !== this.metrics.opsLastMinute.length) {
+      console.log(`📊 Cleaned up old operations: ${oldLength} -> ${this.metrics.opsLastMinute.length}`);
+    }
   }
 
   /**
@@ -510,6 +525,11 @@ export class ActiveDHTNode extends NodeDHTClient {
     this.healthInterval = setInterval(() => {
       this.performHealthCheck();
     }, 30000);
+
+    // Periodic DHT operations for throughput measurement (every 2 minutes)
+    this.throughputTestInterval = setInterval(() => {
+      this.performThroughputTest();
+    }, 120000);
   }
 
   /**
@@ -540,6 +560,33 @@ export class ActiveDHTNode extends NodeDHTClient {
   }
 
   /**
+   * Perform periodic DHT operations to measure throughput
+   */
+  async performThroughputTest() {
+    if (!this.dht) return;
+
+    try {
+      console.log('📊 Performing throughput test operations...');
+      
+      // Perform a few findNode operations (these are common DHT maintenance operations)
+      const randomNodeId = crypto.randomBytes(20).toString('hex');
+      await this.findNode(randomNodeId);
+      
+      // Small delay between operations
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // Perform a test store operation
+      const testKey = `throughput_test_${Date.now()}`;
+      const testValue = { timestamp: Date.now(), nodeId: this.nodeId.toString().substring(0, 8) };
+      await this.store(testKey, JSON.stringify(testValue), 300); // 5 minute TTL
+      
+      console.log('✅ Throughput test operations completed');
+    } catch (error) {
+      console.warn('⚠️ Throughput test failed:', error.message);
+    }
+  }
+
+  /**
    * Graceful shutdown
    */
   async shutdown() {
@@ -548,6 +595,7 @@ export class ActiveDHTNode extends NodeDHTClient {
     // Stop background tasks
     if (this.metricsInterval) clearInterval(this.metricsInterval);
     if (this.healthInterval) clearInterval(this.healthInterval);
+    if (this.throughputTestInterval) clearInterval(this.throughputTestInterval);
 
     // Close metrics server
     if (this.metricsServer) {
