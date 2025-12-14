@@ -949,7 +949,8 @@ export class EnhancedBootstrapServer extends EventEmitter {
       }
 
       // Open network mode - connect subsequent peers via random onboarding peer (after genesis)
-      if (this.options.openNetwork && this.genesisAssigned) {
+      // BUT ONLY if bridge nodes are available for coordination
+      if (this.options.openNetwork && this.genesisAssigned && this.bridgeConnections.size > 0) {
         console.log(`🌐 Open network mode: Finding random onboarding peer for ${nodeId?.substring(0, 8)}...`);
 
         // CRITICAL FIX: Send immediate response to prevent client timeout
@@ -996,6 +997,14 @@ export class EnhancedBootstrapServer extends EventEmitter {
         }, 500); // Small delay to ensure peer registration is complete
 
         return;
+      }
+
+      // Open network mode fallback - when no bridge nodes are available
+      if (this.options.openNetwork && this.genesisAssigned && this.bridgeConnections.size === 0) {
+        console.log(`🌐 Open network mode: No bridge nodes available - falling back to direct peer connection`);
+        console.log(`📤 Sending available peers for direct connection (bridge-less mode)`);
+        
+        // Fall through to standard mode to return available peers
       }
 
       // Standard mode (not open network) - return existing peers or empty list

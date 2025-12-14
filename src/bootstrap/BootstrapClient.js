@@ -257,6 +257,11 @@ export class BootstrapClient extends EventEmitter {
           this.emit('bridgeInvitationRequest', message);
           break;
 
+        case 'onboarding_failed':
+          console.warn('⚠️ Onboarding failed:', message.error);
+          this.emit('onboardingFailed', message);
+          break;
+
         case 'bridge_connection_status':
           this.emit('bridgeConnectionStatus', message);
           break;

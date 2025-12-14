@@ -385,6 +385,11 @@ export class KademliaDHT extends EventEmitter {
     this.bootstrap.on('connectToBridge', (message) => {
       this.handleConnectToBridge(message);
     });
+
+    // Handle onboarding failures
+    this.bootstrap.on('onboardingFailed', (message) => {
+      this.handleOnboardingFailed(message);
+    });
   }
 
 
@@ -507,12 +512,27 @@ export class KademliaDHT extends EventEmitter {
       // which will trigger peer connection and complete the bootstrap process
       
       // Set a timeout in case invitation never arrives
-      setTimeout(() => {
+      setTimeout(async () => {
         if (!this.isBootstrapped && this.getConnectedPeers().length === 0) {
-          console.warn('⏰ Onboarding timeout - no invitation received, continuing with empty peer list');
-          this.connectToInitialPeers([]).catch(err => {
+          console.warn('⏰ Onboarding timeout - no invitation received, completing startup anyway');
+          
+          try {
+            await this.connectToInitialPeers([]);
+            
+            // Complete DHT startup even without peers
+            if (!this.overlayNetwork) {
+              console.log('🌐 Initializing overlay network for WebRTC signaling...');
+              this.overlayNetwork = new OverlayNetwork(this, this.overlayOptions);
+            }
+
+            this.startMaintenanceTasks();
+            this.isStarted = true;
+            this.emit('started');
+            
+            console.log('✅ DHT startup completed after onboarding timeout');
+          } catch (err) {
             console.error('Failed to complete onboarding after timeout:', err);
-          });
+          }
         }
       }, 30000); // 30 second timeout
       
@@ -1218,6 +1238,35 @@ export class KademliaDHT extends EventEmitter {
     } catch (error) {
       console.error('Error processing invitation:', error);
       return false;
+    }
+  }
+
+  /**
+   * Handle onboarding failure from bootstrap server
+   * Complete DHT startup even if onboarding coordination failed
+   */
+  async handleOnboardingFailed(message) {
+    console.warn('⚠️ Onboarding coordination failed:', message.error);
+    console.log('🚀 Completing DHT startup despite onboarding failure...');
+    
+    try {
+      // Complete DHT startup even without coordinated onboarding
+      if (!this.isStarted) {
+        await this.connectToInitialPeers([]);
+        
+        if (!this.overlayNetwork) {
+          console.log('🌐 Initializing overlay network for WebRTC signaling...');
+          this.overlayNetwork = new OverlayNetwork(this, this.overlayOptions);
+        }
+
+        this.startMaintenanceTasks();
+        this.isStarted = true;
+        this.emit('started');
+        
+        console.log('✅ DHT startup completed after onboarding failure');
+      }
+    } catch (error) {
+      console.error('❌ Failed to complete startup after onboarding failure:', error);
     }
   }
 
