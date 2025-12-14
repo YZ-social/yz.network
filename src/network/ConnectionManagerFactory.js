@@ -77,10 +77,6 @@ export class ConnectionManagerFactory {
     //   return ConnectionManagerFactory.managerCache.get(peerId);
     // }
 
-    // DEBUG: Log metadata to understand the structure
-    console.log(`🔍 ConnectionManagerFactory.getManagerForPeer() called for ${peerId.substring(0, 8)}...`);
-    console.log(`🔍 peerMetadata:`, peerMetadata);
-
     // Determine target node type from metadata
     let targetNodeType = 'browser'; // default assumption for peers without explicit nodeType
     if (peerMetadata) {
@@ -102,10 +98,10 @@ export class ConnectionManagerFactory {
       // If none of the above, keep default 'browser'
     }
 
-    console.log(`🔍 Determined targetNodeType: ${targetNodeType} (local: ${ConnectionManagerFactory.localNodeType})`);
-
-    // DEBUG: Log each time we create a new manager (should help track the multiple-instance bug)
-    console.log(`⚠️ ConnectionManagerFactory creating NEW manager for ${peerId.substring(0, 8)}... (no caching enabled)`);
+    // Only log when there might be an issue (mismatched types)
+    if (peerMetadata && !peerMetadata.nodeType && targetNodeType === 'browser') {
+      console.log(`🔍 [ConnMgr] Inferred ${targetNodeType} for ${peerId.substring(0, 8)} (no explicit nodeType)`);
+    }
 
     // Create manager on-demand based on connection requirements
     const manager = ConnectionManagerFactory.createForConnection(

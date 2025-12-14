@@ -890,7 +890,6 @@ export class WebSocketConnectionManager extends ConnectionManager {
     const globalObj = typeof globalThis !== 'undefined' ? globalThis : (typeof global !== 'undefined' ? global : window);
     if (globalObj && globalObj.activeDHTNodeMetrics) {
       globalObj.activeDHTNodeMetrics.pingLatencies.push(rtt);
-      console.log(`📊 Recorded ping latency: ${rtt}ms (total samples: ${globalObj.activeDHTNodeMetrics.pingLatencies.length})`);
       
       // Keep only recent samples (last 100)
       if (globalObj.activeDHTNodeMetrics.pingLatencies.length > 100) {
@@ -899,17 +898,10 @@ export class WebSocketConnectionManager extends ConnectionManager {
       
       // Record ping as an operation for throughput calculation
       globalObj.activeDHTNodeMetrics.opsLastMinute.push(Date.now());
-      console.log(`📊 Recorded ping operation for throughput (total ops: ${globalObj.activeDHTNodeMetrics.opsLastMinute.length})`);
       
       // Cleanup old operation timestamps
       const oneMinuteAgo = Date.now() - 60000;
-      const oldLength = globalObj.activeDHTNodeMetrics.opsLastMinute.length;
       globalObj.activeDHTNodeMetrics.opsLastMinute = globalObj.activeDHTNodeMetrics.opsLastMinute.filter(t => t > oneMinuteAgo);
-      if (oldLength !== globalObj.activeDHTNodeMetrics.opsLastMinute.length) {
-        console.log(`📊 Cleaned up old operations: ${oldLength} -> ${globalObj.activeDHTNodeMetrics.opsLastMinute.length}`);
-      }
-    } else {
-      console.warn(`⚠️ No global metrics available to record ping latency: ${rtt}ms`);
     }
   }
 
