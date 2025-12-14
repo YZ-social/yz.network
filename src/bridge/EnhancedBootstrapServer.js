@@ -1022,65 +1022,72 @@ export class EnhancedBootstrapServer extends EventEmitter {
         console.log(`🌉 Detected bridge node ${nodeId?.substring(0, 8)}... - will not designate as genesis`);
       }
 
-      if (this.options.createNewDHT && !this.genesisAssigned && !isBridgeNode) {
-        console.log(`🌟 Genesis mode: Designating ${nodeId?.substring(0, 8)}... as genesis peer (non-passive node)`);
-
-        // Update peer record to mark as genesis
+      if (this.options.createNewDHT && !isBridgeNode) {
+        // Check if this node is already designated as genesis or if no genesis assigned yet
         const peer = this.peers.get(nodeId);
-        if (peer) {
-          peer.isGenesisPeer = true;
-        }
-
-        // Mark genesis as assigned immediately to prevent race conditions
-        this.genesisAssigned = true;
-
-        // CRITICAL FIX: Send immediate response with bridge node addresses
-        console.log(`📤 Sending immediate genesis response with bridge node addresses`);
+        const isAlreadyGenesis = peer?.isGenesisPeer === true;
+        const hasGenesisMembershipToken = message.metadata?.membershipToken?.isGenesis === true;
+        const shouldAssignGenesis = !this.genesisAssigned || isAlreadyGenesis || hasGenesisMembershipToken;
         
-        // Create bridge node peer objects for genesis connection
-        const bridgeNodePeers = this.options.bridgeNodes.map(bridgeAddr => ({
-          nodeId: `bridge_${bridgeAddr.replace(':', '_')}`, // Temporary ID for bridge nodes
-          metadata: {
-            isBridgeNode: true,
-            nodeType: 'bridge',
-            websocketAddress: `ws://${bridgeAddr}`,
-            listeningAddress: `ws://${bridgeAddr}`,
-            capabilities: ['websocket']
+        if (shouldAssignGenesis) {
+          console.log(`🌟 Genesis mode: ${hasGenesisMembershipToken ? 'Existing genesis with token' : isAlreadyGenesis ? 'Existing genesis peer' : 'Designating'} ${nodeId?.substring(0, 8)}... as genesis peer (non-passive node)`);
+
+          // Update peer record to mark as genesis
+          if (peer) {
+            peer.isGenesisPeer = true;
           }
-        }));
-        
-        sendResponse({
-          type: 'response',
-          requestId: message.requestId,
-          success: true,
-          data: {
-            peers: bridgeNodePeers, // Provide bridge node addresses for genesis connection
-            isGenesis: true,
-            message: `Genesis peer designated - connect to ${bridgeNodePeers.length} bridge nodes to form initial DHT`
-          }
-        });
 
-        // Handle bridge coordination asynchronously (don't block response)
-        setTimeout(async () => {
-          try {
-            console.log(`🌉 Genesis peer designated, testing bridge availability...`);
+          // Mark genesis as assigned immediately to prevent race conditions
+          this.genesisAssigned = true;
 
-            // Test bridge availability (stateless)
-            const availableBridges = await this.testBridgeAvailability();
-
-            if (availableBridges > 0) {
-              console.log(`✅ ${availableBridges} bridge nodes available for genesis coordination`);
-              // Genesis can operate independently - bridge coordination is optional
-            } else {
-              console.warn(`⚠️ No bridge nodes available - genesis will operate independently`);
+          // CRITICAL FIX: Send immediate response with bridge node addresses
+          console.log(`📤 Sending immediate genesis response with bridge node addresses`);
+          
+          // Create bridge node peer objects for genesis connection
+          const bridgeNodePeers = this.options.bridgeNodes.map(bridgeAddr => ({
+            nodeId: `bridge_${bridgeAddr.replace(':', '_')}`, // Temporary ID for bridge nodes
+            metadata: {
+              isBridgeNode: true,
+              nodeType: 'bridge',
+              websocketAddress: `ws://${bridgeAddr}`,
+              listeningAddress: `ws://${bridgeAddr}`,
+              capabilities: ['websocket']
             }
-          } catch (error) {
-            console.error(`❌ Bridge availability test failed: ${error.message}`);
-            // Genesis can operate independently without bridge coordination
-          }
-        }, 2000); // Give genesis peer time to complete setup
+          }));
+          
+          sendResponse({
+            type: 'response',
+            requestId: message.requestId,
+            success: true,
+            data: {
+              peers: bridgeNodePeers, // Provide bridge node addresses for genesis connection
+              isGenesis: true,
+              message: `Genesis peer designated - connect to ${bridgeNodePeers.length} bridge nodes to form initial DHT`
+            }
+          });
 
-        return;
+          // Handle bridge coordination asynchronously (don't block response)
+          setTimeout(async () => {
+            try {
+              console.log(`🌉 Genesis peer designated, testing bridge availability...`);
+
+              // Test bridge availability (stateless)
+              const availableBridges = await this.testBridgeAvailability();
+
+              if (availableBridges > 0) {
+                console.log(`✅ ${availableBridges} bridge nodes available for genesis coordination`);
+                // Genesis can operate independently - bridge coordination is optional
+              } else {
+                console.warn(`⚠️ No bridge nodes available - genesis will operate independently`);
+              }
+            } catch (error) {
+              console.error(`❌ Bridge availability test failed: ${error.message}`);
+              // Genesis can operate independently without bridge coordination
+            }
+          }, 2000); // Give genesis peer time to complete setup
+
+          return;
+        }
       }
 
       // Bridge nodes in genesis mode - wait for genesis peer to connect
