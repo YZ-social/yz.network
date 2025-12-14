@@ -869,6 +869,10 @@ export class EnhancedBootstrapServer extends EventEmitter {
       console.log(`   message.metadata:`, message.metadata);
       console.log(`   existingClient.metadata:`, existingClient?.metadata);
       console.log(`   existingPeer.metadata:`, existingPeer?.metadata);
+      console.log(`   createNewDHT: ${this.options.createNewDHT}`);
+      console.log(`   genesisAssigned: ${this.genesisAssigned}`);
+      console.log(`   connectedClients.size: ${this.connectedClients.size}`);
+      console.log(`   peers.size: ${this.peers.size}`);
 
       const isBridgeNode = message.metadata?.isBridgeNode === true ||
                            message.metadata?.nodeType === 'bridge' ||
@@ -947,6 +951,12 @@ export class EnhancedBootstrapServer extends EventEmitter {
 
         return;
       }
+
+      // Debug: Log the conditions for open network mode
+      console.log(`🔍 Open network mode check for ${nodeId?.substring(0, 8)}...:`);
+      console.log(`   options.openNetwork: ${this.options.openNetwork}`);
+      console.log(`   genesisAssigned: ${this.genesisAssigned}`);
+      console.log(`   bridgeConnections.size: ${this.bridgeConnections.size}`);
 
       // Open network mode - connect subsequent peers via random onboarding peer (after genesis)
       // BUT ONLY if bridge nodes are available for coordination

@@ -511,10 +511,10 @@ export class KademliaDHT extends EventEmitter {
       // The invitation will be handled by the 'invitationReceived' event handler
       // which will trigger peer connection and complete the bootstrap process
       
-      // Set a timeout in case invitation never arrives
+      // Set a shorter timeout in case invitation never arrives
       setTimeout(async () => {
         if (!this.isBootstrapped && this.getConnectedPeers().length === 0) {
-          console.warn('⏰ Onboarding timeout - no invitation received, completing startup anyway');
+          console.warn('⏰ Onboarding timeout (10s) - no invitation received, completing startup anyway');
           
           try {
             await this.connectToInitialPeers([]);
@@ -534,8 +534,36 @@ export class KademliaDHT extends EventEmitter {
             console.error('Failed to complete onboarding after timeout:', err);
           }
         }
-      }, 30000); // 30 second timeout
+      }, 10000); // Reduced to 10 second timeout for faster recovery
       
+      // Set up periodic retry to check for available peers
+      // This handles cases where the bootstrap server state is inconsistent
+      const retryInterval = setInterval(async () => {
+        if (!this.isBootstrapped && this.getConnectedPeers().length === 0) {
+          console.log('🔄 Retrying bootstrap request while waiting for invitation...');
+          try {
+            const retryResponse = await this.bootstrap.requestPeersOrGenesis(this.options.k);
+            if (retryResponse.peers && retryResponse.peers.length > 0) {
+              console.log(`📥 Found ${retryResponse.peers.length} peers on retry!`);
+              clearInterval(retryInterval);
+              await this.connectToInitialPeers(retryResponse.peers);
+              
+              // Complete startup
+              if (!this.overlayNetwork) {
+                this.overlayNetwork = new OverlayNetwork(this, this.overlayOptions);
+              }
+              this.startMaintenanceTasks();
+              this.isStarted = true;
+              this.emit('started');
+            }
+          } catch (error) {
+            console.warn('⚠️ Bootstrap retry failed:', error.message);
+          }
+        } else {
+          clearInterval(retryInterval);
+        }
+      }, 5000); // Check every 5 seconds
+
       // Don't continue with startup - wait for invitation
       return;
     }
