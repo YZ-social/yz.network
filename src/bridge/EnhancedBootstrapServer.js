@@ -1746,31 +1746,59 @@ export class EnhancedBootstrapServer extends EventEmitter {
 
       // Send membership token to new peer
       // Helper peer will coordinate connection through existing invitation system
-      pending.ws.send(JSON.stringify({
-        type: 'response',
-        requestId: pending.clientMessage.requestId,
-        success: true,
-        data: {
-          peers: [], // No direct peers - helper will coordinate through bootstrap
-          isGenesis: false,
-          membershipToken: result.membershipToken,
-          onboardingHelper: result.helperPeerId,
-          status: 'helper_coordinating',
-          message: 'Random DHT peer will help you join the network (invitation sent via DHT)'
-        }
-      }));
+      // Check if we already responded to prevent duplicates
+      const requestKey = `${pending.nodeId}_${pending.clientMessage.requestId}`;
+      if (!this.respondedRequests || !this.respondedRequests.has(requestKey)) {
+        if (!this.respondedRequests) this.respondedRequests = new Set();
+        this.respondedRequests.add(requestKey);
+        
+        pending.ws.send(JSON.stringify({
+          type: 'response',
+          requestId: pending.clientMessage.requestId,
+          success: true,
+          data: {
+            peers: [], // No direct peers - helper will coordinate through bootstrap
+            isGenesis: false,
+            membershipToken: result.membershipToken,
+            onboardingHelper: result.helperPeerId,
+            status: 'helper_coordinating',
+            message: 'Random DHT peer will help you join the network (invitation sent via DHT)'
+          }
+        }));
+        
+        // Clean up after 5 minutes
+        setTimeout(() => {
+          this.respondedRequests?.delete(requestKey);
+        }, 5 * 60 * 1000);
+      } else {
+        console.log(`⚠️ Prevented duplicate response for ${requestKey} in handleOnboardingPeerResult`);
+      }
 
       pending.resolve();
     } else {
       console.warn(`❌ Bridge failed to find onboarding peer for ${pending.nodeId.substring(0, 8)}: ${error}`);
 
       // Send failure response
-      pending.ws.send(JSON.stringify({
-        type: 'response',
-        requestId: pending.clientMessage.requestId,
-        success: false,
-        error: `Onboarding failed: ${error}`
-      }));
+      // Check if we already responded to prevent duplicates
+      const requestKey = `${pending.nodeId}_${pending.clientMessage.requestId}`;
+      if (!this.respondedRequests || !this.respondedRequests.has(requestKey)) {
+        if (!this.respondedRequests) this.respondedRequests = new Set();
+        this.respondedRequests.add(requestKey);
+        
+        pending.ws.send(JSON.stringify({
+          type: 'response',
+          requestId: pending.clientMessage.requestId,
+          success: false,
+          error: `Onboarding failed: ${error}`
+        }));
+        
+        // Clean up after 5 minutes
+        setTimeout(() => {
+          this.respondedRequests?.delete(requestKey);
+        }, 5 * 60 * 1000);
+      } else {
+        console.log(`⚠️ Prevented duplicate error response for ${requestKey} in handleOnboardingPeerResult`);
+      }
 
       // Close connection
       pending.ws.close(1000, 'Onboarding failed');
@@ -2102,11 +2130,25 @@ export class EnhancedBootstrapServer extends EventEmitter {
       console.log(`📤 Sending genesis response to ${nodeId.substring(0, 8)} with ${bridgeMetadata.length} bridge nodes`);
       console.log(`🔍 WebSocket state: ${pending.ws.readyState} (1=OPEN)`);
 
-      try {
-        pending.ws.send(JSON.stringify(responseData));
-        console.log(`✅ Genesis response sent successfully to ${nodeId.substring(0, 8)}`);
-      } catch (error) {
-        console.error(`❌ Failed to send genesis response to ${nodeId.substring(0, 8)}:`, error);
+      // Check if we already responded to prevent duplicates
+      const requestKey = `${nodeId}_${pending.clientMessage.requestId}`;
+      if (!this.respondedRequests || !this.respondedRequests.has(requestKey)) {
+        if (!this.respondedRequests) this.respondedRequests = new Set();
+        this.respondedRequests.add(requestKey);
+        
+        try {
+          pending.ws.send(JSON.stringify(responseData));
+          console.log(`✅ Genesis response sent successfully to ${nodeId.substring(0, 8)}`);
+          
+          // Clean up after 5 minutes
+          setTimeout(() => {
+            this.respondedRequests?.delete(requestKey);
+          }, 5 * 60 * 1000);
+        } catch (error) {
+          console.error(`❌ Failed to send genesis response to ${nodeId.substring(0, 8)}:`, error);
+        }
+      } else {
+        console.log(`⚠️ Prevented duplicate response for ${requestKey} in handleGenesisConnectionResult`);
       }
 
       // Resolve the connection promise
@@ -2115,12 +2157,26 @@ export class EnhancedBootstrapServer extends EventEmitter {
       console.warn(`❌ Bridge rejected genesis connection for ${nodeId.substring(0, 8)}: ${reason}`);
 
       // Send BootstrapClient-compatible error response
-      pending.ws.send(JSON.stringify({
-        type: 'response',
-        requestId: pending.clientMessage.requestId,
-        success: false,
-        error: reason
-      }));
+      // Check if we already responded to prevent duplicates
+      const requestKey = `${nodeId}_${pending.clientMessage.requestId}`;
+      if (!this.respondedRequests || !this.respondedRequests.has(requestKey)) {
+        if (!this.respondedRequests) this.respondedRequests = new Set();
+        this.respondedRequests.add(requestKey);
+        
+        pending.ws.send(JSON.stringify({
+          type: 'response',
+          requestId: pending.clientMessage.requestId,
+          success: false,
+          error: reason
+        }));
+        
+        // Clean up after 5 minutes
+        setTimeout(() => {
+          this.respondedRequests?.delete(requestKey);
+        }, 5 * 60 * 1000);
+      } else {
+        console.log(`⚠️ Prevented duplicate error response for ${requestKey} in handleGenesisConnectionResult`);
+      }
 
       // Close connection and remove peer
       pending.ws.close(1000, 'Genesis connection failed');
