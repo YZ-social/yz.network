@@ -1881,6 +1881,12 @@ export class EnhancedBootstrapServer extends EventEmitter {
       this.handleBridgeInvitationAccepted(response);
     } else if (response.type === 'bridge_invitation_failed') {
       this.handleBridgeInvitationFailed(response);
+    } else if (response.type === 'ping') {
+      // Handle ping from bridge node - send pong back
+      this.handleBridgePing(bridgeAddr, response);
+    } else if (response.type === 'pong') {
+      // Handle pong from bridge node - just log for now
+      console.log(`🏓 Received pong from bridge ${bridgeAddr}`);
     } else {
       console.warn(`Unknown bridge response type: ${response.type}`);
     }
@@ -1933,6 +1939,27 @@ export class EnhancedBootstrapServer extends EventEmitter {
       this.peers.delete(nodeId);
 
       pending.reject(new Error(reason));
+    }
+  }
+
+  /**
+   * Handle ping from bridge node
+   */
+  handleBridgePing(bridgeAddr, pingMessage) {
+    // Send pong response back to bridge
+    const bridge = this.bridgeConnections.get(bridgeAddr);
+    if (bridge && bridge.ws && bridge.ws.readyState === 1) {
+      const pongMessage = {
+        type: 'pong',
+        pingId: pingMessage.pingId,
+        originalTimestamp: pingMessage.timestamp,
+        responseTimestamp: Date.now()
+      };
+      
+      bridge.ws.send(JSON.stringify(pongMessage));
+      console.log(`🏓 Sent pong to bridge ${bridgeAddr}`);
+    } else {
+      console.warn(`⚠️ Cannot send pong to bridge ${bridgeAddr} - connection not available`);
     }
   }
 
