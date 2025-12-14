@@ -82,11 +82,24 @@ export class ConnectionManagerFactory {
     console.log(`🔍 peerMetadata:`, peerMetadata);
 
     // Determine target node type from metadata
-    let targetNodeType = 'browser'; // default
+    let targetNodeType = 'browser'; // default assumption for peers without explicit nodeType
     if (peerMetadata) {
-      if (peerMetadata.nodeType === 'nodejs' || peerMetadata.listeningAddress) {
+      // Explicit nodeType takes precedence
+      if (peerMetadata.nodeType === 'nodejs' || peerMetadata.nodeType === 'nodejs-active') {
         targetNodeType = 'nodejs';
+      } else if (peerMetadata.nodeType === 'browser') {
+        targetNodeType = 'browser';
+      } else if (peerMetadata.nodeType === 'bridge') {
+        // Bridge nodes are Node.js servers
+        targetNodeType = 'nodejs';
+      } else if (peerMetadata.listeningAddress || peerMetadata.publicWssAddress) {
+        // Has server address = Node.js server
+        targetNodeType = 'nodejs';
+      } else if (peerMetadata.membershipToken && !peerMetadata.listeningAddress) {
+        // Has membership token but no server address = browser client
+        targetNodeType = 'browser';
       }
+      // If none of the above, keep default 'browser'
     }
 
     console.log(`🔍 Determined targetNodeType: ${targetNodeType} (local: ${ConnectionManagerFactory.localNodeType})`);
