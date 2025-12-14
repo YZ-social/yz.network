@@ -113,3 +113,6 @@ export class Logger {
 if (typeof window !== 'undefined') {
   Logger.init();
 }
+
+// Export as both named and default for compatibility
+export default Logger;
