@@ -565,6 +565,69 @@ class App {
         return cleaned;
       },
 
+      debugPeerDiscovery() {
+        if (!this.dht) {
+          console.error('DHT not available');
+          return null;
+        }
+        
+        console.log('🔍 Peer Discovery Debug:');
+        console.log(`   Connected peers: ${this.dht.getConnectedPeers().length}`);
+        console.log(`   Routing table size: ${this.dht.routingTable.totalNodes}`);
+        console.log(`   Pending requests: ${this.dht.pendingRequests.size}`);
+        
+        // Show pending requests
+        if (this.dht.pendingRequests.size > 0) {
+          console.log('   Pending requests:');
+          for (const [requestId, request] of this.dht.pendingRequests) {
+            console.log(`     - ${requestId}`);
+          }
+        }
+        
+        // Show connected peers
+        const connectedPeers = this.dht.getConnectedPeers();
+        if (connectedPeers.length > 0) {
+          console.log('   Connected peers:');
+          connectedPeers.forEach(peer => console.log(`     - ${peer.substring(0, 8)}...`));
+        }
+        
+        return {
+          connectedPeers: this.dht.getConnectedPeers().length,
+          routingTableSize: this.dht.routingTable.totalNodes,
+          pendingRequests: this.dht.pendingRequests.size
+        };
+      },
+
+      async testPeerDiscovery() {
+        if (!this.dht) {
+          console.error('DHT not available');
+          return false;
+        }
+        
+        console.log('🔍 Testing peer discovery...');
+        
+        try {
+          // Enable debug logging temporarily
+          const originalLogLevel = window.LOG_CONFIG ? window.LOG_CONFIG.DHT_CORE : null;
+          if (window.LOG_CONFIG) {
+            window.LOG_CONFIG.DHT_CORE = 'DEBUG';
+          }
+          
+          await this.dht.discoverPeersViaDHT();
+          console.log('✅ Peer discovery completed');
+          
+          // Restore original log level
+          if (window.LOG_CONFIG && originalLogLevel) {
+            window.LOG_CONFIG.DHT_CORE = originalLogLevel;
+          }
+          
+          return true;
+        } catch (error) {
+          console.error('❌ Peer discovery failed:', error);
+          return false;
+        }
+      },
+
       refreshUI() {
         if (!this.visualizer) {
           console.warn('Visualizer not available');

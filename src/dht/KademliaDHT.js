@@ -19,8 +19,14 @@ export class KademliaDHT extends EventEmitter {
     const instanceId = Math.random().toString(36).substr(2, 9);
     this.instanceId = instanceId;
 
-    // Create logger instance
-    this.logger = new Logger('DHT');
+    // Create logger instance (Logger is static, so create a wrapper)
+    this.logger = {
+      info: (msg, ...args) => Logger.info('DHT', msg, ...args),
+      debug: (msg, ...args) => Logger.debug('DHT', msg, ...args),
+      warn: (msg, ...args) => Logger.warn('DHT', msg, ...args),
+      error: (msg, ...args) => Logger.error('DHT', msg, ...args),
+      trace: (msg, ...args) => Logger.trace('DHT', msg, ...args)
+    };
 
     this.options = {
       k: options.k || 20, // Kademlia k parameter
