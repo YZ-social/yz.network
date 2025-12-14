@@ -115,17 +115,11 @@ export class PubSubStorage {
     } catch (error) {
       console.warn(`   ⚠️ Network fetch failed: ${error.message}`);
       
-      // Fallback: Clean up routing table and try local cache as last resort
-      console.log(`   🔄 Cleaning up routing table and retrying...`);
+      // Fallback: Try local cache immediately (faster than cleanup)
+      console.log(`   🔄 Trying local cache as fallback...`);
       
       try {
-        // Clean up stale routing table entries
-        this.dht.cleanupRoutingTable();
-        
-        // Wait a moment for cleanup to complete
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        // Try local cache as absolute last resort (may be stale but better than nothing)
+        // Try local cache first (may be stale but better than nothing for new topics)
         const localData = await this.dht.get(key);
         if (localData) {
           const coordinator = CoordinatorObject.deserialize(localData);
@@ -133,8 +127,24 @@ export class PubSubStorage {
           return coordinator;
         }
         
+        // If no local cache, clean up routing table and try one more time with shorter timeout
+        console.log(`   🔄 No local cache, cleaning up routing table...`);
+        this.dht.cleanupRoutingTable();
+        
+        // Quick retry with very short timeout (3s total)
+        const quickData = await Promise.race([
+          this.dht.getFromNetwork(key),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Quick retry timeout')), 3000))
+        ]);
+        
+        if (quickData) {
+          const coordinator = CoordinatorObject.deserialize(quickData);
+          console.log(`   ✅ Quick retry succeeded (version ${coordinator.version})`);
+          return coordinator;
+        }
+        
       } catch (fallbackError) {
-        console.error(`   ❌ Fallback also failed: ${fallbackError.message}`);
+        console.error(`   ❌ All fallback attempts failed: ${fallbackError.message}`);
       }
       
       console.error(`   ❌ All coordinator loading attempts failed for topic ${topicID.substring(0, 8)}...`);

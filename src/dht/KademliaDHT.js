@@ -2984,7 +2984,7 @@ export class KademliaDHT extends EventEmitter {
 
     // Phase 2: Try disconnected nodes only if we have few successful queries
     // This prevents wasting time on connection attempts when we already have good coverage
-    const minSuccessfulQueries = Math.min(3, Math.ceil(closestNodes.length / 2));
+    const minSuccessfulQueries = Math.min(2, Math.ceil(closestNodes.length / 3)); // More aggressive - only need 2 successful queries
     
     if (successfulQueries < minSuccessfulQueries && disconnectedNodes.length > 0) {
       console.log(`🔄 GET: Only ${successfulQueries} successful queries, trying disconnected nodes...`);
@@ -3759,7 +3759,7 @@ export class KademliaDHT extends EventEmitter {
    * Send request and wait for response
    * IMPROVED: Better timeout handling and connection validation
    */
-  async sendRequestWithResponse(peerId, message, timeout = 5000) {
+  async sendRequestWithResponse(peerId, message, timeout = 3000) {
     // CRITICAL: Never send requests to ourselves
     if (peerId === this.localNodeId.toString()) {
       throw new Error(`Cannot send ${message.type} request to self: ${peerId}`);
