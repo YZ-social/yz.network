@@ -1034,16 +1034,29 @@ export class EnhancedBootstrapServer extends EventEmitter {
         // Mark genesis as assigned immediately to prevent race conditions
         this.genesisAssigned = true;
 
-        // CRITICAL FIX: Send immediate response to prevent client timeout
-        console.log(`📤 Sending immediate genesis response to prevent timeout`);
+        // CRITICAL FIX: Send immediate response with bridge node addresses
+        console.log(`📤 Sending immediate genesis response with bridge node addresses`);
+        
+        // Create bridge node peer objects for genesis connection
+        const bridgeNodePeers = this.options.bridgeNodes.map(bridgeAddr => ({
+          nodeId: `bridge_${bridgeAddr.replace(':', '_')}`, // Temporary ID for bridge nodes
+          metadata: {
+            isBridgeNode: true,
+            nodeType: 'bridge',
+            websocketAddress: `ws://${bridgeAddr}`,
+            listeningAddress: `ws://${bridgeAddr}`,
+            capabilities: ['websocket']
+          }
+        }));
+        
         sendResponse({
           type: 'response',
           requestId: message.requestId,
           success: true,
           data: {
-            peers: [], // Empty initially - bridge connections will be established separately
+            peers: bridgeNodePeers, // Provide bridge node addresses for genesis connection
             isGenesis: true,
-            message: 'Genesis peer designated - bridge coordination available if needed'
+            message: `Genesis peer designated - connect to ${bridgeNodePeers.length} bridge nodes to form initial DHT`
           }
         });
 
