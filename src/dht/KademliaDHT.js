@@ -2739,7 +2739,17 @@ export class KademliaDHT extends EventEmitter {
             }
           }
         } catch (error) {
-          console.warn(`Find node query failed for ${node.id.toString()}:`, error);
+          const peerId = node.id.toString();
+          const isTimeout = error.message && error.message.includes('timeout');
+          const isStale = error.message && error.message.includes('stale');
+          
+          if (isTimeout) {
+            console.warn(`⏰ Find node query timeout for ${peerId.substring(0, 8)}... (${error.message}) - connection may be stale`);
+          } else if (isStale) {
+            console.warn(`🔌 Find node query failed for ${peerId.substring(0, 8)}... - connection was stale and cleaned up`);
+          } else {
+            console.warn(`❌ Find node query failed for ${peerId.substring(0, 8)}...:`, error.message);
+          }
 
           // CRITICAL: Don't count rate limiting as a peer failure
           // Rate limiting is a temporary spam prevention mechanism, not a peer issue
@@ -2824,6 +2834,40 @@ export class KademliaDHT extends EventEmitter {
     // Verify connection before sending request
     if (!this.isPeerConnected(peerId)) {
       throw new Error(`No connection to peer ${peerId}`);
+    }
+
+    // IMPROVEMENT: Check connection health for peers that haven't been contacted recently
+    const node = this.routingTable.getNode(peerId);
+    if (node && node.lastSeen && (Date.now() - node.lastSeen) > 30000) { // 30 seconds
+      console.log(`🏥 Connection health check for ${peerId.substring(0, 8)}... (last seen ${Math.round((Date.now() - node.lastSeen) / 1000)}s ago)`);
+      
+      try {
+        // Quick ping to verify connection is still alive (3 second timeout)
+        await this.sendRequestWithResponse(peerId, {
+          type: 'ping',
+          requestId: this.generateRequestId(),
+          timestamp: Date.now(),
+          nodeId: this.localNodeId.toString()
+        }, 3000);
+        
+        // Update last seen time if ping succeeds
+        node.lastSeen = Date.now();
+        console.log(`✅ Connection health check passed for ${peerId.substring(0, 8)}...`);
+      } catch (pingError) {
+        console.warn(`❌ Connection health check failed for ${peerId.substring(0, 8)}...:`, pingError.message);
+        
+        // Mark connection as stale and remove from routing table
+        node.recordFailure();
+        this.routingTable.removeNode(peerId);
+        
+        // Close the stale connection
+        const peerNode = this.routingTable.getNode(peerId) || this.peerNodes?.get(peerId);
+        if (peerNode?.connectionManager) {
+          peerNode.connectionManager.disconnect();
+        }
+        
+        throw new Error(`Connection to ${peerId.substring(0, 8)}... is stale (health check failed)`);
+      }
     }
 
     const message = {
@@ -3969,6 +4013,12 @@ export class KademliaDHT extends EventEmitter {
     setInterval(() => {
       this.maintainRoutingTableConnections();
     }, 30 * 1000); // 30 seconds
+
+    // IMPROVEMENT: Periodic stale connection cleanup (every 60 seconds)
+    // Proactively removes connections that appear connected but are unresponsive
+    setInterval(() => {
+      this.cleanupStaleConnections();
+    }, 60 * 1000); // 60 seconds
   }
 
   /**
@@ -4832,6 +4882,74 @@ export class KademliaDHT extends EventEmitter {
 
     if (cleaned > 0 || staleRemoved > 0 || routingCleanup > 0) {
       console.log(`Cleanup: ${cleaned} storage, ${staleRemoved} stale nodes, ${routingCleanup} routing inconsistencies`);
+    }
+  }
+
+  /**
+   * Clean up stale connections that appear connected but are unresponsive
+   * IMPROVEMENT: Proactively detect and remove stale connections to prevent timeouts
+   */
+  async cleanupStaleConnections() {
+    if (!this.isStarted) return;
+
+    const now = Date.now();
+    const staleThreshold = 60 * 1000; // 60 seconds
+    let cleanedConnections = 0;
+
+    console.log(`🧹 Checking for stale connections (threshold: ${staleThreshold / 1000}s)...`);
+
+    const allNodes = this.routingTable.getAllNodes();
+    const connectedNodes = allNodes.filter(node => this.isPeerConnected(node.id.toString()));
+
+    for (const node of connectedNodes) {
+      const peerId = node.id.toString();
+      
+      // Skip recently active connections
+      if (node.lastSeen && (now - node.lastSeen) < staleThreshold) {
+        continue;
+      }
+
+      console.log(`🏥 Testing connection health for ${peerId.substring(0, 8)}... (last seen: ${node.lastSeen ? Math.round((now - node.lastSeen) / 1000) + 's ago' : 'never'})`);
+
+      try {
+        // Quick ping test with short timeout (2 seconds)
+        await this.sendRequestWithResponse(peerId, {
+          type: 'ping',
+          requestId: this.generateRequestId(),
+          timestamp: now,
+          nodeId: this.localNodeId.toString()
+        }, 2000);
+
+        // Connection is healthy - update last seen
+        node.lastSeen = now;
+        console.log(`✅ Connection healthy: ${peerId.substring(0, 8)}...`);
+
+      } catch (error) {
+        console.warn(`❌ Stale connection detected: ${peerId.substring(0, 8)}... - ${error.message}`);
+        
+        // Connection is stale - clean it up
+        node.recordFailure();
+        this.routingTable.removeNode(peerId);
+        
+        // Close the connection
+        const peerNode = this.peerNodes?.get(peerId);
+        if (peerNode?.connectionManager) {
+          try {
+            peerNode.connectionManager.disconnect();
+            console.log(`🔌 Disconnected stale connection: ${peerId.substring(0, 8)}...`);
+          } catch (disconnectError) {
+            console.warn(`Failed to disconnect ${peerId.substring(0, 8)}...:`, disconnectError.message);
+          }
+        }
+        
+        cleanedConnections++;
+      }
+    }
+
+    if (cleanedConnections > 0) {
+      console.log(`🧹 Cleaned up ${cleanedConnections} stale connections`);
+    } else {
+      console.log(`✅ No stale connections found (${connectedNodes.length} connections checked)`);
     }
   }
 
