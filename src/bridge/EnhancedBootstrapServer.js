@@ -1276,8 +1276,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
         return;
       }
 
-      // Find target peer connection (regular client)
-      const targetClient = this.connectedClients.get(targetPeerId);
+      // Check target peer connection (already retrieved above)
       if (!targetClient) {
         // Target peer not connected - send failure response
         ws.send(JSON.stringify({
