@@ -1239,12 +1239,12 @@ export class EnhancedBootstrapServer extends EventEmitter {
       let bridgeConnection = null;
 
       // Check if target is a connected bridge node
-      for (const [, bridgeWs] of this.bridgeConnections) {
-        if (bridgeWs.readyState === WebSocket.OPEN && bridgeWs.bridgeNodeId === targetPeerId) {
+      const targetClient = this.connectedClients.get(targetPeerId);
+      if (targetClient && (targetClient.metadata?.isBridgeNode === true || targetClient.metadata?.nodeType === 'bridge')) {
+        if (targetClient.ws.readyState === WebSocket.OPEN) {
           targetIsBridge = true;
-          bridgeConnection = bridgeWs;
+          bridgeConnection = targetClient.ws;
           console.log(`🔍 Target ${targetPeerId.substring(0, 8)}... is connected bridge node`);
-          break;
         }
       }
 
@@ -1392,13 +1392,19 @@ export class EnhancedBootstrapServer extends EventEmitter {
     console.log(`🌟 Requesting genesis connection for ${nodeId.substring(0, 8)}... from bridge nodes`);
 
     try {
-      // Select first available bridge node
-      const bridgeConnections = Array.from(this.bridgeConnections.values());
-      if (bridgeConnections.length === 0) {
+      // Find connected bridge nodes from connectedClients
+      const bridgeClients = [];
+      for (const [clientNodeId, client] of this.connectedClients.entries()) {
+        if (client.metadata?.isBridgeNode === true || client.metadata?.nodeType === 'bridge') {
+          bridgeClients.push(client);
+        }
+      }
+      
+      if (bridgeClients.length === 0) {
         throw new Error('No bridge nodes available for genesis connection');
       }
 
-      const bridgeWs = bridgeConnections[0]; // Use first bridge node
+      const bridgeWs = bridgeClients[0].ws; // Use first bridge node
       const requestId = Date.now().toString() + Math.random().toString(36).substr(2, 9);
 
       // Send genesis connection request to bridge
@@ -2323,10 +2329,11 @@ export class EnhancedBootstrapServer extends EventEmitter {
    * Get bridge node WebSocket by node ID
    */
   getBridgeNodeByNodeId(nodeId) {
-    for (const [, ws] of this.bridgeConnections) {
-      if (ws.bridgeNodeId === nodeId) {
-        return ws;
-      }
+    const client = this.connectedClients.get(nodeId);
+    if (client && (client.metadata?.isBridgeNode === true || client.metadata?.nodeType === 'bridge')) {
+      return client.ws;
+    }
+    return null;
     }
     return null;
   }
@@ -2556,10 +2563,11 @@ export class EnhancedBootstrapServer extends EventEmitter {
 
     // Get all connected bridge nodes with their actual IDs
     const bridgeNodeIds = [];
-    for (const [, ws] of this.bridgeConnections) {
-      if (ws.readyState === WebSocket.OPEN && ws.bridgeNodeId) {
-        bridgeNodeIds.push(ws.bridgeNodeId);
-        console.log(`🔍 Found connected bridge node: ${ws.bridgeNodeId.substring(0, 8)}...`);
+    for (const [clientNodeId, client] of this.connectedClients.entries()) {
+      if ((client.metadata?.isBridgeNode === true || client.metadata?.nodeType === 'bridge') && 
+          client.ws.readyState === WebSocket.OPEN) {
+        bridgeNodeIds.push(clientNodeId);
+        console.log(`🔍 Found connected bridge node: ${clientNodeId.substring(0, 8)}...`);
       }
     }
 
