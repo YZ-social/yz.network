@@ -1043,17 +1043,43 @@ export class EnhancedBootstrapServer extends EventEmitter {
           // CRITICAL FIX: Send immediate response with bridge node addresses
           console.log(`📤 Sending immediate genesis response with bridge node addresses`);
           
-          // Create bridge node peer objects for genesis connection
-          const bridgeNodePeers = this.options.bridgeNodes.map(bridgeAddr => ({
-            nodeId: `bridge_${bridgeAddr.replace(':', '_')}`, // Temporary ID for bridge nodes
-            metadata: {
-              isBridgeNode: true,
-              nodeType: 'bridge',
-              websocketAddress: `ws://${bridgeAddr}`,
-              listeningAddress: `ws://${bridgeAddr}`,
-              capabilities: ['websocket']
+          // Get real bridge node IDs from connected clients
+          const bridgeNodePeers = [];
+          for (const [clientNodeId, client] of this.connectedClients.entries()) {
+            if (client.metadata?.isBridgeNode === true || client.metadata?.nodeType === 'bridge') {
+              console.log(`🌉 Found connected bridge node: ${clientNodeId.substring(0, 8)}...`);
+              bridgeNodePeers.push({
+                nodeId: clientNodeId, // Use REAL node ID from connected bridge
+                metadata: {
+                  isBridgeNode: true,
+                  nodeType: client.metadata.nodeType || 'bridge',
+                  websocketAddress: client.metadata.listeningAddress || client.metadata.websocketAddress,
+                  listeningAddress: client.metadata.listeningAddress,
+                  publicWssAddress: client.metadata.publicWssAddress,
+                  capabilities: client.metadata.capabilities || ['websocket']
+                }
+              });
             }
-          }));
+          }
+          
+          // Fallback: If no connected bridge nodes, use configured addresses with warning
+          if (bridgeNodePeers.length === 0) {
+            console.warn(`⚠️ No connected bridge nodes found, using configured addresses as fallback`);
+            for (const bridgeAddr of this.options.bridgeNodes) {
+              bridgeNodePeers.push({
+                nodeId: `bridge_${bridgeAddr.replace(':', '_')}`, // Temporary ID - will fail!
+                metadata: {
+                  isBridgeNode: true,
+                  nodeType: 'bridge',
+                  websocketAddress: `ws://${bridgeAddr}`,
+                  listeningAddress: `ws://${bridgeAddr}`,
+                  capabilities: ['websocket']
+                }
+              });
+            }
+          }
+          
+          console.log(`📤 Sending ${bridgeNodePeers.length} bridge nodes to genesis peer`);
           
           sendResponse({
             type: 'response',
