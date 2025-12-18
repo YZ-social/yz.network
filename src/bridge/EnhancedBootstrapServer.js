@@ -2333,8 +2333,6 @@ export class EnhancedBootstrapServer extends EventEmitter {
       return client.ws;
     }
     return null;
-    }
-    return null;
   }
 
   /**
