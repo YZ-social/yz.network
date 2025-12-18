@@ -365,13 +365,25 @@ export class ActiveDHTNode extends NodeDHTClient {
   calculatePercentile(samples, percentile) {
     if (!samples || samples.length === 0) return 0;
 
-    const sorted = [...samples].sort((a, b) => a - b);
+    // CRITICAL FIX: Filter out extreme outliers (likely from inactive tabs)
+    // Remove latencies > 30 seconds (30000ms) as they're likely from inactive browser tabs
+    const filteredSamples = samples.filter(latency => latency <= 30000);
+    
+    if (filteredSamples.length === 0) {
+      console.warn(`⚠️ All latency samples were outliers (>${30000}ms) - using raw samples`);
+      const sorted = [...samples].sort((a, b) => a - b);
+      const index = Math.ceil((percentile / 100) * sorted.length) - 1;
+      return sorted[Math.max(0, index)];
+    }
+
+    const sorted = [...filteredSamples].sort((a, b) => a - b);
     const index = Math.ceil((percentile / 100) * sorted.length) - 1;
     const result = sorted[Math.max(0, index)];
     
     // Debug logging for ping latencies
     if (samples === this.metrics.pingLatencies && samples.length > 0) {
-      console.log(`📊 Ping latency P${percentile}: ${result}ms (from ${samples.length} samples: [${samples.slice(-5).join(', ')}])`);
+      const outlierCount = samples.length - filteredSamples.length;
+      console.log(`📊 Ping latency P${percentile}: ${result}ms (from ${filteredSamples.length} samples, ${outlierCount} outliers filtered: [${filteredSamples.slice(-5).join(', ')}])`);
     }
     
     return result;
@@ -514,6 +526,33 @@ export class ActiveDHTNode extends NodeDHTClient {
     // Expose metrics globally so WebSocketConnectionManager can record ping latencies
     global.activeDHTNodeMetrics = this.metrics;
     console.log('🏓 Ping latency collection set up (global metrics exposed)');
+    
+    // Set up periodic cleanup of extreme outliers
+    setInterval(() => {
+      this.cleanupLatencyOutliers();
+    }, 60000); // Clean up every minute
+  }
+
+  /**
+   * Clean up extreme latency outliers (likely from inactive browser tabs)
+   */
+  cleanupLatencyOutliers() {
+    const maxReasonableLatency = 30000; // 30 seconds
+    
+    ['pingLatencies', 'storeLatencies', 'getLatencies', 'findNodeLatencies'].forEach(bucketName => {
+      const bucket = this.metrics[bucketName];
+      if (bucket && bucket.length > 0) {
+        const originalLength = bucket.length;
+        
+        // Remove outliers
+        const filtered = bucket.filter(latency => latency <= maxReasonableLatency);
+        
+        if (filtered.length < originalLength) {
+          this.metrics[bucketName] = filtered;
+          console.log(`🧹 Cleaned up ${originalLength - filtered.length} latency outliers from ${bucketName} (${filtered.length} samples remaining)`);
+        }
+      }
+    });
   }
 
   /**

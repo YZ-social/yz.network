@@ -856,6 +856,9 @@ export class WebSocketConnectionManager extends ConnectionManager {
             peerNode.lastPing = Date.now();
           }
         }
+      } else if (result.error && !result.error.includes('Inactive browser tab')) {
+        // Only log errors that aren't from inactive tab filtering
+        console.error(`❌ Failed to ping ${this.peerId}:`, result.error);
       }
     } catch (error) {
       console.error(`❌ Failed to ping ${this.peerId}:`, error);

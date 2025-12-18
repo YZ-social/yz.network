@@ -560,6 +560,11 @@ export class RoutingTable {
     node.setupConnection(manager, connection);
     node.initiator = initiator; // Store initiator flag for collision handling
     // Note: Signal handlers should already be attached via setupConnectionManagerHandlers()
+    
+    // CRITICAL FIX: Pass routing table reference to connection manager for inactive tab filtering
+    if (manager) {
+      manager.routingTable = this;
+    }
 
     // Set metadata directly on node (clean architecture - no intermediate storage)
     if (metadata && Object.keys(metadata).length > 0) {

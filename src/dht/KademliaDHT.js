@@ -429,7 +429,8 @@ export class KademliaDHT extends EventEmitter {
     const transportOptionsWithBootstrap = {
       ...this.transportOptions,
       bootstrapClient: this.bootstrap,
-      dht: this // Pass DHT reference so connection managers can check signaling mode
+      dht: this, // Pass DHT reference so connection managers can check signaling mode
+      routingTable: this.routingTable // Pass routing table for inactive tab filtering
     };
 
     ConnectionManagerFactory.initializeTransports(transportOptionsWithBootstrap);
@@ -2834,6 +2835,12 @@ export class KademliaDHT extends EventEmitter {
       throw new Error(`Cannot send find_node query to self: ${peerId}`);
     }
 
+    // CRITICAL FIX: Skip inactive browser tabs to prevent high latency
+    const peerNode = this.routingTable.getNode(peerId);
+    if (peerNode?.metadata?.nodeType === 'browser' && peerNode.metadata?.tabVisible === false) {
+      throw new Error(`Skipping find_node to inactive browser tab ${peerId.substring(0, 8)}... (would cause high latency)`);
+    }
+
     // Check if peer is in failure backoff
     // Emergency bypass: Allow backoff bypass in emergency discovery mode
     const backoffUntil = this.peerFailureBackoff.get(peerId);
@@ -3892,6 +3899,11 @@ export class KademliaDHT extends EventEmitter {
       // For incoming connections, RoutingTable.handlePeerConnected() sets this up
       console.log(`🔗 Creating CLIENT connection manager for outgoing connection to ${peerId.substring(0, 8)}...`);
       peerNode.connectionManager = ConnectionManagerFactory.getManagerForPeer(peerId, peerNode.metadata);
+      
+      // CRITICAL FIX: Pass routing table reference to connection manager for inactive tab filtering
+      if (peerNode.connectionManager) {
+        peerNode.connectionManager.routingTable = this.routingTable;
+      }
 
       // CRITICAL: Initialize connection manager with local node ID
       peerNode.connectionManager.initialize(this.localNodeId.toString());
