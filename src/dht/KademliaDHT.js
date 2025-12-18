@@ -2606,12 +2606,42 @@ export class KademliaDHT extends EventEmitter {
         !this.isPeerConnected(node.id.toString())
       );
 
+      // CRITICAL FIX: Apply inactive tab filtering for Pub/Sub coordinator selection
+      // Same logic as bridge node onboarding - exclude inactive browser tabs from coordinator selection
+      const filterInactiveTabs = (candidates) => {
+        return candidates.filter(node => {
+          const peerId = node.id.toString();
+          const peerNode = this.routingTable.getNode(peerId);
+          
+          // Node.js nodes are always active (headless, no tab concept)
+          if (peerNode?.metadata?.nodeType === 'nodejs') {
+            return true;
+          }
+          
+          // Browser nodes: check tab visibility
+          if (peerNode?.metadata?.nodeType === 'browser') {
+            const tabVisible = peerNode.metadata?.tabVisible;
+            if (tabVisible === false) {
+              console.log(`🚫 [findNode] Excluding inactive browser tab ${peerId.substring(0, 8)}... from coordinator selection`);
+              return false;
+            }
+          }
+          
+          return true; // Include if no metadata or tab is visible
+        });
+      };
+
+      // Apply filtering to both connected and disconnected candidates
+      const filteredConnectedCandidates = filterInactiveTabs(connectedCandidates);
+      const filteredDisconnectedCandidates = filterInactiveTabs(disconnectedCandidates);
+
       if (iterationCount % 5 === 0 || iterationCount <= 3) {
         console.log(`🔍 findNode iteration ${iterationCount}: ${allCandidates.length} candidates (${connectedCandidates.length} connected, ${disconnectedCandidates.length} disconnected), ${results.size} total results, ${contacted.size} contacted`);
       }
 
       // Prioritize connected peers (fast path: <100ms response time)
-      let candidates = connectedCandidates.slice(0, maxConcurrent);
+      // Use filtered candidates to exclude inactive browser tabs
+      let candidates = filteredConnectedCandidates.slice(0, maxConcurrent);
 
       // Check if we're at max connections
       const currentConnections = this.getConnectedPeers().length;
@@ -2620,44 +2650,47 @@ export class KademliaDHT extends EventEmitter {
 
       // Fall back to disconnected peers only if insufficient connected peers
       // Industry best practice (IPFS, BitTorrent, Ethereum): connected-peers-first
-      if (candidates.length < maxConcurrent && disconnectedCandidates.length > 0) {
+      // Use filtered candidates to exclude inactive browser tabs
+      if (candidates.length < maxConcurrent && filteredDisconnectedCandidates.length > 0) {
         if (!atMaxConnections) {
           // Not at max connections - can query disconnected peers normally
           const needed = maxConcurrent - candidates.length;
-          candidates = candidates.concat(disconnectedCandidates.slice(0, needed));
-          console.log(`🔄 Connected-peers-first: Querying ${connectedCandidates.length} connected + ${Math.min(needed, disconnectedCandidates.length)} disconnected peers`);
+          candidates = candidates.concat(filteredDisconnectedCandidates.slice(0, needed));
+          console.log(`🔄 Connected-peers-first: Querying ${filteredConnectedCandidates.length} connected + ${Math.min(needed, filteredDisconnectedCandidates.length)} disconnected peers (inactive tabs filtered)`);
         } else {
           // At max connections: only use disconnected if we have NO connected candidates
           if (candidates.length === 0) {
             console.log(`⚠️ At max connections (${currentConnections}/${maxConnections}) with NO connected candidates - attempting strategic replacement`);
 
             // Try to free up a slot for a better candidate
-            const bestDisconnected = disconnectedCandidates[0];
-            const pruneSuccess = await this.pruneConnectionForQuery(target, bestDisconnected.id.toString());
+            const bestDisconnected = filteredDisconnectedCandidates[0];
+            if (bestDisconnected) {
+              const pruneSuccess = await this.pruneConnectionForQuery(target, bestDisconnected.id.toString());
 
-            if (pruneSuccess) {
-              const peerId = bestDisconnected.id.toString();
-              console.log(`🔄 Attempting quick connection to ${peerId.substring(0, 8)}... (closer to target)`);
+              if (pruneSuccess) {
+                const peerId = bestDisconnected.id.toString();
+                console.log(`🔄 Attempting quick connection to ${peerId.substring(0, 8)}... (closer to target)`);
 
-              try {
-                // Quick connection attempt (3 second timeout)
-                const peerNode = this.getOrCreatePeerNode(peerId);
-                const connectionPromise = peerNode.connectionManager.createConnection(peerId, true, peerNode.metadata);
-                const timeoutPromise = new Promise((_, reject) =>
-                  setTimeout(() => reject(new Error('Quick connection timeout')), 3000)
-                );
+                try {
+                  // Quick connection attempt (3 second timeout)
+                  const peerNode = this.getOrCreatePeerNode(peerId);
+                  const connectionPromise = peerNode.connectionManager.createConnection(peerId, true, peerNode.metadata);
+                  const timeoutPromise = new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Quick connection timeout')), 3000)
+                  );
 
-                await Promise.race([connectionPromise, timeoutPromise]);
-                await new Promise(resolve => setTimeout(resolve, 500)); // Wait for connection
+                  await Promise.race([connectionPromise, timeoutPromise]);
+                  await new Promise(resolve => setTimeout(resolve, 500)); // Wait for connection
 
-                if (this.isPeerConnected(peerId)) {
-                  console.log(`✅ Quick connection successful - adding ${peerId.substring(0, 8)}...`);
-                  candidates.push(bestDisconnected);
-                } else {
-                  console.warn(`⏰ Quick connection failed - continuing without it`);
+                  if (this.isPeerConnected(peerId)) {
+                    console.log(`✅ Quick connection successful - adding ${peerId.substring(0, 8)}...`);
+                    candidates.push(bestDisconnected);
+                  } else {
+                    console.warn(`⏰ Quick connection failed - continuing without it`);
+                  }
+                } catch (error) {
+                  console.warn(`❌ Quick connection failed: ${error.message}`);
                 }
-              } catch (error) {
-                console.warn(`❌ Quick connection failed: ${error.message}`);
               }
             }
           } else {
