@@ -3994,6 +3994,22 @@ export class KademliaDHT extends EventEmitter {
       throw new Error(`Cannot send ${message.type} request to self: ${peerId}`);
     }
 
+    // CRITICAL FIX: Skip DHT requests to inactive browser tabs to prevent high latency
+    const peerNode = this.routingTable.getNode(peerId);
+    if (peerNode?.metadata?.nodeType === 'browser') {
+      const tabVisible = peerNode.metadata?.tabVisible;
+      console.log(`🔍 [DHT ${message.type}] Browser peer ${peerId.substring(0, 8)}... - tabVisible: ${tabVisible}`);
+      
+      if (tabVisible === false) {
+        console.log(`⏭️ [DHT ${message.type}] Skipping request to inactive browser tab ${peerId.substring(0, 8)}... (would cause high latency)`);
+        throw new Error(`Inactive browser tab - skipped to prevent high latency`);
+      }
+    } else if (peerNode?.metadata) {
+      console.log(`🔍 [DHT ${message.type}] Non-browser peer ${peerId.substring(0, 8)}... - nodeType: ${peerNode.metadata.nodeType}`);
+    } else {
+      console.log(`🔍 [DHT ${message.type}] Peer ${peerId.substring(0, 8)}... - no metadata available`);
+    }
+
     // IMPROVEMENT: Check connection before creating timeout
     if (!this.isPeerConnected(peerId)) {
       throw new Error(`No connection to peer ${peerId}`);
