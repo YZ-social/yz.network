@@ -195,7 +195,7 @@ export class BootstrapClient extends EventEmitter {
           this.handleResponse(message);
           // Also check if this is a peer list response
           if (message.data && message.data.peers) {
-            this.emit('peerList', message.data.peers);
+            this.emit('peerList', message.data.peers, message.data.status);
 
             // CRITICAL: Check if peers contain bridge nodes that need connection
             const bridgeNodes = message.data.peers.filter(peer =>

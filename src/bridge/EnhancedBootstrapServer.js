@@ -1144,50 +1144,64 @@ export class EnhancedBootstrapServer extends EventEmitter {
       if (this.options.openNetwork && this.genesisAssigned) {
         console.log(`🌐 Open network mode: Finding random onboarding peer for ${nodeId?.substring(0, 8)}...`);
 
-        // CRITICAL FIX: Send immediate response to prevent client timeout
-        console.log(`📤 Sending immediate response - onboarding coordination will happen separately`);
-        sendResponse({
-          type: 'response',
-          requestId: message.requestId,
-          success: true,
-          data: {
-            peers: [], // Empty initially - onboarding will be coordinated separately
-            isGenesis: false,
-            status: 'helper_coordinating',
-            message: 'Onboarding helper being selected - invitation will arrive shortly'
-          }
-        });
-
-        // Handle onboarding coordination asynchronously (don't block response)
-        setTimeout(async () => {
-          try {
-            console.log(`🎲 Requesting onboarding peer from bridge nodes (stateless)...`);
-
-            // Use stateless bridge request
-            const onboardingResult = await this.requestOnboardingPeerFromBridge(nodeId, message.metadata || {});
+        try {
+          // IMPROVED: Wait for bridge to find peer and return it directly (much faster!)
+          console.log(`🎲 Requesting onboarding peer from bridge nodes (synchronous)...`);
+          
+          // Use stateless bridge request with reasonable timeout
+          const onboardingResult = await this.requestOnboardingPeerFromBridge(nodeId, message.metadata || {});
+          
+          if (onboardingResult && onboardingResult.inviterPeerId) {
+            console.log(`✅ Bridge found onboarding peer: ${onboardingResult.inviterPeerId.substring(0, 8)}...`);
             
-            if (onboardingResult && onboardingResult.inviterPeerId) {
-              console.log(`✅ Bridge provided onboarding peer: ${onboardingResult.inviterPeerId.substring(0, 8)}...`);
-              
-              // Send invitation request to the selected peer
-              await this.coordinateOnboardingInvitation(ws, nodeId, onboardingResult);
-            } else {
-              throw new Error('No suitable onboarding peer available');
-            }
-          } catch (error) {
-            console.error(`❌ Failed to get onboarding peer from bridge: ${error.message}`);
-            // Send follow-up message about onboarding failure
-            if (ws && ws.readyState === 1) {
-              ws.send(JSON.stringify({
-                type: 'onboarding_failed',
-                nodeId: nodeId,
-                error: `Onboarding failed: ${error.message}`
-              }));
-            }
-          }
-        }, 500); // Small delay to ensure peer registration is complete
+            // Send response with the actual peer that will help with onboarding
+            sendResponse({
+              type: 'response',
+              requestId: message.requestId,
+              success: true,
+              data: {
+                peers: [{
+                  nodeId: onboardingResult.inviterPeerId,
+                  metadata: onboardingResult.inviterMetadata || {}
+                }],
+                isGenesis: false,
+                membershipToken: onboardingResult.membershipToken,
+                status: 'peer_found',
+                message: `Found onboarding peer: ${onboardingResult.inviterPeerId.substring(0, 8)}...`
+              }
+            });
 
-        return;
+            // Coordinate invitation asynchronously (don't block - peer connection will trigger invitation)
+            setTimeout(async () => {
+              try {
+                await this.coordinateOnboardingInvitation(ws, nodeId, onboardingResult);
+              } catch (error) {
+                console.error(`❌ Failed to coordinate invitation: ${error.message}`);
+              }
+            }, 100);
+
+            return;
+          } else {
+            throw new Error('No suitable onboarding peer available');
+          }
+        } catch (error) {
+          console.error(`❌ Failed to get onboarding peer from bridge: ${error.message}`);
+          
+          // Fallback to async coordination if synchronous fails
+          console.log(`📤 Falling back to async onboarding coordination...`);
+          sendResponse({
+            type: 'response',
+            requestId: message.requestId,
+            success: true,
+            data: {
+              peers: [],
+              isGenesis: false,
+              status: 'helper_coordinating',
+              message: `Onboarding peer lookup failed, retrying: ${error.message}`
+            }
+          });
+          return;
+        }
       }
 
       // Standard mode (not open network) - return existing peers or empty list

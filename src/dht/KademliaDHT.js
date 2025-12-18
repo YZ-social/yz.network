@@ -352,8 +352,8 @@ export class KademliaDHT extends EventEmitter {
       this.handleIncomingSignal(fromPeer, signal);
     });
 
-    this.bootstrap.on('peerList', (peers) => {
-      this.handleBootstrapPeers(peers);
+    this.bootstrap.on('peerList', (peers, status) => {
+      this.handleBootstrapPeers(peers, status);
     });
 
     this.bootstrap.on('invitationReceived', (invitationMessage) => {
@@ -688,12 +688,19 @@ export class KademliaDHT extends EventEmitter {
   /**
    * Handle peers received from bootstrap server
    */
-  handleBootstrapPeers(peers) {
+  handleBootstrapPeers(peers, bootstrapStatus = null) {
     console.log(`Received ${peers.length} peers from bootstrap server`);
 
     if (peers.length === 0) {
-      console.log('No peers available from bootstrap server');
-      return;
+      // CRITICAL FIX: Distinguish between "no peers available" and "onboarding in progress"
+      if (bootstrapStatus === 'helper_coordinating') {
+        console.log('✅ Bootstrap server is coordinating onboarding - invitation will arrive via DHT messaging');
+        console.log('   This is expected behavior for the new onboarding flow');
+        return;
+      } else {
+        console.log('No peers available from bootstrap server');
+        return;
+      }
     }
 
     // Check if we're already connected to DHT
