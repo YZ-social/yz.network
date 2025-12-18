@@ -175,12 +175,12 @@ export class BootstrapClient extends EventEmitter {
           break;
 
         case 'peer_list':
-          this.emit('peerList', message.peers || []);
+          this.emit('peerList', message.peers || [], message.status);
           break;
 
         case 'peers':
           // Handle alternative peers message format
-          this.emit('peerList', message.peers || message.data?.peers || []);
+          this.emit('peerList', message.peers || message.data?.peers || [], message.status || message.data?.status);
           break;
 
         case 'signal':

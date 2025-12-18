@@ -1148,42 +1148,11 @@ export class EnhancedBootstrapServer extends EventEmitter {
           // IMPROVED: Wait for bridge to find peer and return it directly (much faster!)
           console.log(`🎲 Requesting onboarding peer from bridge nodes (synchronous)...`);
           
-          // Use stateless bridge request with reasonable timeout
-          const onboardingResult = await this.requestOnboardingPeerFromBridge(nodeId, message.metadata || {});
+          // Use connected bridge nodes for onboarding coordination
+          await this.getOnboardingPeerFromBridge(ws, nodeId, message.metadata || {}, message);
           
-          if (onboardingResult && onboardingResult.inviterPeerId) {
-            console.log(`✅ Bridge found onboarding peer: ${onboardingResult.inviterPeerId.substring(0, 8)}...`);
-            
-            // Send response with the actual peer that will help with onboarding
-            sendResponse({
-              type: 'response',
-              requestId: message.requestId,
-              success: true,
-              data: {
-                peers: [{
-                  nodeId: onboardingResult.inviterPeerId,
-                  metadata: onboardingResult.inviterMetadata || {}
-                }],
-                isGenesis: false,
-                membershipToken: onboardingResult.membershipToken,
-                status: 'peer_found',
-                message: `Found onboarding peer: ${onboardingResult.inviterPeerId.substring(0, 8)}...`
-              }
-            });
-
-            // Coordinate invitation asynchronously (don't block - peer connection will trigger invitation)
-            setTimeout(async () => {
-              try {
-                await this.coordinateOnboardingInvitation(ws, nodeId, onboardingResult);
-              } catch (error) {
-                console.error(`❌ Failed to coordinate invitation: ${error.message}`);
-              }
-            }, 100);
-
-            return;
-          } else {
-            throw new Error('No suitable onboarding peer available');
-          }
+          // getOnboardingPeerFromBridge handles the response internally, so we're done
+          return;
         } catch (error) {
           console.error(`❌ Failed to get onboarding peer from bridge: ${error.message}`);
           
