@@ -38,7 +38,7 @@ class TestConnectionManager extends ConnectionManager {
   async handleInvitation() {}
 
   // Mock sendRequest for testing
-  async sendRequest(peerId, message, timeout) {
+  async sendRequest(peerId, message, _timeout) {
     const response = this.testResponses.get(peerId);
     if (response) {
       return response;

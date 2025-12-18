@@ -1842,8 +1842,16 @@ export class EnhancedBootstrapServer extends EventEmitter {
         });
       });
 
+      // Get available bridge connection
+      const bridgeClients = Array.from(this.peers.values()).filter(peer => peer.isBridgeNode);
+      if (bridgeClients.length === 0) {
+        throw new Error('No bridge nodes available for onboarding peer query');
+      }
+
+      const bridgeWs = bridgeClients[0].ws; // Use first bridge node
+
       // Send query to bridge
-      bridgeNode.send(JSON.stringify({
+      bridgeWs.send(JSON.stringify({
         type: 'get_onboarding_peer',
         newNodeId: nodeId,
         newNodeMetadata: metadata,
@@ -1990,8 +1998,16 @@ export class EnhancedBootstrapServer extends EventEmitter {
       });
     });
 
+    // Get available bridge connection
+    const bridgeClients = Array.from(this.peers.values()).filter(peer => peer.isBridgeNode);
+    if (bridgeClients.length === 0) {
+      throw new Error('No bridge nodes available for reconnection validation');
+    }
+
+    const bridgeWs = bridgeClients[0].ws; // Use first bridge node
+
     // Send validation request to bridge
-    bridgeNode.send(JSON.stringify({
+    bridgeWs.send(JSON.stringify({
       type: 'validate_reconnection',
       nodeId,
       membershipToken,
