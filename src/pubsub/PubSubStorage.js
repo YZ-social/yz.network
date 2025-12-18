@@ -115,41 +115,68 @@ export class PubSubStorage {
     } catch (error) {
       console.warn(`   ⚠️ Network fetch failed: ${error.message}`);
       
-      // Fallback: Try local cache immediately (faster than cleanup)
-      console.log(`   🔄 Trying local cache as fallback...`);
-      
-      try {
-        // Try local cache first (may be stale but better than nothing for new topics)
-        const localData = await this.dht.get(key);
-        if (localData) {
-          const coordinator = CoordinatorObject.deserialize(localData);
-          console.log(`   ⚠️ Using local cache coordinator (version ${coordinator.version}) - may be stale`);
-          return coordinator;
-        }
-        
-        // If no local cache, clean up routing table and try one more time with shorter timeout
-        console.log(`   🔄 No local cache, cleaning up routing table...`);
-        this.dht.cleanupRoutingTable();
-        
-        // Quick retry with very short timeout (3s total)
-        const quickData = await Promise.race([
-          this.dht.getFromNetwork(key),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Quick retry timeout')), 3000))
-        ]);
-        
-        if (quickData) {
-          const coordinator = CoordinatorObject.deserialize(quickData);
-          console.log(`   ✅ Quick retry succeeded (version ${coordinator.version})`);
-          return coordinator;
-        }
-        
-      } catch (fallbackError) {
-        console.error(`   ❌ All fallback attempts failed: ${fallbackError.message}`);
+      // ENHANCED: Apply connection recovery strategies
+      return await this.loadCoordinatorWithConnectionRecovery(topicID, key, error);
+    }
+  }
+
+  /**
+   * Load coordinator with connection recovery strategies
+   * Implements multiple fallback mechanisms for network failures
+   * 
+   * @param {string} topicID - Topic ID
+   * @param {string} key - Storage key
+   * @param {Error} originalError - Original network error
+   * @returns {Promise<CoordinatorObject|null>}
+   */
+  async loadCoordinatorWithConnectionRecovery(topicID, key, originalError) {
+    console.log(`   🔄 Applying connection recovery for topic ${topicID.substring(0, 8)}...`);
+    
+    try {
+      // Strategy 1: Try local cache first (fastest fallback)
+      console.log(`   📦 Trying local cache as immediate fallback...`);
+      const localData = await this.dht.get(key);
+      if (localData) {
+        const coordinator = CoordinatorObject.deserialize(localData);
+        console.log(`   ⚠️ Using local cache coordinator (version ${coordinator.version}) - may be stale but available`);
+        return coordinator;
       }
       
-      console.error(`   ❌ All coordinator loading attempts failed for topic ${topicID.substring(0, 8)}...`);
-      return null;
+      // Strategy 2: Clean up routing table and retry with connected peers
+      console.log(`   🧹 Cleaning up routing table and retrying with connected peers...`);
+      if (this.dht.cleanupRoutingTable) {
+        this.dht.cleanupRoutingTable();
+      }
+      
+      // Strategy 3: Quick retry with shorter timeout (connection recovery may have helped)
+      console.log(`   ⚡ Quick retry with 3s timeout...`);
+      const quickData = await Promise.race([
+        this.dht.getFromNetwork(key),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Quick retry timeout')), 3000))
+      ]);
+      
+      if (quickData) {
+        const coordinator = CoordinatorObject.deserialize(quickData);
+        console.log(`   ✅ Quick retry succeeded (version ${coordinator.version})`);
+        return coordinator;
+      }
+      
+    } catch (fallbackError) {
+      console.error(`   ❌ Connection recovery attempts failed: ${fallbackError.message}`);
     }
+    
+    // Strategy 4: Check if we have any connected peers at all
+    const connectedPeers = this.dht.getConnectedPeers?.() || [];
+    if (connectedPeers.length === 0) {
+      console.warn(`   🚫 No connected peers available - coordinator loading impossible`);
+      console.warn(`   💡 This may be a network partition - coordinator will be created when connections recover`);
+    } else {
+      console.warn(`   ⚠️ Coordinator loading failed despite ${connectedPeers.length} connected peers`);
+    }
+    
+    console.error(`   ❌ All coordinator loading attempts failed for topic ${topicID.substring(0, 8)}...`);
+    console.error(`   🔍 Original error: ${originalError.message}`);
+    return null;
   }
 
   /**
