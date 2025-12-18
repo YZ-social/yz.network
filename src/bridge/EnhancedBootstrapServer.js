@@ -720,10 +720,16 @@ export class EnhancedBootstrapServer extends EventEmitter {
    */
   async requestOnboardingPeerFromBridge(nodeId, metadata) {
     console.log(`🎲 Requesting onboarding peer for ${nodeId.substring(0, 8)}... from bridge nodes`);
+    console.log(`🔍 Available bridge addresses: ${this.options.bridgeNodes?.join(', ') || 'none configured'}`);
+
+    if (!this.options.bridgeNodes || this.options.bridgeNodes.length === 0) {
+      throw new Error('No bridge nodes configured in bootstrap server options');
+    }
 
     // Try each bridge node until one responds
     for (const bridgeAddr of this.options.bridgeNodes) {
       try {
+        console.log(`🌉 Attempting to query bridge at ${bridgeAddr}...`);
         const result = await this.queryBridgeForOnboardingPeer(bridgeAddr, nodeId, metadata);
         if (result) {
           console.log(`✅ Got onboarding peer from bridge ${bridgeAddr}`);
@@ -1148,11 +1154,17 @@ export class EnhancedBootstrapServer extends EventEmitter {
           // IMPROVED: Wait for bridge to find peer and return it directly (much faster!)
           console.log(`🎲 Requesting onboarding peer from bridge nodes (synchronous)...`);
           
-          // Use connected bridge nodes for onboarding coordination
-          await this.getOnboardingPeerFromBridge(ws, nodeId, message.metadata || {}, message);
+          // Use stateless bridge request
+          const onboardingResult = await this.requestOnboardingPeerFromBridge(nodeId, message.metadata || {});
           
-          // getOnboardingPeerFromBridge handles the response internally, so we're done
-          return;
+          if (onboardingResult && onboardingResult.inviterPeerId) {
+            console.log(`✅ Bridge provided onboarding peer: ${onboardingResult.inviterPeerId.substring(0, 8)}...`);
+            
+            // Send invitation request to the selected peer
+            await this.coordinateOnboardingInvitation(ws, nodeId, onboardingResult);
+          } else {
+            throw new Error('No suitable onboarding peer available');
+          }
         } catch (error) {
           console.error(`❌ Failed to get onboarding peer from bridge: ${error.message}`);
           
