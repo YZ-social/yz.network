@@ -91,7 +91,9 @@ export class BootstrapClient extends EventEmitter {
               });
             } catch (error) {
               console.error('Failed to send registration message:', error);
-              this.ws.close();
+              if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                this.ws.close();
+              }
               reject(error);
               return;
             }

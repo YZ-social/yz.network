@@ -279,6 +279,50 @@ export class DHTVisualizer {
       this.updateStats();
     });
 
+    // CRITICAL FIX: Handle reconnection events from BrowserDHTClient
+    this.dht.on('reconnected', (data) => {
+      this.log(`DHT reconnected after tab reactivation (${data.connectedPeers} peers, ${data.restoredSubscriptions} subscriptions restored)`, 'success');
+      
+      // Force complete UI refresh
+      this.updateStatus('Connected');
+      this.updatePeerDisplay();
+      this.updateStats();
+      this.updateIdentityUI();
+      
+      // Re-setup component event handlers in case they were lost
+      this.setupComponentEventHandlers();
+      
+      // Update node ID display
+      if (this.dht && this.dht.localNodeId) {
+        this.elements.nodeId.textContent = this.dht.localNodeId.toString();
+      }
+      
+      // Re-initialize PubSub if needed
+      if (!this.pubsub && this.dht.identity && this.dht.keyInfo) {
+        this.log('[DHT UI] Re-initializing PubSub client after reconnection...', 'info');
+        try {
+          this.pubsub = new PubSubClient(
+            this.dht,
+            this.dht.identity.nodeId,
+            this.dht.keyInfo,
+            {
+              enableBatching: true,
+              batchSize: 10,
+              batchTime: 100
+            }
+          );
+          this.log('[DHT UI] PubSub client re-initialized successfully', 'success');
+        } catch (error) {
+          this.log(`[DHT UI] Failed to re-initialize PubSub: ${error.message}`, 'error');
+        }
+      }
+    });
+
+    this.dht.on('reconnectionFailed', (data) => {
+      this.log(`DHT reconnection failed: ${data.error}`, 'error');
+      this.updateStatus('Reconnection Failed');
+    });
+
     // Setup initial component handlers
     this.setupComponentEventHandlers();
   }
@@ -1024,8 +1068,11 @@ export class DHTVisualizer {
    * Force refresh all UI elements (useful for debugging)
    */
   forceRefresh() {
+    console.log('🔄 [DHT UI] Force refreshing all displays...');
+    
     this.updateStats();
     this.updatePeerDisplay();
+    this.updateIdentityUI();
 
     // Re-setup event handlers in case they got disconnected
     this.setupComponentEventHandlers();
@@ -1035,7 +1082,19 @@ export class DHTVisualizer {
       this.elements.nodeId.textContent = this.dht.localNodeId.toString();
     }
 
-    this.log('UI force refreshed', 'info');
+    // Update status based on current DHT state
+    if (this.dht && this.dht.isStarted) {
+      this.updateStatus('Connected');
+      this.elements.startBtn.disabled = true;
+      this.elements.stopBtn.disabled = false;
+    } else {
+      this.updateStatus('Stopped');
+      this.elements.startBtn.disabled = false;
+      this.elements.stopBtn.disabled = true;
+    }
+
+    this.log('UI force refreshed after reconnection', 'success');
+    console.log('✅ [DHT UI] Force refresh completed');
   }
 
   /**
