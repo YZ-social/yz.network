@@ -105,6 +105,10 @@ export class PubSubClient extends EventEmitter {
       publishFailures: 0,
       subscriptions: 0
     };
+
+    // Message deduplication (prevent duplicate delivery from push + pull)
+    this.receivedMessages = new Map(); // messageID -> timestamp
+    this.deduplicationTimeout = 60000; // 1 minute cleanup interval
   }
 
   /**
@@ -116,6 +120,21 @@ export class PubSubClient extends EventEmitter {
    * @returns {Promise<{messageID: string, version: number, attempts: number}>}
    */
   async publish(topic, data, options = {}) {
+    // CRITICAL FIX: Check if DHT is available before publishing
+    if (!this.dht || !this.dht.isStarted) {
+      const error = new Error('DHT not started - cannot publish message');
+      this.stats.publishFailures++;
+      
+      // Emit error event
+      this.emit('publishError', {
+        topic,
+        data,
+        error: error.message
+      });
+      
+      throw error;
+    }
+
     const ttl = options.ttl || PubSubClient.DEFAULT_MESSAGE_TTL;
 
     try {
@@ -159,8 +178,17 @@ export class PubSubClient extends EventEmitter {
     const ttl = options.ttl || PubSubClient.DEFAULT_SUBSCRIPTION_TTL;
     const k = options.k || 20;
 
-    // Create message handler that emits events
+    // Create message handler that emits events with deduplication
     const messageHandler = async (message) => {
+      // CRITICAL FIX: Deduplicate messages (can arrive via both push and pull)
+      if (this.isDuplicateMessage(message)) {
+        console.log(`🔄 [Dedup] Skipping duplicate message ${message.messageID.substring(0, 8)}... for topic ${topic.substring(0, 8)}...`);
+        return;
+      }
+
+      // Mark message as received
+      this.markMessageReceived(message);
+
       this.stats.messagesReceived++;
 
       // Emit topic-specific event
@@ -275,6 +303,12 @@ export class PubSubClient extends EventEmitter {
    * @returns {Promise<void>}
    */
   async pollAll() {
+    // CRITICAL FIX: Check if DHT is available before polling
+    if (!this.dht || !this.dht.isStarted) {
+      console.warn('⚠️ [Poll] DHT not started - skipping poll cycle');
+      return;
+    }
+
     const subscriptions = this.subscribeOp.getSubscriptions();
 
     for (const sub of subscriptions) {
@@ -290,7 +324,13 @@ export class PubSubClient extends EventEmitter {
           });
         }
       } catch (error) {
-        // Emit poll error event
+        // Check if error is due to DHT not being started
+        if (error.message.includes('DHT not started')) {
+          console.warn('⚠️ [Poll] DHT not started during polling - will retry next cycle');
+          return; // Stop polling this cycle, will retry next time
+        }
+
+        // Emit poll error event for other errors
         this.emit('pollError', {
           topic: sub.topicID,
           error: error.message
@@ -462,6 +502,50 @@ export class PubSubClient extends EventEmitter {
   }
 
   /**
+   * Check if message is duplicate (already received)
+   * @param {Object} message - Message to check
+   * @returns {boolean} - True if duplicate
+   */
+  isDuplicateMessage(message) {
+    if (!message.messageID) return false;
+    
+    const now = Date.now();
+    const receivedAt = this.receivedMessages.get(message.messageID);
+    
+    // Consider duplicate if received within last 60 seconds
+    return receivedAt && (now - receivedAt) < this.deduplicationTimeout;
+  }
+
+  /**
+   * Mark message as received for deduplication
+   * @param {Object} message - Message to mark
+   */
+  markMessageReceived(message) {
+    if (!message.messageID) return;
+    
+    this.receivedMessages.set(message.messageID, Date.now());
+    
+    // Cleanup old entries periodically
+    if (this.receivedMessages.size > 1000) {
+      this.cleanupOldMessages();
+    }
+  }
+
+  /**
+   * Cleanup old message deduplication entries
+   */
+  cleanupOldMessages() {
+    const now = Date.now();
+    const cutoff = now - this.deduplicationTimeout;
+    
+    for (const [messageID, receivedAt] of this.receivedMessages.entries()) {
+      if (receivedAt < cutoff) {
+        this.receivedMessages.delete(messageID);
+      }
+    }
+  }
+
+  /**
    * Setup push message handler (Phase 3)
    *
    * Listens for pubsub_push messages from DHT and delivers them
@@ -488,6 +572,15 @@ export class PubSubClient extends EventEmitter {
           console.warn(`   ⚠️ [Push] Received message for unsubscribed topic ${topicID.substring(0, 8)}...`);
           return;
         }
+
+        // CRITICAL FIX: Deduplicate push messages too
+        if (this.isDuplicateMessage(message)) {
+          console.log(`   🔄 [Push] Skipping duplicate push message ${message.messageID.substring(0, 8)}...`);
+          return;
+        }
+
+        // Mark message as received
+        this.markMessageReceived(message);
 
         // Update statistics
         this.stats.messagesReceived++;
@@ -566,6 +659,9 @@ export class PubSubClient extends EventEmitter {
         console.error(`Failed to unsubscribe from ${sub.topicID}:`, error.message);
       }
     }
+
+    // Clear deduplication cache
+    this.receivedMessages.clear();
 
     // Remove all listeners
     this.removeAllListeners();

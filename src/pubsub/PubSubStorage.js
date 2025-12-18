@@ -48,6 +48,12 @@ export class PubSubStorage {
       throw new Error('Expected CoordinatorObject instance');
     }
 
+    // CRITICAL FIX: Check if DHT is started before attempting operations
+    if (!this.dht || !this.dht.isStarted) {
+      console.warn(`   ❌ Failed to store coordinator: DHT not started`);
+      throw new Error('DHT not started - cannot store coordinator');
+    }
+
     const validation = coordinator.validate();
     if (!validation.valid) {
       throw new Error(`Invalid coordinator: ${validation.errors.join(', ')}`);
@@ -71,6 +77,12 @@ export class PubSubStorage {
   async loadCoordinator(topicID) {
     const key = `coordinator:${topicID}`;
     console.log(`🔍 Loading coordinator for topic ${topicID.substring(0, 8)}... (always network fetch)`);
+
+    // CRITICAL FIX: Check if DHT is started before attempting operations
+    if (!this.dht || !this.dht.isStarted) {
+      console.warn(`   ❌ Failed to load coordinator: DHT not started`);
+      throw new Error('DHT not started - cannot load coordinator');
+    }
 
     try {
       // ALWAYS fetch from network - coordinators are mutable data that MUST NOT be cached locally
