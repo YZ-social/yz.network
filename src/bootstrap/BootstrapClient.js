@@ -91,7 +91,9 @@ export class BootstrapClient extends EventEmitter {
               });
             } catch (error) {
               console.error('Failed to send registration message:', error);
-              this.ws.close();
+              if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                this.ws.close();
+              }
               reject(error);
               return;
             }
@@ -173,12 +175,12 @@ export class BootstrapClient extends EventEmitter {
           break;
 
         case 'peer_list':
-          this.emit('peerList', message.peers || []);
+          this.emit('peerList', message.peers || [], message.status);
           break;
 
         case 'peers':
           // Handle alternative peers message format
-          this.emit('peerList', message.peers || message.data?.peers || []);
+          this.emit('peerList', message.peers || message.data?.peers || [], message.status || message.data?.status);
           break;
 
         case 'signal':
@@ -193,7 +195,7 @@ export class BootstrapClient extends EventEmitter {
           this.handleResponse(message);
           // Also check if this is a peer list response
           if (message.data && message.data.peers) {
-            this.emit('peerList', message.data.peers);
+            this.emit('peerList', message.data.peers, message.data.status);
 
             // CRITICAL: Check if peers contain bridge nodes that need connection
             const bridgeNodes = message.data.peers.filter(peer =>

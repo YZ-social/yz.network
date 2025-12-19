@@ -45,7 +45,13 @@ let node = null;
 
 async function start() {
   try {
-    node = new ActiveDHTNode(config);
+    // Map externalAddress to publicWssAddress for ActiveDHTNode
+    const nodeConfig = {
+      ...config,
+      publicWssAddress: config.externalAddress  // Map external address to the expected property
+    };
+    
+    node = new ActiveDHTNode(nodeConfig);
     await node.start();
 
     console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');

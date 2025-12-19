@@ -352,8 +352,8 @@ export class KademliaDHT extends EventEmitter {
       this.handleIncomingSignal(fromPeer, signal);
     });
 
-    this.bootstrap.on('peerList', (peers) => {
-      this.handleBootstrapPeers(peers);
+    this.bootstrap.on('peerList', (peers, status) => {
+      this.handleBootstrapPeers(peers, status);
     });
 
     this.bootstrap.on('invitationReceived', (invitationMessage) => {
@@ -429,7 +429,8 @@ export class KademliaDHT extends EventEmitter {
     const transportOptionsWithBootstrap = {
       ...this.transportOptions,
       bootstrapClient: this.bootstrap,
-      dht: this // Pass DHT reference so connection managers can check signaling mode
+      dht: this, // Pass DHT reference so connection managers can check signaling mode
+      routingTable: this.routingTable // Pass routing table for inactive tab filtering
     };
 
     ConnectionManagerFactory.initializeTransports(transportOptionsWithBootstrap);
@@ -687,12 +688,19 @@ export class KademliaDHT extends EventEmitter {
   /**
    * Handle peers received from bootstrap server
    */
-  handleBootstrapPeers(peers) {
+  handleBootstrapPeers(peers, bootstrapStatus = null) {
     console.log(`Received ${peers.length} peers from bootstrap server`);
 
     if (peers.length === 0) {
-      console.log('No peers available from bootstrap server');
-      return;
+      // CRITICAL FIX: Distinguish between "no peers available" and "onboarding in progress"
+      if (bootstrapStatus === 'helper_coordinating') {
+        console.log('✅ Bootstrap server is coordinating onboarding - invitation will arrive via DHT messaging');
+        console.log('   This is expected behavior for the new onboarding flow');
+        return;
+      } else {
+        console.log('No peers available from bootstrap server');
+        return;
+      }
     }
 
     // Check if we're already connected to DHT
@@ -2606,12 +2614,42 @@ export class KademliaDHT extends EventEmitter {
         !this.isPeerConnected(node.id.toString())
       );
 
+      // CRITICAL FIX: Apply inactive tab filtering for Pub/Sub coordinator selection
+      // Same logic as bridge node onboarding - exclude inactive browser tabs from coordinator selection
+      const filterInactiveTabs = (candidates) => {
+        return candidates.filter(node => {
+          const peerId = node.id.toString();
+          const peerNode = this.routingTable.getNode(peerId);
+          
+          // Node.js nodes are always active (headless, no tab concept)
+          if (peerNode?.metadata?.nodeType === 'nodejs') {
+            return true;
+          }
+          
+          // Browser nodes: check tab visibility
+          if (peerNode?.metadata?.nodeType === 'browser') {
+            const tabVisible = peerNode.metadata?.tabVisible;
+            if (tabVisible === false) {
+              console.log(`🚫 [findNode] Excluding inactive browser tab ${peerId.substring(0, 8)}... from coordinator selection`);
+              return false;
+            }
+          }
+          
+          return true; // Include if no metadata or tab is visible
+        });
+      };
+
+      // Apply filtering to both connected and disconnected candidates
+      const filteredConnectedCandidates = filterInactiveTabs(connectedCandidates);
+      const filteredDisconnectedCandidates = filterInactiveTabs(disconnectedCandidates);
+
       if (iterationCount % 5 === 0 || iterationCount <= 3) {
         console.log(`🔍 findNode iteration ${iterationCount}: ${allCandidates.length} candidates (${connectedCandidates.length} connected, ${disconnectedCandidates.length} disconnected), ${results.size} total results, ${contacted.size} contacted`);
       }
 
       // Prioritize connected peers (fast path: <100ms response time)
-      let candidates = connectedCandidates.slice(0, maxConcurrent);
+      // Use filtered candidates to exclude inactive browser tabs
+      let candidates = filteredConnectedCandidates.slice(0, maxConcurrent);
 
       // Check if we're at max connections
       const currentConnections = this.getConnectedPeers().length;
@@ -2620,44 +2658,47 @@ export class KademliaDHT extends EventEmitter {
 
       // Fall back to disconnected peers only if insufficient connected peers
       // Industry best practice (IPFS, BitTorrent, Ethereum): connected-peers-first
-      if (candidates.length < maxConcurrent && disconnectedCandidates.length > 0) {
+      // Use filtered candidates to exclude inactive browser tabs
+      if (candidates.length < maxConcurrent && filteredDisconnectedCandidates.length > 0) {
         if (!atMaxConnections) {
           // Not at max connections - can query disconnected peers normally
           const needed = maxConcurrent - candidates.length;
-          candidates = candidates.concat(disconnectedCandidates.slice(0, needed));
-          console.log(`🔄 Connected-peers-first: Querying ${connectedCandidates.length} connected + ${Math.min(needed, disconnectedCandidates.length)} disconnected peers`);
+          candidates = candidates.concat(filteredDisconnectedCandidates.slice(0, needed));
+          console.log(`🔄 Connected-peers-first: Querying ${filteredConnectedCandidates.length} connected + ${Math.min(needed, filteredDisconnectedCandidates.length)} disconnected peers (inactive tabs filtered)`);
         } else {
           // At max connections: only use disconnected if we have NO connected candidates
           if (candidates.length === 0) {
             console.log(`⚠️ At max connections (${currentConnections}/${maxConnections}) with NO connected candidates - attempting strategic replacement`);
 
             // Try to free up a slot for a better candidate
-            const bestDisconnected = disconnectedCandidates[0];
-            const pruneSuccess = await this.pruneConnectionForQuery(target, bestDisconnected.id.toString());
+            const bestDisconnected = filteredDisconnectedCandidates[0];
+            if (bestDisconnected) {
+              const pruneSuccess = await this.pruneConnectionForQuery(target, bestDisconnected.id.toString());
 
-            if (pruneSuccess) {
-              const peerId = bestDisconnected.id.toString();
-              console.log(`🔄 Attempting quick connection to ${peerId.substring(0, 8)}... (closer to target)`);
+              if (pruneSuccess) {
+                const peerId = bestDisconnected.id.toString();
+                console.log(`🔄 Attempting quick connection to ${peerId.substring(0, 8)}... (closer to target)`);
 
-              try {
-                // Quick connection attempt (3 second timeout)
-                const peerNode = this.getOrCreatePeerNode(peerId);
-                const connectionPromise = peerNode.connectionManager.createConnection(peerId, true, peerNode.metadata);
-                const timeoutPromise = new Promise((_, reject) =>
-                  setTimeout(() => reject(new Error('Quick connection timeout')), 3000)
-                );
+                try {
+                  // Quick connection attempt (3 second timeout)
+                  const peerNode = this.getOrCreatePeerNode(peerId);
+                  const connectionPromise = peerNode.connectionManager.createConnection(peerId, true, peerNode.metadata);
+                  const timeoutPromise = new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Quick connection timeout')), 3000)
+                  );
 
-                await Promise.race([connectionPromise, timeoutPromise]);
-                await new Promise(resolve => setTimeout(resolve, 500)); // Wait for connection
+                  await Promise.race([connectionPromise, timeoutPromise]);
+                  await new Promise(resolve => setTimeout(resolve, 500)); // Wait for connection
 
-                if (this.isPeerConnected(peerId)) {
-                  console.log(`✅ Quick connection successful - adding ${peerId.substring(0, 8)}...`);
-                  candidates.push(bestDisconnected);
-                } else {
-                  console.warn(`⏰ Quick connection failed - continuing without it`);
+                  if (this.isPeerConnected(peerId)) {
+                    console.log(`✅ Quick connection successful - adding ${peerId.substring(0, 8)}...`);
+                    candidates.push(bestDisconnected);
+                  } else {
+                    console.warn(`⏰ Quick connection failed - continuing without it`);
+                  }
+                } catch (error) {
+                  console.warn(`❌ Quick connection failed: ${error.message}`);
                 }
-              } catch (error) {
-                console.warn(`❌ Quick connection failed: ${error.message}`);
               }
             }
           } else {
@@ -2799,6 +2840,12 @@ export class KademliaDHT extends EventEmitter {
     // CRITICAL: Never try to query ourselves
     if (peerId === this.localNodeId.toString()) {
       throw new Error(`Cannot send find_node query to self: ${peerId}`);
+    }
+
+    // CRITICAL FIX: Skip inactive browser tabs to prevent high latency
+    const peerNode = this.routingTable.getNode(peerId);
+    if (peerNode?.metadata?.nodeType === 'browser' && peerNode.metadata?.tabVisible === false) {
+      throw new Error(`Skipping find_node to inactive browser tab ${peerId.substring(0, 8)}... (would cause high latency)`);
     }
 
     // Check if peer is in failure backoff
@@ -3859,6 +3906,11 @@ export class KademliaDHT extends EventEmitter {
       // For incoming connections, RoutingTable.handlePeerConnected() sets this up
       console.log(`🔗 Creating CLIENT connection manager for outgoing connection to ${peerId.substring(0, 8)}...`);
       peerNode.connectionManager = ConnectionManagerFactory.getManagerForPeer(peerId, peerNode.metadata);
+      
+      // CRITICAL FIX: Pass routing table reference to connection manager for inactive tab filtering
+      if (peerNode.connectionManager) {
+        peerNode.connectionManager.routingTable = this.routingTable;
+      }
 
       // CRITICAL: Initialize connection manager with local node ID
       peerNode.connectionManager.initialize(this.localNodeId.toString());
@@ -3940,6 +3992,22 @@ export class KademliaDHT extends EventEmitter {
     // CRITICAL: Never send requests to ourselves
     if (peerId === this.localNodeId.toString()) {
       throw new Error(`Cannot send ${message.type} request to self: ${peerId}`);
+    }
+
+    // CRITICAL FIX: Skip DHT requests to inactive browser tabs to prevent high latency
+    const peerNode = this.routingTable.getNode(peerId);
+    if (peerNode?.metadata?.nodeType === 'browser') {
+      const tabVisible = peerNode.metadata?.tabVisible;
+      console.log(`🔍 [DHT ${message.type}] Browser peer ${peerId.substring(0, 8)}... - tabVisible: ${tabVisible}`);
+      
+      if (tabVisible === false) {
+        console.log(`⏭️ [DHT ${message.type}] Skipping request to inactive browser tab ${peerId.substring(0, 8)}... (would cause high latency)`);
+        throw new Error(`Inactive browser tab - skipped to prevent high latency`);
+      }
+    } else if (peerNode?.metadata) {
+      console.log(`🔍 [DHT ${message.type}] Non-browser peer ${peerId.substring(0, 8)}... - nodeType: ${peerNode.metadata.nodeType}`);
+    } else {
+      console.log(`🔍 [DHT ${message.type}] Peer ${peerId.substring(0, 8)}... - no metadata available`);
     }
 
     // IMPROVEMENT: Check connection before creating timeout

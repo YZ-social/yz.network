@@ -105,17 +105,21 @@ export class MessageDelivery {
 
     // Filter active (non-expired) subscribers, excluding ourselves
     const now = Date.now();
-    const activeSubscribers = subscriberCollection.subscribers.filter(
+    let activeSubscribers = subscriberCollection.subscribers.filter(
       sub => sub.expiresAt > now && sub.subscriberID !== this.localNodeId
     );
 
+    // CRITICAL FIX: Apply inactive tab filtering for push delivery coordination
+    // Same logic as DHT findNode - exclude inactive browser tabs from push delivery
+    activeSubscribers = this.filterInactiveTabSubscribers(activeSubscribers);
+
     if (activeSubscribers.length === 0) {
-      console.log(`   ℹ️ [Push] No active subscribers for topic ${topicID.substring(0, 8)}...`);
+      console.log(`   ℹ️ [Push] No active subscribers for topic ${topicID.substring(0, 8)}... (after filtering inactive tabs)`);
       return { delivered: 0, failed: 0 };
     }
 
     const subscriberCount = activeSubscribers.length;
-    console.log(`   👥 [Push] Found ${subscriberCount} active subscribers (excluding self)`);
+    console.log(`   👥 [Push] Found ${subscriberCount} active subscribers (excluding self and inactive tabs)`);
 
     // Decide whether to use helpers based on subscriber count
     if (subscriberCount <= MessageDelivery.HELPER_THRESHOLD) {
@@ -145,6 +149,39 @@ export class MessageDelivery {
 
     // Handle our assigned subset of subscribers
     return await this.pushToAssignedSubscribers(activeSubscribers, topicID, message, selectedHelpers);
+  }
+
+  /**
+   * Filter out inactive browser tab subscribers from push delivery
+   * Same logic as DHT findNode inactive tab filtering
+   * 
+   * @param {Array<Object>} subscribers - Array of subscriber objects
+   * @returns {Array<Object>} - Filtered subscribers excluding inactive tabs
+   */
+  filterInactiveTabSubscribers(subscribers) {
+    return subscribers.filter(subscriber => {
+      const subscriberID = subscriber.subscriberID;
+      
+      // Get subscriber node metadata from DHT routing table
+      const subscriberNode = this.dht.routingTable?.getNode(subscriberID);
+      
+      if (!subscriberNode || !subscriberNode.metadata) {
+        // No metadata available - assume active (conservative approach)
+        return true;
+      }
+      
+      // Check if this is an inactive browser tab
+      const nodeType = subscriberNode.metadata.nodeType;
+      const tabVisible = subscriberNode.metadata.tabVisible;
+      
+      if (nodeType === 'browser' && tabVisible === false) {
+        console.log(`🚫 [Push] Excluding inactive browser tab ${subscriberID.substring(0, 8)}... from push delivery`);
+        return false;
+      }
+      
+      // Include all other nodes (active browser tabs, Node.js servers, etc.)
+      return true;
+    });
   }
 
   /**
@@ -204,7 +241,7 @@ export class MessageDelivery {
   /**
    * Push to subscribers assigned to us via deterministic assignment
    *
-   * @param {Array<Object>} subscribers - Active subscribers
+   * @param {Array<Object>} subscribers - Active subscribers (already filtered for inactive tabs)
    * @param {string} topicID - Topic ID
    * @param {Object} message - Message to deliver
    * @param {Array<string>} helpers - Helper nodes for assignment
@@ -227,7 +264,8 @@ export class MessageDelivery {
       if (assignedHelper === this.localNodeId) {
         assigned++;
         try {
-          await this.pushMessageToSubscriber(subscriber.subscriberID, topicID, message);
+          // ENHANCED: Add connection recovery resilience for push delivery
+          await this.pushMessageToSubscriberWithRetry(subscriber.subscriberID, topicID, message);
           delivered++;
           this.deliveryStats.succeeded++;
         } catch (error) {
@@ -314,6 +352,55 @@ export class MessageDelivery {
 
     // Send via DHT messaging (uses existing sendMessage infrastructure)
     await this.dht.sendMessage(subscriberID, pushMessage);
+  }
+
+  /**
+   * Push message to subscriber with connection recovery retry logic
+   * 
+   * @param {string} subscriberID - Subscriber node ID
+   * @param {string} topicID - Topic ID
+   * @param {Object} message - Message to deliver
+   * @returns {Promise<void>}
+   */
+  async pushMessageToSubscriberWithRetry(subscriberID, topicID, message) {
+    const maxRetries = 2;
+    let lastError = null;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        await this.pushMessageToSubscriber(subscriberID, topicID, message);
+        return; // Success - exit retry loop
+      } catch (error) {
+        lastError = error;
+        
+        if (attempt < maxRetries) {
+          // Check if this is a connection-related error that might benefit from retry
+          const isConnectionError = error.message.includes('No connection to peer') ||
+                                   error.message.includes('Connection failed') ||
+                                   error.message.includes('timeout');
+          
+          if (isConnectionError) {
+            console.log(`   🔄 [Push] Retry ${attempt + 1}/${maxRetries} for ${subscriberID.substring(0, 8)}... after connection error`);
+            
+            // Brief delay before retry to allow connection recovery
+            await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
+            
+            // Trigger connection cleanup if available
+            if (this.dht.cleanupRoutingTable) {
+              this.dht.cleanupRoutingTable();
+            }
+            
+            continue; // Retry
+          }
+        }
+        
+        // Non-connection error or max retries reached - give up
+        break;
+      }
+    }
+    
+    // All retries failed - throw the last error
+    throw lastError;
   }
 
   /**

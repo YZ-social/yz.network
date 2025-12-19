@@ -41,6 +41,7 @@ import { EventEmitter } from 'events';
 import { PublishOperation } from './PublishOperation.js';
 import { SubscribeOperation } from './SubscribeOperation.js';
 import { PubSubStorage } from './PubSubStorage.js';
+import { ChannelJoinManager } from './ChannelJoinManager.js';
 
 export class PubSubClient extends EventEmitter {
   /**
@@ -91,6 +92,9 @@ export class PubSubClient extends EventEmitter {
     });
     this.subscribeOp = new SubscribeOperation(this.storage, nodeID, keyInfo);
 
+    // Create enhanced channel join manager
+    this.channelJoinManager = new ChannelJoinManager(this, dht);
+
     // Set up push message handler
     this.setupPushHandler();
 
@@ -105,6 +109,10 @@ export class PubSubClient extends EventEmitter {
       publishFailures: 0,
       subscriptions: 0
     };
+
+    // Message deduplication (prevent duplicate delivery from push + pull)
+    this.receivedMessages = new Map(); // messageID -> timestamp
+    this.deduplicationTimeout = 60000; // 1 minute cleanup interval
   }
 
   /**
@@ -116,6 +124,21 @@ export class PubSubClient extends EventEmitter {
    * @returns {Promise<{messageID: string, version: number, attempts: number}>}
    */
   async publish(topic, data, options = {}) {
+    // CRITICAL FIX: Check if DHT is available before publishing
+    if (!this.dht || !this.dht.isStarted) {
+      const error = new Error('DHT not started - cannot publish message');
+      this.stats.publishFailures++;
+      
+      // Emit error event
+      this.emit('publishError', {
+        topic,
+        data,
+        error: error.message
+      });
+      
+      throw error;
+    }
+
     const ttl = options.ttl || PubSubClient.DEFAULT_MESSAGE_TTL;
 
     try {
@@ -148,6 +171,29 @@ export class PubSubClient extends EventEmitter {
   }
 
   /**
+   * Enhanced channel join with timeout, retry, and progress feedback
+   * @param {string} channelId - Channel ID to join
+   * @param {Object} options - Join options
+   * @param {number} [options.timeout] - Join timeout in milliseconds (default: 5000)
+   * @param {number} [options.maxRetries] - Maximum retry attempts (default: 3)
+   * @param {Function} [options.onProgress] - Progress callback: (stage, details) => void
+   * @param {number} [options.ttl] - Subscription TTL in milliseconds
+   * @param {number} [options.k] - Number of coordinator nodes
+   * @returns {Promise<{success: boolean, coordinatorNode: number, historicalMessages: number, attempts: number, duration: number}>}
+   */
+  async joinChannel(channelId, options = {}) {
+    // Extract join-specific options
+    const { timeout, maxRetries, onProgress, ...subscribeOptions } = options;
+
+    return await this.channelJoinManager.joinChannel(channelId, {
+      timeout,
+      maxRetries,
+      onProgress,
+      subscribeOptions
+    });
+  }
+
+  /**
    * Subscribe to topic
    * @param {string} topic - Topic name
    * @param {Object} options - Subscribe options
@@ -159,8 +205,17 @@ export class PubSubClient extends EventEmitter {
     const ttl = options.ttl || PubSubClient.DEFAULT_SUBSCRIPTION_TTL;
     const k = options.k || 20;
 
-    // Create message handler that emits events
+    // Create message handler that emits events with deduplication
     const messageHandler = async (message) => {
+      // CRITICAL FIX: Deduplicate messages (can arrive via both push and pull)
+      if (this.isDuplicateMessage(message)) {
+        console.log(`🔄 [Dedup] Skipping duplicate message ${message.messageID.substring(0, 8)}... for topic ${topic.substring(0, 8)}...`);
+        return;
+      }
+
+      // Mark message as received
+      this.markMessageReceived(message);
+
       this.stats.messagesReceived++;
 
       // Emit topic-specific event
@@ -275,6 +330,12 @@ export class PubSubClient extends EventEmitter {
    * @returns {Promise<void>}
    */
   async pollAll() {
+    // CRITICAL FIX: Check if DHT is available before polling
+    if (!this.dht || !this.dht.isStarted) {
+      console.warn('⚠️ [Poll] DHT not started - skipping poll cycle');
+      return;
+    }
+
     const subscriptions = this.subscribeOp.getSubscriptions();
 
     for (const sub of subscriptions) {
@@ -290,7 +351,13 @@ export class PubSubClient extends EventEmitter {
           });
         }
       } catch (error) {
-        // Emit poll error event
+        // Check if error is due to DHT not being started
+        if (error.message.includes('DHT not started')) {
+          console.warn('⚠️ [Poll] DHT not started during polling - will retry next cycle');
+          return; // Stop polling this cycle, will retry next time
+        }
+
+        // Emit poll error event for other errors
         this.emit('pollError', {
           topic: sub.topicID,
           error: error.message
@@ -340,6 +407,31 @@ export class PubSubClient extends EventEmitter {
   }
 
   /**
+   * Check if a channel join is currently in progress
+   * @param {string} channelId - Channel ID to check
+   * @returns {boolean} - True if join is in progress
+   */
+  isJoinInProgress(channelId) {
+    return this.channelJoinManager.isJoinInProgress(channelId);
+  }
+
+  /**
+   * Get list of channels currently being joined
+   * @returns {Array<string>} - Array of channel IDs
+   */
+  getOngoingJoins() {
+    return this.channelJoinManager.getOngoingJoins();
+  }
+
+  /**
+   * Get join statistics
+   * @returns {Object} - Join statistics
+   */
+  getJoinStats() {
+    return this.channelJoinManager.getStats();
+  }
+
+  /**
    * Get statistics
    * @returns {Object} - Client statistics
    */
@@ -358,7 +450,8 @@ export class PubSubClient extends EventEmitter {
         coordinatorNode: sub.coordinatorNode,
         lastSeenVersion: sub.lastSeenVersion,
         expiresAt: new Date(sub.expiresAt).toISOString()
-      }))
+      })),
+      joinStats: this.channelJoinManager.getStats()
     };
   }
 
@@ -462,6 +555,50 @@ export class PubSubClient extends EventEmitter {
   }
 
   /**
+   * Check if message is duplicate (already received)
+   * @param {Object} message - Message to check
+   * @returns {boolean} - True if duplicate
+   */
+  isDuplicateMessage(message) {
+    if (!message.messageID) return false;
+    
+    const now = Date.now();
+    const receivedAt = this.receivedMessages.get(message.messageID);
+    
+    // Consider duplicate if received within last 60 seconds
+    return receivedAt && (now - receivedAt) < this.deduplicationTimeout;
+  }
+
+  /**
+   * Mark message as received for deduplication
+   * @param {Object} message - Message to mark
+   */
+  markMessageReceived(message) {
+    if (!message.messageID) return;
+    
+    this.receivedMessages.set(message.messageID, Date.now());
+    
+    // Cleanup old entries periodically
+    if (this.receivedMessages.size > 1000) {
+      this.cleanupOldMessages();
+    }
+  }
+
+  /**
+   * Cleanup old message deduplication entries
+   */
+  cleanupOldMessages() {
+    const now = Date.now();
+    const cutoff = now - this.deduplicationTimeout;
+    
+    for (const [messageID, receivedAt] of this.receivedMessages.entries()) {
+      if (receivedAt < cutoff) {
+        this.receivedMessages.delete(messageID);
+      }
+    }
+  }
+
+  /**
    * Setup push message handler (Phase 3)
    *
    * Listens for pubsub_push messages from DHT and delivers them
@@ -488,6 +625,15 @@ export class PubSubClient extends EventEmitter {
           console.warn(`   ⚠️ [Push] Received message for unsubscribed topic ${topicID.substring(0, 8)}...`);
           return;
         }
+
+        // CRITICAL FIX: Deduplicate push messages too
+        if (this.isDuplicateMessage(message)) {
+          console.log(`   🔄 [Push] Skipping duplicate push message ${message.messageID.substring(0, 8)}...`);
+          return;
+        }
+
+        // Mark message as received
+        this.markMessageReceived(message);
 
         // Update statistics
         this.stats.messagesReceived++;
@@ -566,6 +712,9 @@ export class PubSubClient extends EventEmitter {
         console.error(`Failed to unsubscribe from ${sub.topicID}:`, error.message);
       }
     }
+
+    // Clear deduplication cache
+    this.receivedMessages.clear();
 
     // Remove all listeners
     this.removeAllListeners();

@@ -21,6 +21,9 @@ export class ConnectionManager extends EventEmitter {
     this.connectionState = 'disconnected'; // Connection state
     // NOTE: Peer metadata now stored on DHTNode.metadata, not in connection manager
 
+    // Store routing table reference for inactive tab filtering
+    this.routingTable = options.routingTable || null;
+
     // Message handling (keep queue structure for the single peer)
     this.pendingRequests = new Map(); // requestId -> { resolve, reject, timeout }
     this.messageQueue = []; // Array of messages for the single peer
@@ -254,6 +257,15 @@ export class ConnectionManager extends EventEmitter {
    * Send ping to peer
    */
   async ping(peerId) {
+    // CRITICAL FIX: Skip pinging inactive browser tabs to prevent high latency
+    if (this.routingTable && peerId) {
+      const peerNode = this.routingTable.getNode(peerId);
+      if (peerNode?.metadata?.nodeType === 'browser' && peerNode.metadata?.tabVisible === false) {
+        console.log(`⏭️ [Ping] Skipping ping to inactive browser tab ${peerId.substring(0, 8)}... (would cause high latency)`);
+        return { success: false, error: 'Inactive browser tab - skipped to prevent high latency' };
+      }
+    }
+
     try {
       const response = await this.sendRequest(peerId, {
         type: 'ping',

@@ -188,6 +188,33 @@ export class BrowserDHTClient extends DHTClient {
     this.identity = null;
   }
 
+  /**
+   * Override stop to clean up PubSub clients
+   */
+  async stop() {
+    // Shutdown all registered PubSub clients
+    for (const pubsubClient of this.pubsubClients) {
+      try {
+        await pubsubClient.shutdown();
+      } catch (error) {
+        console.warn('⚠️ Failed to shutdown PubSub client:', error);
+      }
+    }
+    this.pubsubClients.clear();
+
+    // Clear tab visibility state
+    if (this.disconnectTimer) {
+      clearTimeout(this.disconnectTimer);
+      this.disconnectTimer = null;
+    }
+    this.tabState = 'active';
+    this.reconnectInProgress = false;
+    this.savedSubscriptions = [];
+
+    // Call parent stop
+    return await super.stop();
+  }
+
   getNodeType() {
     return 'browser';
   }
@@ -220,6 +247,53 @@ export class BrowserDHTClient extends DHTClient {
     // Return Ed25519 keys from internal DHT for pub/sub message signing
     // Note: KademliaDHT stores keys in 'keyPair' property
     return this.dht ? this.dht.keyPair : null;
+  }
+
+  /**
+   * Create PubSubClient instance (call after DHT is started)
+   * @param {Object} options - PubSubClient options
+   * @returns {Promise<PubSubClient>} - PubSub client instance
+   */
+  async createPubSubClient(options = {}) {
+    if (!this.dht || !this.identity || !this.keyInfo) {
+      throw new Error('DHT must be started and identity loaded before creating PubSubClient');
+    }
+
+    // Dynamic import for browser compatibility
+    const { PubSubClient } = await import('../pubsub/PubSubClient.js');
+    
+    const pubsubClient = new PubSubClient(
+      this.dht,
+      this.identity.nodeId,
+      this.keyInfo,
+      {
+        enableBatching: true,
+        batchSize: 10,
+        batchTime: 100,
+        ...options
+      }
+    );
+
+    // Register for tab visibility handling
+    this.pubsubClients.add(pubsubClient);
+    
+    return pubsubClient;
+  }
+
+  /**
+   * Register external PubSubClient for tab visibility handling
+   * @param {PubSubClient} pubsubClient - PubSub client to register
+   */
+  registerPubSubClient(pubsubClient) {
+    this.pubsubClients.add(pubsubClient);
+  }
+
+  /**
+   * Unregister PubSubClient from tab visibility handling
+   * @param {PubSubClient} pubsubClient - PubSub client to unregister
+   */
+  unregisterPubSubClient(pubsubClient) {
+    this.pubsubClients.delete(pubsubClient);
   }
 
   /**
@@ -267,6 +341,9 @@ export class BrowserDHTClient extends DHTClient {
     this.disconnectTimer = null;
     this.reconnectInProgress = false;
     this.savedSubscriptions = [];
+    
+    // Registry for PubSubClient instances (for tab visibility handling)
+    this.pubsubClients = new Set();
 
     console.log('👁️ Tab visibility handling enabled');
 
@@ -289,18 +366,27 @@ export class BrowserDHTClient extends DHTClient {
 
           try {
             // Save current pub/sub subscriptions before disconnecting
-            if (this.dht && this.dht.pubsub) {
-              const subscriptions = this.dht.pubsub.getSubscriptions?.() || [];
+            this.savedSubscriptions = [];
+            
+            for (const pubsubClient of this.pubsubClients) {
+              try {
+                const subscriptions = pubsubClient.getSubscriptions?.() || [];
 
-              // Save topic names and event listeners for each subscription
-              this.savedSubscriptions = subscriptions.map(sub => ({
-                topicID: sub.topicID,
-                // Get all listeners for this topic from the EventEmitter
-                listeners: this.dht.pubsub.listeners(sub.topicID)
-              }));
+                // Save topic names and event listeners for each subscription
+                const clientSubscriptions = subscriptions.map(sub => ({
+                  topicID: sub.topicID,
+                  // Get all listeners for this topic from the EventEmitter
+                  listeners: pubsubClient.listeners(sub.topicID),
+                  clientId: pubsubClient.nodeID // Track which client this belongs to
+                }));
 
-              console.log(`💾 Saved ${this.savedSubscriptions.length} pub/sub subscriptions`);
+                this.savedSubscriptions.push(...clientSubscriptions);
+              } catch (error) {
+                console.warn('⚠️ Failed to save subscriptions from PubSub client:', error);
+              }
             }
+
+            console.log(`💾 Saved ${this.savedSubscriptions.length} pub/sub subscriptions from ${this.pubsubClients.size} clients`);
 
             // Disconnect (but keep membership token!)
             // Note: stop() preserves membership token in dht._membershipToken
@@ -338,36 +424,82 @@ export class BrowserDHTClient extends DHTClient {
             console.log('✅ DHT reconnected');
 
             // PRIORITY 2: Restore pub/sub subscriptions IMMEDIATELY
-            if (this.savedSubscriptions && this.savedSubscriptions.length > 0 && this.dht && this.dht.pubsub) {
+            if (this.savedSubscriptions && this.savedSubscriptions.length > 0) {
               console.log(`🔄 Restoring ${this.savedSubscriptions.length} pub/sub subscriptions`);
 
-              // Resubscribe in parallel for speed
-              await Promise.all(
-                this.savedSubscriptions.map(async sub => {
-                  try {
-                    // Resubscribe to topic (creates internal message handler)
-                    await this.dht.pubsub.subscribe(sub.topicID);
+              // Group subscriptions by client ID
+              const subscriptionsByClient = new Map();
+              for (const sub of this.savedSubscriptions) {
+                if (!subscriptionsByClient.has(sub.clientId)) {
+                  subscriptionsByClient.set(sub.clientId, []);
+                }
+                subscriptionsByClient.get(sub.clientId).push(sub);
+              }
 
-                    // Restore all saved event listeners
-                    if (sub.listeners && sub.listeners.length > 0) {
-                      sub.listeners.forEach(listener => {
-                        this.dht.pubsub.on(sub.topicID, listener);
-                      });
-                    }
-                  } catch (err) {
-                    console.warn(`⚠️ Failed to restore subscription to ${sub.topicID}:`, err);
-                  }
-                })
-              );
+              // Restore subscriptions for each client
+              for (const pubsubClient of this.pubsubClients) {
+                const clientSubs = subscriptionsByClient.get(pubsubClient.nodeID) || [];
+                
+                if (clientSubs.length > 0) {
+                  console.log(`🔄 Restoring ${clientSubs.length} subscriptions for client ${pubsubClient.nodeID.substring(0, 8)}...`);
+                  
+                  // Resubscribe in parallel for speed
+                  await Promise.all(
+                    clientSubs.map(async sub => {
+                      try {
+                        // Resubscribe to topic (creates internal message handler)
+                        await pubsubClient.subscribe(sub.topicID);
+
+                        // Restore all saved event listeners
+                        if (sub.listeners && sub.listeners.length > 0) {
+                          sub.listeners.forEach(listener => {
+                            pubsubClient.on(sub.topicID, listener);
+                          });
+                        }
+                      } catch (err) {
+                        console.warn(`⚠️ Failed to restore subscription to ${sub.topicID}:`, err);
+                      }
+                    })
+                  );
+                }
+              }
 
               console.log('✅ Pub/sub subscriptions restored');
             }
 
             this.tabState = 'active';
 
+            // CRITICAL FIX: Emit events to notify UI of successful reconnection
+            console.log('📡 Emitting reconnection events for UI update...');
+            
+            // Emit started event to trigger UI refresh
+            this.emit('reconnected', {
+              nodeId: this.nodeId?.toString(),
+              connectedPeers: this.getConnectedPeers().length,
+              pubsubClients: this.pubsubClients.size,
+              restoredSubscriptions: this.savedSubscriptions.length
+            });
+
+            // Also emit the standard started event that UI listens for
+            this.emit('started');
+
+            // Force UI refresh if DHT visualizer is available
+            if (typeof window !== 'undefined' && window.YZSocialC?.visualizer) {
+              console.log('🔄 Forcing UI refresh after reconnection...');
+              setTimeout(() => {
+                window.YZSocialC.visualizer.forceRefresh?.();
+              }, 500);
+            }
+
           } catch (error) {
             console.error('❌ Reconnection failed:', error);
             this.tabState = 'disconnected';
+            
+            // Emit reconnection failure event
+            this.emit('reconnectionFailed', {
+              error: error.message,
+              tabState: this.tabState
+            });
           } finally {
             this.reconnectInProgress = false;
           }
