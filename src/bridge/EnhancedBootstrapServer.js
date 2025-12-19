@@ -668,7 +668,11 @@ export class EnhancedBootstrapServer extends EventEmitter {
       }, 5000);
 
       try {
-        const ws = new WebSocket(`ws://${bridgeAddr}`);
+        // Handle both ws:// and wss:// protocols
+        const wsUrl = bridgeAddr.startsWith('ws://') || bridgeAddr.startsWith('wss://') 
+          ? bridgeAddr 
+          : `ws://${bridgeAddr}`;
+        const ws = new WebSocket(wsUrl);
         let authenticated = false;
 
         ws.onopen = () => {
@@ -748,7 +752,9 @@ export class EnhancedBootstrapServer extends EventEmitter {
       }, 10000);
 
       try {
-        const ws = new WebSocket(`ws://${bridgeAddr}`);
+        // Use WSS for external addresses, WS for internal Docker addresses
+        const protocol = bridgeAddr.includes('imeyouwe.com') ? 'wss' : 'ws';
+        const ws = new WebSocket(`${protocol}://${bridgeAddr}`);
         let authenticated = false;
 
         ws.onopen = () => {
@@ -1066,13 +1072,19 @@ export class EnhancedBootstrapServer extends EventEmitter {
           if (bridgeNodePeers.length === 0) {
             console.warn(`⚠️ No connected bridge nodes found, using configured addresses as fallback`);
             for (const bridgeAddr of this.options.bridgeNodes) {
+              // Use correct protocol based on address
+              const protocol = bridgeAddr.startsWith('wss://') || bridgeAddr.startsWith('ws://') 
+                ? '' 
+                : (bridgeAddr.includes('imeyouwe.com') ? 'wss://' : 'ws://');
+              const fullAddress = protocol + bridgeAddr;
+              
               bridgeNodePeers.push({
-                nodeId: `bridge_${bridgeAddr.replace(':', '_')}`, // Temporary ID - will fail!
+                nodeId: `bridge_${bridgeAddr.replace(/[:.\/]/g, '_')}`, // Temporary ID - will fail!
                 metadata: {
                   isBridgeNode: true,
                   nodeType: 'bridge',
-                  websocketAddress: `ws://${bridgeAddr}`,
-                  listeningAddress: `ws://${bridgeAddr}`,
+                  websocketAddress: fullAddress,
+                  listeningAddress: fullAddress,
                   capabilities: ['websocket']
                 }
               });
