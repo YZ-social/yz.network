@@ -1176,6 +1176,7 @@ export class PassiveBridgeNode extends NodeDHTClient {
         const manager = this.getManagerForPeer(peerId);
         await manager.sendMessage(peerId, {
           type: 'pong',
+          requestId: message.requestId, // Include requestId to match pending request
           timestamp: Date.now()
         });
       } else if (message.type === 'validate_reconnection') {
