@@ -33,7 +33,8 @@
   - Add diagnostic logging for join failures
   - _Requirements: 1.4, 1.5_
 
-- [ ] 1.6 Improve channel join user experience and reliability
+- [x] 1.6 Improve channel join user experience and reliability
+
 
 
 
