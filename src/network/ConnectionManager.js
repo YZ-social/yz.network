@@ -175,7 +175,7 @@ export class ConnectionManager extends EventEmitter {
         clearTimeout(pendingRequest.timeout);
         this.pendingRequests.delete(message.requestId);
 
-        if (message.type.endsWith('_response')) {
+        if (message.type.endsWith('_response') || message.type === 'pong') {
           pendingRequest.resolve(message);
         } else {
           pendingRequest.reject(new Error(`Unexpected response type: ${message.type}`));
