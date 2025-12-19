@@ -6,7 +6,8 @@ export default {
     '**/test/core/*.test.js',
     '**/test/dht/*.test.js',
     '**/test/local/*.test.js',
-    '**/test/Howard/*.test.js'
+    '**/test/Howard/*.test.js',
+    '**/test/pubsub/*.test.js'
   ],
   
   collectCoverageFrom: [

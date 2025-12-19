@@ -41,6 +41,7 @@ import { EventEmitter } from 'events';
 import { PublishOperation } from './PublishOperation.js';
 import { SubscribeOperation } from './SubscribeOperation.js';
 import { PubSubStorage } from './PubSubStorage.js';
+import { ChannelJoinManager } from './ChannelJoinManager.js';
 
 export class PubSubClient extends EventEmitter {
   /**
@@ -90,6 +91,9 @@ export class PubSubClient extends EventEmitter {
       dht: dht  // Enable push delivery
     });
     this.subscribeOp = new SubscribeOperation(this.storage, nodeID, keyInfo);
+
+    // Create enhanced channel join manager
+    this.channelJoinManager = new ChannelJoinManager(this, dht);
 
     // Set up push message handler
     this.setupPushHandler();
@@ -164,6 +168,29 @@ export class PubSubClient extends EventEmitter {
 
       throw error;
     }
+  }
+
+  /**
+   * Enhanced channel join with timeout, retry, and progress feedback
+   * @param {string} channelId - Channel ID to join
+   * @param {Object} options - Join options
+   * @param {number} [options.timeout] - Join timeout in milliseconds (default: 5000)
+   * @param {number} [options.maxRetries] - Maximum retry attempts (default: 3)
+   * @param {Function} [options.onProgress] - Progress callback: (stage, details) => void
+   * @param {number} [options.ttl] - Subscription TTL in milliseconds
+   * @param {number} [options.k] - Number of coordinator nodes
+   * @returns {Promise<{success: boolean, coordinatorNode: number, historicalMessages: number, attempts: number, duration: number}>}
+   */
+  async joinChannel(channelId, options = {}) {
+    // Extract join-specific options
+    const { timeout, maxRetries, onProgress, ...subscribeOptions } = options;
+
+    return await this.channelJoinManager.joinChannel(channelId, {
+      timeout,
+      maxRetries,
+      onProgress,
+      subscribeOptions
+    });
   }
 
   /**
@@ -380,6 +407,31 @@ export class PubSubClient extends EventEmitter {
   }
 
   /**
+   * Check if a channel join is currently in progress
+   * @param {string} channelId - Channel ID to check
+   * @returns {boolean} - True if join is in progress
+   */
+  isJoinInProgress(channelId) {
+    return this.channelJoinManager.isJoinInProgress(channelId);
+  }
+
+  /**
+   * Get list of channels currently being joined
+   * @returns {Array<string>} - Array of channel IDs
+   */
+  getOngoingJoins() {
+    return this.channelJoinManager.getOngoingJoins();
+  }
+
+  /**
+   * Get join statistics
+   * @returns {Object} - Join statistics
+   */
+  getJoinStats() {
+    return this.channelJoinManager.getStats();
+  }
+
+  /**
    * Get statistics
    * @returns {Object} - Client statistics
    */
@@ -398,7 +450,8 @@ export class PubSubClient extends EventEmitter {
         coordinatorNode: sub.coordinatorNode,
         lastSeenVersion: sub.lastSeenVersion,
         expiresAt: new Date(sub.expiresAt).toISOString()
-      }))
+      })),
+      joinStats: this.channelJoinManager.getStats()
     };
   }
 

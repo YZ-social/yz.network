@@ -1526,13 +1526,38 @@ export class DHTVisualizer {
       // Add to our tracked channels (before subscribe so displayMessage can use it)
       this.subscribedChannels.set(channelId, { messages: [] });
 
-      // Subscribe to the channel with timeout
-      const subscribePromise = this.pubsub.subscribe(channelId);
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Channel creation timeout (30s)')), 30000)
-      );
+      // Use enhanced channel join with progress feedback
+      const result = await this.pubsub.joinChannel(channelId, {
+        timeout: 5000, // 5 second timeout as per requirements
+        maxRetries: 3,
+        onProgress: (stage, details) => {
+          // Update button text with progress
+          switch (stage) {
+            case 'attempting':
+              btn.textContent = `Joining... (${details.attempt}/${details.maxAttempts})`;
+              break;
+            case 'health_check':
+              btn.textContent = 'Checking connection...';
+              break;
+            case 'connecting':
+              btn.textContent = 'Connecting to channel...';
+              break;
+            case 'validating':
+              btn.textContent = 'Validating connection...';
+              break;
+            case 'retrying':
+              btn.textContent = `Retrying... (${details.retryDelay}ms)`;
+              this.log(`Join attempt failed: ${details.error}. Retrying...`, 'warning');
+              break;
+            case 'concurrent':
+              btn.textContent = 'Waiting for join...';
+              this.log('Another join in progress, waiting...', 'info');
+              break;
+          }
+        }
+      });
 
-      await Promise.race([subscribePromise, timeoutPromise]);
+      this.log(`Channel joined successfully in ${result.duration}ms (${result.attempts} attempts)`, 'success');
 
       // Update UI
       this.updateChannelsList();
@@ -1556,10 +1581,23 @@ export class DHTVisualizer {
     } catch (error) {
       this.log(`Failed to create channel: ${error.message}`, 'error');
       
-      // Provide helpful suggestions
-      if (error.message.includes('timeout') || error.message.includes('No connection')) {
-        this.log('💡 Try: fixPubSubConnections() in console to clean up connections', 'info');
-        this.log('💡 Or: enablePubSubDebug() for detailed logging', 'info');
+      // Show enhanced error information if available
+      if (error.attempts) {
+        this.log(`Join failed after ${error.attempts} attempts in ${error.duration}ms`, 'error');
+      }
+      
+      // Show remediation suggestions if available
+      if (error.remediation && error.remediation.length > 0) {
+        this.log('💡 Suggested solutions:', 'info');
+        error.remediation.forEach((suggestion, index) => {
+          this.log(`   ${index + 1}. ${suggestion}`, 'info');
+        });
+      } else {
+        // Fallback suggestions for older error format
+        if (error.message.includes('timeout') || error.message.includes('No connection')) {
+          this.log('💡 Try: fixPubSubConnections() in console to clean up connections', 'info');
+          this.log('💡 Or: enablePubSubDebug() for detailed logging', 'info');
+        }
       }
       
     } finally {
@@ -1610,8 +1648,38 @@ export class DHTVisualizer {
       // Add to our tracked channels (before subscribe so displayMessage can use it)
       this.subscribedChannels.set(channelId, { messages: [] });
 
-      // Subscribe to the channel (this will deliver historical messages to the listener we just registered)
-      await this.pubsub.subscribe(channelId);
+      // Use enhanced channel join with progress feedback
+      const result = await this.pubsub.joinChannel(channelId, {
+        timeout: 5000, // 5 second timeout as per requirements
+        maxRetries: 3,
+        onProgress: (stage, details) => {
+          // Update button text with progress
+          switch (stage) {
+            case 'attempting':
+              btn.textContent = `Joining... (${details.attempt}/${details.maxAttempts})`;
+              break;
+            case 'health_check':
+              btn.textContent = 'Checking connection...';
+              break;
+            case 'connecting':
+              btn.textContent = 'Connecting to channel...';
+              break;
+            case 'validating':
+              btn.textContent = 'Validating connection...';
+              break;
+            case 'retrying':
+              btn.textContent = `Retrying... (${details.retryDelay}ms)`;
+              this.log(`Join attempt failed: ${details.error}. Retrying...`, 'warning');
+              break;
+            case 'concurrent':
+              btn.textContent = 'Waiting for join...';
+              this.log('Another join in progress, waiting...', 'info');
+              break;
+          }
+        }
+      });
+
+      this.log(`Channel joined successfully in ${result.duration}ms (${result.attempts} attempts)`, 'success');
 
       // Update UI
       this.updateChannelsList();
@@ -1633,6 +1701,20 @@ export class DHTVisualizer {
 
     } catch (error) {
       this.log(`Failed to join channel: ${error.message}`, 'error');
+      
+      // Show enhanced error information if available
+      if (error.attempts) {
+        this.log(`Join failed after ${error.attempts} attempts in ${error.duration}ms`, 'error');
+      }
+      
+      // Show remediation suggestions if available
+      if (error.remediation && error.remediation.length > 0) {
+        this.log('💡 Suggested solutions:', 'info');
+        error.remediation.forEach((suggestion, index) => {
+          this.log(`   ${index + 1}. ${suggestion}`, 'info');
+        });
+      }
+      
       // Remove the channel from tracked channels if subscription failed
       this.subscribedChannels.delete(channelId);
       this.pubsub.removeAllListeners(channelId);
