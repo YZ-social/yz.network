@@ -15,8 +15,8 @@ services:
       - CREATE_NEW_DHT=true
       - OPEN_NETWORK=true
       - BRIDGE_AUTH=${BRIDGE_AUTH:-default-bridge-auth-key}
-      - BRIDGE_NODE_1=imeyouwe.com/bridge1
-      - BRIDGE_NODE_2=imeyouwe.com/bridge2
+      - BRIDGE_NODE_1=wss://imeyouwe.com/bridge1
+      - BRIDGE_NODE_2=wss://imeyouwe.com/bridge2
       - METRICS_PORT=9090
     volumes:
       # Mount bundle-hash.json for version checking synchronization
