@@ -1114,7 +1114,10 @@ export class EnhancedBootstrapServer extends EventEmitter {
 
               if (availableBridges > 0) {
                 console.log(`✅ ${availableBridges} bridge nodes available for genesis coordination`);
-                // Genesis can operate independently - bridge coordination is optional
+                
+                // CRITICAL FIX: Trigger bridge invitation process
+                console.log(`🎫 Asking genesis peer to invite bridge nodes...`);
+                await this.askGenesisToInviteBridgeNodes(nodeId);
               } else {
                 console.warn(`⚠️ No bridge nodes available - genesis will operate independently`);
               }
