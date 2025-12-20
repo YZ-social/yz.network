@@ -24,6 +24,10 @@ const DEFAULT_CONFIG = {
     process.env.BRIDGE_NODE_1 || 'localhost:8083',  // Primary bridge node
     process.env.BRIDGE_NODE_2 || 'localhost:8084',  // Secondary bridge node
   ].map(addr => {
+    // Handle protocol prefix correctly - don't add if already present
+    if (addr.startsWith('wss://') || addr.startsWith('ws://')) {
+      return addr;
+    }
     // Convert external addresses to WSS format for proper communication
     if (addr.includes('imeyouwe.com/')) {
       return `wss://${addr}`;
