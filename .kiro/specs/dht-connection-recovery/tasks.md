@@ -321,15 +321,29 @@ This implementation plan focuses on debugging and enhancing the existing DHT Con
   - **Property 5: Connection Failure Logging**
   - **Validates: Requirements 2.1**
 
-- [ ] 16. **[PRIORITY]** Debug and fix current connection issues
-  - 🚨 **HIGH PRIORITY**: Investigate why nodes cannot connect to each other
-  - 🚨 **HIGH PRIORITY**: Debug Docker networking configuration issues
-  - 🚨 **HIGH PRIORITY**: Verify bootstrap server coordination with bridge nodes
-  - 🚨 **HIGH PRIORITY**: Test WebRTC Perfect Negotiation for browser connections
-  - 🚨 **HIGH PRIORITY**: Validate WebSocket connections for Node.js nodes
-  - 🚨 **HIGH PRIORITY**: Check nginx proxy configuration for external addressing
-  - 🚨 **HIGH PRIORITY**: Verify rate limiting is not blocking legitimate connections
-  - 🚨 **HIGH PRIORITY**: Test end-to-end connection recovery scenarios
+- [ ] 16. **[IMMEDIATE]** Diagnose current connection failure root cause
+  - 🚨 **IMMEDIATE**: Check if DHT nodes are actually starting WebSocket servers on their advertised ports
+  - 🚨 **IMMEDIATE**: Test manual WebSocket connection to wss://imeyouwe.com/node8 from another container
+  - 🚨 **IMMEDIATE**: Verify nginx configuration routes /nodeX paths to correct internal containers
+  - 🚨 **IMMEDIATE**: Check if containers can reach each other using internal Docker network names
+  - 🚨 **IMMEDIATE**: Validate that nodes are using correct external addresses in metadata
+  - 🚨 **IMMEDIATE**: Debug connection manager factory - ensure correct manager type selection
+  - 🚨 **IMMEDIATE**: Check if WebSocket connection attempts are reaching target containers
+  - 🚨 **IMMEDIATE**: Verify that connection establishment isn't failing due to handshake issues
+  - _Requirements: 1.1, 1.2, 6.1, 6.3_
+  - _Current: Bridge node works, peer discovery works, but peer-to-peer connections fail_
+
+- [ ] 17. **[CRITICAL]** Debug and fix current DHT peer-to-peer connection failures
+  - 🚨 **CRITICAL**: Bridge node can discover peers (22 connected) but DHT nodes cannot connect to each other
+  - 🚨 **CRITICAL**: All find_node queries failing with "No connection to peer" despite peers being in routing table
+  - 🚨 **CRITICAL**: Emergency bypasses being triggered due to connection failures
+  - 🚨 **CRITICAL**: Peers being removed from routing tables after 29 failures
+  - 🚨 **CRITICAL**: Investigate nginx proxy routing - nodes advertise wss://imeyouwe.com/nodeX but connections fail
+  - 🚨 **CRITICAL**: Verify WebSocket servers are actually listening on advertised addresses
+  - 🚨 **CRITICAL**: Test direct container-to-container connectivity within Docker network
+  - 🚨 **CRITICAL**: Check if nodes can reach their own advertised addresses
+  - 🚨 **CRITICAL**: Validate that nginx is correctly routing WebSocket upgrade requests
+  - 🚨 **CRITICAL**: Debug why "not connected to bridge" when bridge shows 22 connections
 
 
 - [ ] 18. **[PRIORITY]** Debug and fix Pub/Sub integration issues
