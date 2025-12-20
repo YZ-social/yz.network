@@ -752,9 +752,16 @@ export class EnhancedBootstrapServer extends EventEmitter {
       }, 10000);
 
       try {
-        // Use WSS for external addresses, WS for internal Docker addresses
-        const protocol = bridgeAddr.includes('imeyouwe.com') ? 'wss' : 'ws';
-        const ws = new WebSocket(`${protocol}://${bridgeAddr}`);
+        // Handle protocol prefix correctly - don't add if already present
+        let wsUrl;
+        if (bridgeAddr.startsWith('wss://') || bridgeAddr.startsWith('ws://')) {
+          wsUrl = bridgeAddr;
+        } else {
+          // Use WSS for external addresses, WS for internal Docker addresses
+          const protocol = bridgeAddr.includes('imeyouwe.com') ? 'wss' : 'ws';
+          wsUrl = `${protocol}://${bridgeAddr}`;
+        }
+        const ws = new WebSocket(wsUrl);
         let authenticated = false;
 
         ws.onopen = () => {
