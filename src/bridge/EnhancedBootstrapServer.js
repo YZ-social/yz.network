@@ -754,15 +754,12 @@ export class EnhancedBootstrapServer extends EventEmitter {
       try {
         // Handle protocol prefix correctly - don't add if already present
         let wsUrl;
-        console.log(`🔍 DEBUG: bridgeAddr input = "${bridgeAddr}"`);
         if (bridgeAddr.startsWith('wss://') || bridgeAddr.startsWith('ws://')) {
           wsUrl = bridgeAddr;
-          console.log(`🔍 DEBUG: Using existing protocol, wsUrl = "${wsUrl}"`);
         } else {
           // Use WSS for external addresses, WS for internal Docker addresses
           const protocol = bridgeAddr.includes('imeyouwe.com') ? 'wss' : 'ws';
           wsUrl = `${protocol}://${bridgeAddr}`;
-          console.log(`🔍 DEBUG: Adding protocol ${protocol}, wsUrl = "${wsUrl}"`);
         }
         const ws = new WebSocket(wsUrl);
         let authenticated = false;
