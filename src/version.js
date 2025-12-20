@@ -63,8 +63,9 @@ if (typeof document !== 'undefined') {
   // Node.js: Read hash from bundle-hash.json (written by webpack)
   // Use dynamic import to avoid bundling issues
   try {
-    const fs = await import('fs');
-    const path = await import('path');
+    // Use eval to prevent webpack from trying to resolve these modules
+    const fs = await import(/* webpackIgnore: true */ 'fs');
+    const path = await import(/* webpackIgnore: true */ 'path');
     const hashFilePath = path.default.join(process.cwd(), 'dist', 'bundle-hash.json');
     console.log(`🔍 Looking for bundle-hash.json at: ${hashFilePath}`);
     if (fs.default.existsSync(hashFilePath)) {
