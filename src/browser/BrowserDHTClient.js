@@ -30,6 +30,14 @@ export class BrowserDHTClient extends DHTClient {
       useTabIdentity: options.useTabIdentity || false
     });
     this.identity = null;
+
+    // Metrics tracking for browser client
+    this.metrics = {
+      startTime: Date.now(),
+      bytesReceived: 0,
+      bytesSent: 0,
+      dataTransferSamples: []
+    };
   }
 
   /**
@@ -66,10 +74,64 @@ export class BrowserDHTClient extends DHTClient {
     // Now call parent start() with proper node ID
     const result = await super.start();
 
+    // Pass metrics tracker to DHT for data transfer tracking
+    if (this.dht) {
+      this.dht.metricsTracker = this;
+    }
+
     // Setup tab visibility handling for automatic disconnect/reconnect
     this.setupTabVisibilityHandling();
 
     return result;
+  }
+
+  /**
+   * Record data transfer (bytes sent/received) - compatible with ActiveDHTNode interface
+   */
+  recordDataTransfer(bytesSent = 0, bytesReceived = 0) {
+    // Update totals
+    this.metrics.bytesSent += bytesSent;
+    this.metrics.bytesReceived += bytesReceived;
+
+    // Add sample for rate calculation
+    const sample = {
+      timestamp: Date.now(),
+      sent: bytesSent,
+      received: bytesReceived
+    };
+
+    this.metrics.dataTransferSamples.push(sample);
+
+    // Keep only last 100 samples (about 10 minutes at 6 samples/minute)
+    if (this.metrics.dataTransferSamples.length > 100) {
+      this.metrics.dataTransferSamples.shift();
+    }
+
+    // Clean up old samples (older than 5 minutes)
+    const fiveMinutesAgo = Date.now() - 300000;
+    this.metrics.dataTransferSamples = this.metrics.dataTransferSamples.filter(
+      sample => sample.timestamp > fiveMinutesAgo
+    );
+  }
+
+  /**
+   * Calculate data transfer rate (bytes per second over last minute)
+   */
+  calculateDataTransferRate(direction) {
+    if (!this.metrics.dataTransferSamples || this.metrics.dataTransferSamples.length === 0) {
+      return 0;
+    }
+
+    const now = Date.now();
+    const oneMinuteAgo = now - 60000;
+
+    // Filter to last minute and sum bytes for the specified direction
+    const recentSamples = this.metrics.dataTransferSamples.filter(sample => sample.timestamp > oneMinuteAgo);
+    const totalBytes = recentSamples.reduce((sum, sample) => {
+      return sum + (sample[direction] || 0);
+    }, 0);
+
+    return totalBytes / 60; // bytes per second
   }
 
   /**
@@ -322,6 +384,12 @@ export class BrowserDHTClient extends DHTClient {
       dht: {
         routingTableSize: this.dht.routingTable?.getAllNodes()?.length || 0,
         connectedPeers: this.getConnectedPeers().length
+      },
+      dataTransfer: {
+        bytesReceived: this.metrics.bytesReceived,
+        bytesSent: this.metrics.bytesSent,
+        bytesReceivedPerSecond: this.calculateDataTransferRate('received'),
+        bytesSentPerSecond: this.calculateDataTransferRate('sent')
       }
     };
   }

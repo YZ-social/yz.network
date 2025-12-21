@@ -261,6 +261,18 @@
       <div class="value" id="throughput">-</div>
       <div class="subtext">Operations per second</div>
     </div>
+
+    <div class="stat-card">
+      <div class="label">Data In</div>
+      <div class="value" id="data-in">-</div>
+      <div class="subtext">Bytes per second</div>
+    </div>
+
+    <div class="stat-card">
+      <div class="label">Data Out</div>
+      <div class="value" id="data-out">-</div>
+      <div class="subtext">Bytes per second</div>
+    </div>
   </div>
 
   <div class="section">
@@ -304,6 +316,8 @@
         document.getElementById('pubsub-ops').textContent = metricsData.aggregate.totalPubSubOps.toLocaleString();
         document.getElementById('latency-p95').textContent = metricsData.aggregate.avgLatencyP95.toFixed(1);
         document.getElementById('throughput').textContent = metricsData.aggregate.opsPerSecond.toFixed(1);
+        document.getElementById('data-in').textContent = formatBytes(metricsData.aggregate.avgBytesReceivedPerSecond || 0);
+        document.getElementById('data-out').textContent = formatBytes(metricsData.aggregate.avgBytesSentPerSecond || 0);
 
         // Update last update time
         if (metricsData.lastUpdate) {
@@ -330,6 +344,8 @@
                 <span class="metric-badge">Peers: ${node.dht_connected_peers || 0}</span>
                 <span class="metric-badge">Uptime: ${formatUptime(node.node_uptime_seconds)}</span>
                 <span class="metric-badge">Latency: ${(node.ping_latency_p50 || 0).toFixed(1)}ms</span>
+                <span class="metric-badge">In: ${formatBytes(node.data_bytes_received_per_second || 0)}/s</span>
+                <span class="metric-badge">Out: ${formatBytes(node.data_bytes_sent_per_second || 0)}/s</span>
               </div>
             </div>
           `).join('');
@@ -352,6 +368,17 @@
       if (hours > 0) return `${hours}h ${minutes}m`;
       if (minutes > 0) return `${minutes}m ${secs}s`;
       return `${secs}s`;
+    }
+
+    // Format bytes in human-readable format
+    function formatBytes(bytes) {
+      if (!bytes || bytes === 0) return '0 B';
+      
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
     }
 
     // Start updating

@@ -71,6 +71,11 @@ export class ActiveDHTNode extends NodeDHTClient {
       messagesReceived: 0,
       messagesSent: 0,
 
+      // Data transfer metrics (bytes)
+      bytesReceived: 0,
+      bytesSent: 0,
+      dataTransferSamples: [], // For calculating averages over time
+
       // Latency tracking (milliseconds)
       storeLatencies: [],
       getLatencies: [],
@@ -131,6 +136,11 @@ export class ActiveDHTNode extends NodeDHTClient {
 
     // Start base DHT
     const result = await super.start();
+
+    // Pass metrics tracker to DHT for data transfer tracking
+    if (this.dht) {
+      this.dht.metricsTracker = this;
+    }
 
     // Initialize PubSub
     await this.initializePubSub();
@@ -341,6 +351,12 @@ export class ActiveDHTNode extends NodeDHTClient {
       pubsub_messages_received_total: this.metrics.messagesReceived,
       pubsub_messages_sent_total: this.metrics.messagesSent,
 
+      // Data transfer metrics (bytes)
+      data_bytes_received_total: this.metrics.bytesReceived,
+      data_bytes_sent_total: this.metrics.bytesSent,
+      data_bytes_received_per_second: this.calculateDataTransferRate('received'),
+      data_bytes_sent_per_second: this.calculateDataTransferRate('sent'),
+
       // Latency (percentiles in milliseconds)
       dht_store_latency_p50: this.calculatePercentile(this.metrics.storeLatencies, 50),
       dht_store_latency_p95: this.calculatePercentile(this.metrics.storeLatencies, 95),
@@ -411,6 +427,26 @@ export class ActiveDHTNode extends NodeDHTClient {
   }
 
   /**
+   * Calculate data transfer rate (bytes per second over last minute)
+   */
+  calculateDataTransferRate(direction) {
+    if (!this.metrics.dataTransferSamples || this.metrics.dataTransferSamples.length === 0) {
+      return 0;
+    }
+
+    const now = Date.now();
+    const oneMinuteAgo = now - 60000;
+
+    // Filter to last minute and sum bytes for the specified direction
+    const recentSamples = this.metrics.dataTransferSamples.filter(sample => sample.timestamp > oneMinuteAgo);
+    const totalBytes = recentSamples.reduce((sum, sample) => {
+      return sum + (sample[direction] || 0);
+    }, 0);
+
+    return totalBytes / 60; // bytes per second
+  }
+
+  /**
    * Record operation latency
    */
   recordLatency(type, latencyMs) {
@@ -439,6 +475,39 @@ export class ActiveDHTNode extends NodeDHTClient {
     if (oldLength !== this.metrics.opsLastMinute.length) {
       console.log(`📊 Cleaned up old operations: ${oldLength} -> ${this.metrics.opsLastMinute.length}`);
     }
+  }
+
+  /**
+   * Record data transfer (bytes sent/received)
+   */
+  recordDataTransfer(bytesSent = 0, bytesReceived = 0) {
+    // Update totals
+    this.metrics.bytesSent += bytesSent;
+    this.metrics.bytesReceived += bytesReceived;
+
+    // Add sample for rate calculation
+    const sample = {
+      timestamp: Date.now(),
+      sent: bytesSent,
+      received: bytesReceived
+    };
+
+    if (!this.metrics.dataTransferSamples) {
+      this.metrics.dataTransferSamples = [];
+    }
+
+    this.metrics.dataTransferSamples.push(sample);
+
+    // Keep only last 100 samples (about 10 minutes at 6 samples/minute)
+    if (this.metrics.dataTransferSamples.length > 100) {
+      this.metrics.dataTransferSamples.shift();
+    }
+
+    // Clean up old samples (older than 5 minutes)
+    const fiveMinutesAgo = Date.now() - 300000;
+    this.metrics.dataTransferSamples = this.metrics.dataTransferSamples.filter(
+      sample => sample.timestamp > fiveMinutesAgo
+    );
   }
 
   /**

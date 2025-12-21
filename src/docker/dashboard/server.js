@@ -221,6 +221,16 @@ function calculateAggregates() {
     totalPubSubOps: healthyNodes.reduce((sum, n) =>
       sum + (n.pubsub_publish_operations_total || 0) + (n.pubsub_subscribe_operations_total || 0), 0),
 
+    // Data transfer statistics (bytes)
+    totalBytesReceived: healthyNodes.reduce((sum, n) => sum + (n.data_bytes_received_total || 0), 0),
+    totalBytesSent: healthyNodes.reduce((sum, n) => sum + (n.data_bytes_sent_total || 0), 0),
+    avgBytesReceivedPerSecond: healthyNodes.length > 0
+      ? healthyNodes.reduce((sum, n) => sum + (n.data_bytes_received_per_second || 0), 0) / healthyNodes.length
+      : 0,
+    avgBytesSentPerSecond: healthyNodes.length > 0
+      ? healthyNodes.reduce((sum, n) => sum + (n.data_bytes_sent_per_second || 0), 0) / healthyNodes.length
+      : 0,
+
     // Average latencies
     avgLatencyP50: healthyNodes.length > 0
       ? healthyNodes.reduce((sum, n) => sum + (n.ping_latency_p50 || 0), 0) / healthyNodes.length

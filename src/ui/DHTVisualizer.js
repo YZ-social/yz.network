@@ -73,6 +73,8 @@ export class DHTVisualizer {
       statConnectedPeers: document.getElementById('stat-connected-peers'),
       statRoutingTable: document.getElementById('stat-routing-table'),
       statStorageItems: document.getElementById('stat-storage-items'),
+      statDataIn: document.getElementById('stat-data-in'),
+      statDataOut: document.getElementById('stat-data-out'),
 
       // Identity elements
       identityNodeId: document.getElementById('identity-node-id'),
@@ -832,6 +834,15 @@ export class DHTVisualizer {
       this.elements.statConnectedPeers.textContent = connectedPeersCount;
       this.elements.statRoutingTable.textContent = routingTableNodes.length;
       this.elements.statStorageItems.textContent = stats.storage?.keys || 0;
+
+      // Update data transfer metrics
+      if (stats.dataTransfer) {
+        this.elements.statDataIn.textContent = this.formatBytes(stats.dataTransfer.bytesReceivedPerSecond || 0) + '/s';
+        this.elements.statDataOut.textContent = this.formatBytes(stats.dataTransfer.bytesSentPerSecond || 0) + '/s';
+      } else {
+        this.elements.statDataIn.textContent = '0 B/s';
+        this.elements.statDataOut.textContent = '0 B/s';
+      }
 
 
 
@@ -1896,5 +1907,18 @@ export class DHTVisualizer {
 
       this.elements.channelsList.appendChild(badgeEl);
     });
+  }
+
+  /**
+   * Format bytes in human-readable format
+   */
+  formatBytes(bytes) {
+    if (!bytes || bytes === 0) return '0 B';
+    
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   }
 }

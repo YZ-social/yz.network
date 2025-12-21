@@ -131,7 +131,14 @@ export class KademliaDHT extends EventEmitter {
     // Throttling and rate limiting for reducing excessive find_node traffic
     this.lastBucketRefreshTime = 0; // Track last bucket refresh for throttling
     this.findNodeRateLimit = new Map(); // Rate limit find_node requests per peer
-    this.findNodeMinInterval = 2000; // FIXED: 2 seconds instead of 500ms to reduce message flooding
+    
+    // Adaptive find_node rate limiting: aggressive during startup, backs off as network stabilizes
+    this.adaptiveFindNodeInterval = {
+      startup: 500,        // 500ms during startup for fast discovery
+      lowConnectivity: 1000,   // 1 second when few connections
+      stable: 2000         // 2 seconds when network is stable
+    };
+    this.findNodeMinInterval = this.adaptiveFindNodeInterval.startup;
 
     // Sleep/Wake memory protection - DISABLED
     // NOTE: Global message limit removed - relying on per-peer rate limiting and deduplication instead
@@ -1815,6 +1822,12 @@ export class KademliaDHT extends EventEmitter {
    * Handle incoming message from peer
    */
   async handlePeerMessage(peerId, message) {
+    // Track received data if metrics tracker is available
+    if (this.metricsTracker && this.metricsTracker.recordDataTransfer) {
+      const messageSize = JSON.stringify(message).length;
+      this.metricsTracker.recordDataTransfer(0, messageSize);
+    }
+
     // Sleep/Wake detection for debugging (global message limit DISABLED)
     const currentTime = Date.now();
     const timeDiff = currentTime - this.lastSystemTime;
@@ -3352,9 +3365,19 @@ export class KademliaDHT extends EventEmitter {
    */
   async sendMessage(peerId, message) {
     try {
+      // Calculate message size for data transfer tracking
+      const messageSize = JSON.stringify(message).length;
+      
       // Use getOrCreatePeerNode to ensure connection manager exists
       const peerNode = this.getOrCreatePeerNode(peerId);
-      return await peerNode.connectionManager.sendMessage(peerId, message);
+      const result = await peerNode.connectionManager.sendMessage(peerId, message);
+      
+      // Track data sent if metrics tracker is available
+      if (this.metricsTracker && this.metricsTracker.recordDataTransfer) {
+        this.metricsTracker.recordDataTransfer(messageSize, 0);
+      }
+      
+      return result;
     } catch (error) {
       console.error(`❌ Failed to send ${message.type} to ${peerId.substring(0, 8)}...: ${error.message}`);
 
@@ -5291,21 +5314,25 @@ export class KademliaDHT extends EventEmitter {
     const connectedPeers = this.getConnectedPeers().length;
     const totalPeers = this.routingTable.getAllNodes().length;
     
-    let newInterval;
+    let newPingInterval, newFindNodeInterval;
     if (connectedPeers < 3) {
-      // Very low connectivity - use startup interval
-      newInterval = this.adaptivePingInterval.startup;
+      // Very low connectivity - use startup intervals
+      newPingInterval = this.adaptivePingInterval.startup;
+      newFindNodeInterval = this.adaptiveFindNodeInterval.startup;
     } else if (connectedPeers < 8 || totalPeers < 10) {
-      // Low connectivity - use intermediate interval
-      newInterval = this.adaptivePingInterval.lowConnectivity;
+      // Low connectivity - use intermediate intervals
+      newPingInterval = this.adaptivePingInterval.lowConnectivity;
+      newFindNodeInterval = this.adaptiveFindNodeInterval.lowConnectivity;
     } else {
-      // Good connectivity - use stable interval
-      newInterval = this.adaptivePingInterval.stable;
+      // Good connectivity - use stable intervals
+      newPingInterval = this.adaptivePingInterval.stable;
+      newFindNodeInterval = this.adaptiveFindNodeInterval.stable;
     }
     
-    if (newInterval !== this.currentPingInterval) {
-      console.log(`🔄 Adaptive ping interval: ${this.currentPingInterval / 1000}s -> ${newInterval / 1000}s (${connectedPeers} connected peers)`);
-      this.currentPingInterval = newInterval;
+    if (newPingInterval !== this.currentPingInterval || newFindNodeInterval !== this.findNodeMinInterval) {
+      console.log(`🔄 Adaptive intervals: ping ${this.currentPingInterval / 1000}s -> ${newPingInterval / 1000}s, find_node ${this.findNodeMinInterval / 1000}s -> ${newFindNodeInterval / 1000}s (${connectedPeers} connected peers)`);
+      this.currentPingInterval = newPingInterval;
+      this.findNodeMinInterval = newFindNodeInterval;
     }
   }
 
