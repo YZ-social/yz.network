@@ -69,7 +69,7 @@ class ChannelCreationTest {
           timestamp: Date.now()
         });
         
-        console.log(`✅ Message sent successfully: ${messageResult.messageId.substring(0, 8)}...`);
+        console.log(`✅ Message sent successfully: ${messageResult.messageID.substring(0, 8)}...`);
         
         return true;
         
