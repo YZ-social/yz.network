@@ -6,7 +6,7 @@
  * Tests if the DHT message flooding fix resolves channel creation timeouts.
  */
 
-import { NodeDHTClient } from '../src/NodeDHTClient.js';
+import { NodeDHTClient } from '../src/node/NodeDHTClient.js';
 import { PubSubClient } from '../src/pubsub/PubSubClient.js';
 
 class ChannelCreationTest {
@@ -22,7 +22,7 @@ class ChannelCreationTest {
       // Create DHT client with the new reduced intervals
       console.log('📡 Connecting to DHT with reduced maintenance intervals...');
       this.dhtClient = new NodeDHTClient({
-        bootstrapServers: ['wss://imeyouwe.com/bootstrap'],
+        bootstrapServers: ['ws://localhost:8080'], // Use internal address when running on Oracle server
         // The new intervals should be applied automatically from the fix
       });
 
@@ -42,7 +42,11 @@ class ChannelCreationTest {
 
       // Create PubSub client
       console.log('🔗 Creating PubSub client...');
-      this.pubsubClient = new PubSubClient(this.dhtClient.dht);
+      this.pubsubClient = new PubSubClient(
+        this.dhtClient.dht,
+        this.dhtClient.dht.localNodeId.toString(),
+        this.dhtClient.dht.keyPair
+      );
 
       // Test channel creation
       console.log('📺 Testing channel creation...');

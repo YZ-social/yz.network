@@ -6,7 +6,7 @@
  * Tests the enhanced inactive tab detection and fast failure mechanisms.
  */
 
-import { NodeDHTClient } from '../src/NodeDHTClient.js';
+import { NodeDHTClient } from '../src/node/NodeDHTClient.js';
 import { PubSubClient } from '../src/pubsub/PubSubClient.js';
 
 class InactiveTabDetectionTest {
@@ -22,7 +22,7 @@ class InactiveTabDetectionTest {
       // Create DHT client
       console.log('📡 Connecting to DHT...');
       this.dhtClient = new NodeDHTClient({
-        bootstrapServers: ['wss://imeyouwe.com/bootstrap']
+        bootstrapServers: ['ws://localhost:8080'] // Use internal address when running on Oracle server
       });
 
       await this.dhtClient.start();
