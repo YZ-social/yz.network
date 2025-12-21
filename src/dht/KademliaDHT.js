@@ -33,11 +33,11 @@ export class KademliaDHT extends EventEmitter {
       alpha: options.alpha || 4, // Parallelism parameter (balanced for pub-sub performance)
       replicateK: options.replicateK || 20, // Replication factor (Kademlia-compliant: replicate to k closest nodes)
       refreshInterval: options.refreshInterval || 60 * 1000, // Base interval - will be adaptive
-      aggressiveRefreshInterval: options.aggressiveRefreshInterval || 15 * 1000, // 15s for new/isolated nodes
-      standardRefreshInterval: options.standardRefreshInterval || 600 * 1000, // 10 minutes following IPFS standard
+      aggressiveRefreshInterval: options.aggressiveRefreshInterval || 120 * 1000, // FIXED: 2 minutes instead of 15s to reduce message flooding
+      standardRefreshInterval: options.standardRefreshInterval || 1800 * 1000, // FIXED: 30 minutes instead of 10 minutes
       republishInterval: options.republishInterval || 24 * 60 * 60 * 1000, // 24 hours
       expireInterval: options.expireInterval || 24 * 60 * 60 * 1000, // 24 hours
-      pingInterval: options.pingInterval || 60 * 1000, // 1 minute (dev-friendly)
+      pingInterval: options.pingInterval || 300 * 1000, // FIXED: 5 minutes instead of 1 minute to reduce message flooding
       bootstrapServers: options.bootstrapServers || ['ws://localhost:8080'],
       ...options
     };
@@ -123,7 +123,7 @@ export class KademliaDHT extends EventEmitter {
     // Throttling and rate limiting for reducing excessive find_node traffic
     this.lastBucketRefreshTime = 0; // Track last bucket refresh for throttling
     this.findNodeRateLimit = new Map(); // Rate limit find_node requests per peer
-    this.findNodeMinInterval = 500; // Minimum 500ms between find_node to same peer (optimized for pub-sub performance)
+    this.findNodeMinInterval = 2000; // FIXED: 2 seconds instead of 500ms to reduce message flooding
 
     // Sleep/Wake memory protection - DISABLED
     // NOTE: Global message limit removed - relying on per-peer rate limiting and deduplication instead
@@ -2721,22 +2721,42 @@ export class KademliaDHT extends EventEmitter {
         await new Promise(resolve => setTimeout(resolve, 50));
       }
 
-      // Query candidates in parallel
+      // Query candidates in parallel with enhanced inactive tab handling
       const queryPromises = candidates.map(async (node) => {
         contacted.add(node.id.toString());
         activeQueries++;
 
         try {
-          // Differentiated timeout strategy (industry best practice)
-          // Connected peers: 10s timeout (should respond in <100ms, but conservative)
-          // Disconnected peers: 3s timeout (covers connection establishment + query)
-          const isConnected = this.isPeerConnected(node.id.toString());
+          // ENHANCED: Fast failure detection for inactive tabs
+          const peerId = node.id.toString();
+          const peerNode = this.routingTable.getNode(peerId);
+          const isConnected = this.isPeerConnected(peerId);
+          
+          // Aggressive timeout for inactive browser tabs (fail fast)
+          let queryTimeout = 10000; // Default 10s for connected peers
+          if (peerNode?.metadata?.nodeType === 'browser' && peerNode.metadata?.tabVisible === false) {
+            queryTimeout = 1000; // Only 1 second for inactive tabs
+            console.log(`⚡ Fast timeout (1s) for inactive tab ${peerId.substring(0, 8)}...`);
+          } else if (!isConnected) {
+            queryTimeout = 3000; // 3s for disconnected peers
+          }
+
           const queryOptions = {
             ...options,
-            timeout: isConnected ? 10000 : 3000
+            timeout: queryTimeout
           };
 
-          const response = await this.sendFindNode(node.id.toString(), target, queryOptions);
+          const response = await this.sendFindNode(peerId, target, queryOptions);
+          
+          // ENHANCED: Update tab visibility on successful response
+          if (peerNode?.metadata?.nodeType === 'browser') {
+            // If we got a response, the tab is likely active
+            if (peerNode.metadata.tabVisible === false) {
+              console.log(`✅ Tab ${peerId.substring(0, 8)}... appears active (got response) - updating metadata`);
+              peerNode.metadata.tabVisible = true;
+            }
+          }
+          
           for (const peer of response.nodes || []) {
             const peerNode = DHTNode.fromCompact(peer);
 
@@ -4015,20 +4035,82 @@ export class KademliaDHT extends EventEmitter {
       throw new Error(`No connection to peer ${peerId}`);
     }
 
+    // CRITICAL FIX: Track failed peers and apply exponential backoff
+    const failureCount = this.failedPeerQueries.get(peerId) || 0;
+    if (failureCount >= 3) {
+      // Apply exponential backoff for repeatedly failing peers
+      const backoffTime = Math.min(1000 * Math.pow(2, failureCount - 3), 30000); // Max 30s backoff
+      const lastFailure = this.peerFailureBackoff.get(peerId) || 0;
+      const timeSinceLastFailure = Date.now() - lastFailure;
+      
+      if (timeSinceLastFailure < backoffTime) {
+        const remainingBackoff = backoffTime - timeSinceLastFailure;
+        console.log(`🚫 Peer ${peerId.substring(0, 8)}... in backoff (${failureCount} failures, ${Math.round(remainingBackoff/1000)}s remaining)`);
+        throw new Error(`Peer in failure backoff - ${Math.round(remainingBackoff/1000)}s remaining`);
+      }
+    }
+
     return new Promise((resolve, reject) => {
       const timeoutHandle = setTimeout(() => {
         this.pendingRequests.delete(message.requestId);
-        // IMPROVEMENT: More specific timeout message
+        
+        // CRITICAL FIX: Track timeout failures and remove unresponsive peers
+        const currentFailures = this.failedPeerQueries.get(peerId) || 0;
+        this.failedPeerQueries.set(peerId, currentFailures + 1);
+        this.peerFailureBackoff.set(peerId, Date.now());
+        
+        console.log(`⏰ ${message.type} timeout for ${peerId.substring(0, 8)}... (${timeout}ms) - failure count: ${currentFailures + 1}`);
+        
+        // ENHANCED: Mark inactive browser tabs immediately on fast timeout
+        const peerNode = this.routingTable.getNode(peerId);
+        if (peerNode?.metadata?.nodeType === 'browser' && timeout <= 1000) {
+          console.log(`📱 Marking browser tab ${peerId.substring(0, 8)}... as inactive due to fast timeout`);
+          peerNode.metadata.tabVisible = false;
+        }
+        
+        // Remove peers with 5+ consecutive failures from routing table
+        if (currentFailures >= 4) {
+          console.log(`🗑️ Removing repeatedly failing peer ${peerId.substring(0, 8)}... from routing table (${currentFailures + 1} failures)`);
+          this.routingTable.removeNode(peerId);
+          
+          // Close the connection to the failing peer
+          const failingPeerNode = this.routingTable.getNode(peerId);
+          if (failingPeerNode?.connectionManager) {
+            failingPeerNode.connectionManager.disconnect();
+          }
+        }
+        
         reject(new Error(`Request timeout for ${message.type} to ${peerId.substring(0, 8)}... (${timeout}ms)`));
       }, timeout);
 
       this.pendingRequests.set(message.requestId, {
         resolve: (response) => {
           clearTimeout(timeoutHandle);
+          
+          // CRITICAL FIX: Reset failure count on successful response
+          if (this.failedPeerQueries.has(peerId)) {
+            console.log(`✅ Peer ${peerId.substring(0, 8)}... responded successfully - resetting failure count`);
+            this.failedPeerQueries.delete(peerId);
+            this.peerFailureBackoff.delete(peerId);
+          }
+          
+          // ENHANCED: Update tab visibility on successful response
+          const peerNode = this.routingTable.getNode(peerId);
+          if (peerNode?.metadata?.nodeType === 'browser' && peerNode.metadata.tabVisible === false) {
+            console.log(`✅ Tab ${peerId.substring(0, 8)}... appears active (got response) - updating metadata`);
+            peerNode.metadata.tabVisible = true;
+          }
+          
           resolve(response);
         },
         reject: (error) => {
           clearTimeout(timeoutHandle);
+          
+          // Track non-timeout failures too
+          const currentFailures = this.failedPeerQueries.get(peerId) || 0;
+          this.failedPeerQueries.set(peerId, currentFailures + 1);
+          this.peerFailureBackoff.set(peerId, Date.now());
+          
           reject(error);
         }
       });
@@ -4037,9 +4119,156 @@ export class KademliaDHT extends EventEmitter {
       this.sendMessage(peerId, message).catch(error => {
         clearTimeout(timeoutHandle);
         this.pendingRequests.delete(message.requestId);
+        
+        // Track send failures
+        const currentFailures = this.failedPeerQueries.get(peerId) || 0;
+        this.failedPeerQueries.set(peerId, currentFailures + 1);
+        this.peerFailureBackoff.set(peerId, Date.now());
+        
         reject(error);
       });
     });
+  }
+
+  /**
+   * Enhanced find_node with parallel redundancy for critical operations
+   * Sends requests to multiple nodes simultaneously and returns first successful response
+   * @param {DHTNodeId|string} targetId - Target to find nodes for
+   * @param {Object} options - Query options
+   * @param {number} [options.redundancy=3] - Number of parallel queries to send
+   * @param {number} [options.fastTimeout=1000] - Fast timeout for inactive tabs
+   * @returns {Promise<Array<DHTNode>>} - Closest nodes found
+   */
+  async findNodeWithRedundancy(targetId, options = {}) {
+    const target = typeof targetId === 'string' ? DHTNodeId.fromString(targetId) : targetId;
+    const redundancy = options.redundancy || 3;
+    const fastTimeout = options.fastTimeout || 1000;
+    
+    console.log(`🔍 Enhanced find_node with ${redundancy}x redundancy for target ${target.toString().substring(0, 8)}...`);
+    
+    // Get closest nodes from routing table
+    const closestNodes = this.routingTable.findClosestNodes(target, redundancy * 2);
+    
+    if (closestNodes.length === 0) {
+      console.warn('⚠️ No nodes available for redundant find_node query');
+      return [];
+    }
+    
+    // Separate connected and disconnected nodes, prioritize connected
+    const connectedNodes = closestNodes.filter(node => this.isPeerConnected(node.id.toString()));
+    const disconnectedNodes = closestNodes.filter(node => !this.isPeerConnected(node.id.toString()));
+    
+    // Select nodes for parallel queries (prefer connected)
+    const selectedNodes = [];
+    
+    // Add connected nodes first
+    for (const node of connectedNodes) {
+      if (selectedNodes.length >= redundancy) break;
+      selectedNodes.push(node);
+    }
+    
+    // Fill remaining slots with disconnected nodes
+    for (const node of disconnectedNodes) {
+      if (selectedNodes.length >= redundancy) break;
+      selectedNodes.push(node);
+    }
+    
+    console.log(`📤 Sending parallel find_node to ${selectedNodes.length} nodes (${connectedNodes.length} connected, ${disconnectedNodes.length} disconnected)`);
+    
+    // Create parallel query promises
+    const queryPromises = selectedNodes.map(async (node, index) => {
+      const peerId = node.id.toString();
+      const peerNode = this.routingTable.getNode(peerId);
+      const isConnected = this.isPeerConnected(peerId);
+      
+      // Use fast timeout for inactive browser tabs
+      let queryTimeout = isConnected ? 5000 : 3000; // Reduced from 10s to 5s for faster response
+      if (peerNode?.metadata?.nodeType === 'browser' && peerNode.metadata?.tabVisible === false) {
+        queryTimeout = fastTimeout;
+        console.log(`⚡ Using fast timeout (${fastTimeout}ms) for inactive tab ${peerId.substring(0, 8)}...`);
+      }
+      
+      try {
+        const startTime = Date.now();
+        const response = await this.sendFindNode(peerId, target, { 
+          ...options, 
+          timeout: queryTimeout 
+        });
+        const duration = Date.now() - startTime;
+        
+        console.log(`✅ Query ${index + 1}/${selectedNodes.length} succeeded in ${duration}ms: ${peerId.substring(0, 8)}... returned ${response.nodes?.length || 0} nodes`);
+        
+        return {
+          success: true,
+          peerId,
+          nodes: response.nodes || [],
+          duration,
+          index
+        };
+      } catch (error) {
+        const duration = Date.now() - startTime;
+        console.log(`❌ Query ${index + 1}/${selectedNodes.length} failed in ${duration}ms: ${peerId.substring(0, 8)}... - ${error.message}`);
+        
+        return {
+          success: false,
+          peerId,
+          error: error.message,
+          duration,
+          index
+        };
+      }
+    });
+    
+    // Wait for all queries to complete
+    const results = await Promise.allSettled(queryPromises);
+    
+    // Process results
+    const successfulResults = results
+      .filter(r => r.status === 'fulfilled' && r.value.success)
+      .map(r => r.value);
+    
+    const failedResults = results
+      .filter(r => r.status === 'fulfilled' && !r.value.success)
+      .map(r => r.value);
+    
+    console.log(`📊 Redundant find_node results: ${successfulResults.length} succeeded, ${failedResults.length} failed`);
+    
+    if (successfulResults.length === 0) {
+      throw new Error(`All ${selectedNodes.length} redundant find_node queries failed`);
+    }
+    
+    // Combine all discovered nodes from successful queries
+    const allDiscoveredNodes = new Map(); // Use Map to deduplicate by ID
+    
+    for (const result of successfulResults) {
+      for (const nodeData of result.nodes) {
+        try {
+          const discoveredNode = DHTNode.fromCompact(nodeData);
+          const nodeId = discoveredNode.id.toString();
+          
+          // Skip ourselves
+          if (nodeId === this.localNodeId.toString()) {
+            continue;
+          }
+          
+          // Add to results (Map automatically deduplicates)
+          allDiscoveredNodes.set(nodeId, discoveredNode);
+          
+          // Add to routing table for future use
+          const addResult = this.routingTable.addNode(discoveredNode);
+          if (addResult) {
+            console.log(`📋 Added discovered node ${nodeId.substring(0, 8)}... to routing table`);
+          }
+        } catch (error) {
+          console.warn(`⚠️ Failed to process discovered node:`, error);
+        }
+      }
+    }
+    
+    const finalNodes = Array.from(allDiscoveredNodes.values());
+    console.log(`✅ Redundant find_node completed: discovered ${finalNodes.length} unique nodes`);
+    
+    return finalNodes;
   }
 
   /**
@@ -4076,17 +4305,25 @@ export class KademliaDHT extends EventEmitter {
       this.pingNodes();
     }, this.options.pingInterval);
 
-    // Background maintenance: Connect to routing table entries (every 30 seconds)
-    // This ensures routing_table_size == active_connections (Kademlia compliance)
+    // FIXED: Background maintenance with configurable interval to reduce message flooding
+    // Routing table maintenance interval should be proportional to network size
+    const routingMaintenanceInterval = Math.max(180 * 1000, this.options.pingInterval * 3); // Min 3 minutes or 3x ping interval
     setInterval(() => {
       this.maintainRoutingTableConnections();
-    }, 30 * 1000); // 30 seconds
+    }, routingMaintenanceInterval);
 
-    // IMPROVEMENT: Periodic stale connection cleanup (every 60 seconds)
-    // Proactively removes connections that appear connected but are unresponsive
+    // FIXED: Stale connection cleanup with longer interval to reduce overhead
+    const staleCleanupInterval = Math.max(300 * 1000, this.options.pingInterval * 5); // Min 5 minutes or 5x ping interval
     setInterval(() => {
       this.cleanupStaleConnections();
-    }, 60 * 1000); // 60 seconds
+    }, staleCleanupInterval);
+
+    console.log(`🔧 DHT maintenance intervals configured:`);
+    console.log(`   Ping: ${this.options.pingInterval / 1000}s`);
+    console.log(`   Routing maintenance: ${routingMaintenanceInterval / 1000}s`);
+    console.log(`   Stale cleanup: ${staleCleanupInterval / 1000}s`);
+    console.log(`   Aggressive refresh: ${this.options.aggressiveRefreshInterval / 1000}s`);
+    console.log(`   Standard refresh: ${this.options.standardRefreshInterval / 1000}s`);
   }
 
   /**
