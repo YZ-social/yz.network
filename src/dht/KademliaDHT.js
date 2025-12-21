@@ -42,6 +42,14 @@ export class KademliaDHT extends EventEmitter {
       ...options
     };
 
+    // Adaptive ping intervals: start aggressive, then back off as network stabilizes
+    this.adaptivePingInterval = {
+      startup: 30 * 1000,      // 30 seconds during startup
+      lowConnectivity: 60 * 1000,  // 1 minute when few connections
+      stable: this.options.pingInterval  // 5 minutes when network is stable
+    };
+    this.currentPingInterval = this.adaptivePingInterval.startup;
+
     // Generate or use provided node ID
     if (options.nodeId instanceof DHTNodeId) {
       this.localNodeId = options.nodeId;
@@ -4300,10 +4308,9 @@ export class KademliaDHT extends EventEmitter {
       this.cleanup();
     }, this.options.expireInterval / 10);
 
-    // Periodic ping
-    setInterval(() => {
-      this.pingNodes();
-    }, this.options.pingInterval);
+    // Adaptive ping maintenance - starts aggressive, backs off as network stabilizes
+    this.pingMaintenanceTimer = null;
+    this.startAdaptivePingMaintenance();
 
     // FIXED: Background maintenance with configurable interval to reduce message flooding
     // Routing table maintenance interval should be proportional to network size
@@ -4319,7 +4326,7 @@ export class KademliaDHT extends EventEmitter {
     }, staleCleanupInterval);
 
     console.log(`🔧 DHT maintenance intervals configured:`);
-    console.log(`   Ping: ${this.options.pingInterval / 1000}s`);
+    console.log(`   Ping: ${this.currentPingInterval / 1000}s (adaptive: ${this.adaptivePingInterval.startup / 1000}s -> ${this.adaptivePingInterval.stable / 1000}s)`);
     console.log(`   Routing maintenance: ${routingMaintenanceInterval / 1000}s`);
     console.log(`   Stale cleanup: ${staleCleanupInterval / 1000}s`);
     console.log(`   Aggressive refresh: ${this.options.aggressiveRefreshInterval / 1000}s`);
@@ -5259,10 +5266,54 @@ export class KademliaDHT extends EventEmitter {
   }
 
   /**
+   * Start adaptive ping maintenance - aggressive during startup, backs off as network stabilizes
+   */
+  startAdaptivePingMaintenance() {
+    const schedulePingMaintenance = () => {
+      if (this.pingMaintenanceTimer) {
+        clearTimeout(this.pingMaintenanceTimer);
+      }
+      
+      this.pingMaintenanceTimer = setTimeout(() => {
+        this.pingNodes();
+        this.updatePingInterval();
+        schedulePingMaintenance(); // Schedule next ping
+      }, this.currentPingInterval);
+    };
+    
+    schedulePingMaintenance();
+  }
+
+  /**
+   * Update ping interval based on network connectivity
+   */
+  updatePingInterval() {
+    const connectedPeers = this.getConnectedPeers().length;
+    const totalPeers = this.routingTable.getAllNodes().length;
+    
+    let newInterval;
+    if (connectedPeers < 3) {
+      // Very low connectivity - use startup interval
+      newInterval = this.adaptivePingInterval.startup;
+    } else if (connectedPeers < 8 || totalPeers < 10) {
+      // Low connectivity - use intermediate interval
+      newInterval = this.adaptivePingInterval.lowConnectivity;
+    } else {
+      // Good connectivity - use stable interval
+      newInterval = this.adaptivePingInterval.stable;
+    }
+    
+    if (newInterval !== this.currentPingInterval) {
+      console.log(`🔄 Adaptive ping interval: ${this.currentPingInterval / 1000}s -> ${newInterval / 1000}s (${connectedPeers} connected peers)`);
+      this.currentPingInterval = newInterval;
+    }
+  }
+
+  /**
    * Ping nodes that need pinging
    */
   async pingNodes() {
-    const nodesToPing = this.routingTable.getNodesToPing(this.options.pingInterval);
+    const nodesToPing = this.routingTable.getNodesToPing(this.currentPingInterval);
 
     for (const node of nodesToPing) {
       if (this.isPeerConnected(node.id.toString())) {
