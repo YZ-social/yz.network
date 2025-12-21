@@ -7,7 +7,7 @@
  * responding properly and identify any obvious issues.
  */
 
-import { NodeDHTClient } from '../src/NodeDHTClient.js';
+import { NodeDHTClient } from '../src/node/NodeDHTClient.js';
 
 class OracleNodeHealthCheck {
   constructor() {
