@@ -325,12 +325,27 @@ export class PassiveBridgeNode extends NodeDHTClient {
   async handlePeerConnected(peerId) {
     console.log(`🔍 Bridge observing peer connection: ${peerId.substring(0, 8)}...`);
 
+    // CRITICAL FIX: Don't track temporary bootstrap server connections as peers
+    // Bootstrap connections have IDs like "bootstrap_1234567890" and are temporary
+    if (peerId.startsWith('bootstrap_')) {
+      console.log(`🔗 Ignoring temporary bootstrap connection ${peerId.substring(0, 16)}... (not a DHT peer)`);
+      return;
+    }
+
+    // Validate that peerId is a valid 40-character hex DHT node ID
+    if (!peerId || peerId.length !== 40 || !/^[0-9a-f]{40}$/i.test(peerId)) {
+      console.warn(`⚠️ Invalid DHT node ID format: ${peerId} - not tracking as peer`);
+      return;
+    }
+
     this.connectedPeers.set(peerId, {
       connectedAt: Date.now(),
       lastSeen: Date.now(),
       messageCount: 0,
       isActive: true
     });
+
+    console.log(`✅ Added DHT peer ${peerId.substring(0, 8)}... to connectedPeers (now ${this.connectedPeers.size} total peers)`);
 
     // OPEN NETWORK MODE: Auto-grant membership tokens to connecting DHT nodes
     if (this.isOpenNetwork) {
