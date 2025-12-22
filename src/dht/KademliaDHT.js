@@ -1822,10 +1822,15 @@ export class KademliaDHT extends EventEmitter {
    * Handle incoming message from peer
    */
   async handlePeerMessage(peerId, message) {
-    // Track received data if metrics tracker is available
+    // Track received data if metrics tracker is available (fail-safe)
     if (this.metricsTracker && this.metricsTracker.recordDataTransfer) {
-      const messageSize = JSON.stringify(message).length;
-      this.metricsTracker.recordDataTransfer(0, messageSize);
+      try {
+        const messageSize = JSON.stringify(message).length;
+        this.metricsTracker.recordDataTransfer(0, messageSize);
+      } catch (error) {
+        // Silently ignore metrics errors to prevent breaking message handling
+        console.warn(`⚠️ Metrics tracking failed for received message: ${error.message}`);
+      }
     }
 
     // Sleep/Wake detection for debugging (global message limit DISABLED)
@@ -3365,15 +3370,23 @@ export class KademliaDHT extends EventEmitter {
    */
   async sendMessage(peerId, message) {
     try {
-      // Calculate message size for data transfer tracking
-      const messageSize = JSON.stringify(message).length;
+      // Calculate message size for data transfer tracking (fail-safe)
+      let messageSize = 0;
+      if (this.metricsTracker && this.metricsTracker.recordDataTransfer) {
+        try {
+          messageSize = JSON.stringify(message).length;
+        } catch (error) {
+          // Silently ignore metrics errors to prevent breaking message sending
+          console.warn(`⚠️ Metrics tracking failed for sent message: ${error.message}`);
+        }
+      }
       
       // Use getOrCreatePeerNode to ensure connection manager exists
       const peerNode = this.getOrCreatePeerNode(peerId);
       const result = await peerNode.connectionManager.sendMessage(peerId, message);
       
-      // Track data sent if metrics tracker is available
-      if (this.metricsTracker && this.metricsTracker.recordDataTransfer) {
+      // Track data sent if metrics tracker is available and size was calculated
+      if (this.metricsTracker && this.metricsTracker.recordDataTransfer && messageSize > 0) {
         this.metricsTracker.recordDataTransfer(messageSize, 0);
       }
       

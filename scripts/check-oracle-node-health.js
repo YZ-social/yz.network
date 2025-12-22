@@ -27,7 +27,7 @@ class OracleNodeHealthCheck {
     try {
       // Create a minimal DHT client
       this.client = new NodeDHTClient({
-        bootstrapServers: ['wss://imeyouwe.com/bootstrap'],
+        bootstrapServers: ['wss://imeyouwe.com/ws'],
         // Minimal intervals to reduce noise
         aggressiveRefreshInterval: 300000, // 5 minutes
         findNodeMinInterval: 2000, // 2 seconds
