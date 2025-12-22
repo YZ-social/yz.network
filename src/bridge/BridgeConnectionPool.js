@@ -250,27 +250,22 @@ class BridgeConnection extends EventEmitter {
       throw new Error(`Bridge connection not ready: ${this.state}`);
     }
 
-    try {
-      // Use multiplexer to create and track the request
-      const result = await this.multiplexer.createRequest(request, {
-        timeout: options.timeout || this.requestTimeout,
-        priority: options.priority || 0
-      });
+    // Use multiplexer to create and track the request
+    const result = await this.multiplexer.createRequest(request, {
+      timeout: options.timeout || this.requestTimeout,
+      priority: options.priority || 0
+    });
 
-      // Process the request through the queue
-      const queuedRequest = this.multiplexer.processNext();
-      if (queuedRequest) {
-        // Send the request over WebSocket
-        this.ws.send(JSON.stringify(queuedRequest));
-        this.lastActivity = Date.now();
-        this.resetIdleTimer();
-      }
-
-      return result;
-      
-    } catch (error) {
-      throw error;
+    // Process the request through the queue
+    const queuedRequest = this.multiplexer.processNext();
+    if (queuedRequest) {
+      // Send the request over WebSocket
+      this.ws.send(JSON.stringify(queuedRequest));
+      this.lastActivity = Date.now();
+      this.resetIdleTimer();
     }
+
+    return result;
   }
 
   /**

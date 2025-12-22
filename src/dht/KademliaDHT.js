@@ -4232,8 +4232,8 @@ export class KademliaDHT extends EventEmitter {
         console.log(`⚡ Using fast timeout (${fastTimeout}ms) for inactive tab ${peerId.substring(0, 8)}...`);
       }
       
+      const startTime = Date.now();
       try {
-        const startTime = Date.now();
         const response = await this.sendFindNode(peerId, target, { 
           ...options, 
           timeout: queryTimeout 

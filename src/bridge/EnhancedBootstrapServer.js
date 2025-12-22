@@ -985,7 +985,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
               const fullAddress = protocol + bridgeAddr;
               
               bridgeNodePeers.push({
-                nodeId: `bridge_${bridgeAddr.replace(/[:.\/]/g, '_')}`, // Temporary ID - will fail!
+                nodeId: `bridge_${bridgeAddr.replace(/[:.]/g, '_')}`, // Temporary ID - will fail!
                 metadata: {
                   isBridgeNode: true,
                   nodeType: 'bridge',
