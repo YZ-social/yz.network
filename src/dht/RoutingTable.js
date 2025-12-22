@@ -527,6 +527,19 @@ export class RoutingTable {
    * Handle peerConnected event by creating and configuring DHTNode
    */
   handlePeerConnected(peerId, connection, manager, initiator, metadata = null) {
+    // CRITICAL FIX: Don't add temporary bootstrap server connections to DHT routing table
+    // Bootstrap connections have IDs like "bootstrap_1234567890" and are temporary
+    if (peerId.startsWith('bootstrap_')) {
+      console.log(`🔗 Ignoring temporary bootstrap connection ${peerId.substring(0, 16)}... in RoutingTable (not a DHT peer)`);
+      return;
+    }
+
+    // Validate that peerId is a valid 40-character hex DHT node ID
+    if (!peerId || peerId.length !== 40 || !/^[0-9a-f]{40}$/i.test(peerId)) {
+      console.warn(`⚠️ Invalid DHT node ID format in RoutingTable: ${peerId} - not adding to routing table`);
+      return;
+    }
+
     // Check if node already exists
     const existingNode = this.getNode(peerId);
     if (existingNode) {
