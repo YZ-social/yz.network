@@ -21,8 +21,6 @@ services:
     volumes:
       # Mount bundle-hash.json for version checking synchronization
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
-    extra_hosts:
-      - "imeyouwe.com:172.18.0.3"  # Route to nginx container for internal Docker connections
     networks:
       - yz-network
     restart: unless-stopped
@@ -53,8 +51,6 @@ services:
       - NODE_NAME=bridge-node-1
       - METRICS_PORT=9090
       - BRIDGE_AUTH=${BRIDGE_AUTH:-default-bridge-auth-key}
-    extra_hosts:
-      - "imeyouwe.com:172.18.0.3"  # Route to nginx container for internal Docker connections
     networks:
       - yz-network
     restart: unless-stopped
@@ -88,8 +84,6 @@ services:
       - NODE_NAME=bridge-node-2
       - METRICS_PORT=9090
       - BRIDGE_AUTH=${BRIDGE_AUTH:-default-bridge-auth-key}
-    extra_hosts:
-      - "imeyouwe.com:172.18.0.3"  # Route to nginx container for internal Docker connections
     networks:
       - yz-network
     restart: unless-stopped
@@ -123,8 +117,6 @@ services:
       - METRICS_PORT=9090
       - NODE_NAME=genesis-node
       - OPEN_NETWORK=true
-    extra_hosts:
-      - "imeyouwe.com:172.18.0.3"  # Route to nginx container for internal Docker connections
     networks:
       - yz-network
     restart: unless-stopped
@@ -190,7 +182,10 @@ services:
       # Mount Let's Encrypt certificates
       - /etc/letsencrypt:/etc/letsencrypt:ro
     networks:
-      - yz-network
+      yz-network:
+        aliases:
+          - imeyouwe.com
+          - www.imeyouwe.com
     restart: unless-stopped
     depends_on:
       - bootstrap
@@ -213,3 +208,9 @@ services:
 networks:
   yz-network:
     driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: yz-bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/16  # Use different subnet to avoid conflicts with hardcoded IPs
