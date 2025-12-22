@@ -1076,14 +1076,22 @@ export class PassiveBridgeNode extends NodeDHTClient {
     }
 
     // Add to connected peers tracking
-    this.connectedPeers.set(peerId, {
-      connectedAt: Date.now(),
-      lastSeen: Date.now(),
-      messageCount: 0,
-      isActive: true,
-      connectionType: 'websocket',
-      source: 'connection_manager'
-    });
+    // CRITICAL FIX: Don't track temporary bootstrap server connections as peers
+    // Bootstrap connections have IDs like "bootstrap_1234567890" and are temporary
+    if (peerId.startsWith('bootstrap_')) {
+      console.log(`🔗 Ignoring temporary bootstrap connection ${peerId.substring(0, 16)}... in handleIncomingConnection (not a DHT peer)`);
+      // Still set up DHT connection handling below, but don't add to connectedPeers
+    } else {
+      this.connectedPeers.set(peerId, {
+        connectedAt: Date.now(),
+        lastSeen: Date.now(),
+        messageCount: 0,
+        isActive: true,
+        connectionType: 'websocket',
+        source: 'connection_manager'
+      });
+      console.log(`✅ Added DHT peer ${peerId.substring(0, 8)}... to connectedPeers (now ${this.connectedPeers.size} total peers)`);
+    }
 
     // Only set up DHT connection for actual DHT peers, not bootstrap servers
     if (!peerId.startsWith('bootstrap_')) {
