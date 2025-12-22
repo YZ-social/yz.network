@@ -31,20 +31,6 @@ export class RoutingTable {
       throw new Error('Must provide DHTNode instance');
     }
 
-    // CRITICAL FIX: Don't add temporary bootstrap server connections to DHT routing table
-    // Bootstrap connections have IDs like "bootstrap_1234567890" and are temporary
-    const nodeIdStr = node.id.toString();
-    if (nodeIdStr.startsWith('bootstrap_')) {
-      console.log(`🔗 Ignoring temporary bootstrap connection ${nodeIdStr.substring(0, 16)}... in RoutingTable.addNode (not a DHT peer)`);
-      return false;
-    }
-
-    // Validate that nodeId is a valid 40-character hex DHT node ID
-    if (!nodeIdStr || nodeIdStr.length !== 40 || !/^[0-9a-f]{40}$/i.test(nodeIdStr)) {
-      console.warn(`⚠️ Invalid DHT node ID format in RoutingTable.addNode: ${nodeIdStr} - not adding to routing table`);
-      return false;
-    }
-
     // Don't add ourselves
     if (node.id.equals(this.localNodeId)) {
       return false;
@@ -53,6 +39,13 @@ export class RoutingTable {
     // CRITICAL VALIDATION: Only add nodes that appear to be legitimate peer node IDs
     // Phantom peer detection: reject IDs that look like storage keys or random hashes
     const nodeIdStr = node.id.toString();
+
+    // CRITICAL FIX: Filter out bootstrap server connections from DHT routing table
+    // Bootstrap connections should not be treated as DHT peers
+    if (nodeIdStr.startsWith('bootstrap_')) {
+      console.log(`🔗 Filtering bootstrap connection ${nodeIdStr.substring(0, 16)}... from DHT routing table`);
+      return false;
+    }
 
     // Basic validation - node IDs should be reasonably distributed, not sequential or patterned
     // This is a heuristic check for phantom peers that might be storage key hashes
