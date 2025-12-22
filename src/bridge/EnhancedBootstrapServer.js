@@ -140,6 +140,10 @@ export class EnhancedBootstrapServer extends EventEmitter {
     // Start maintenance tasks
     this.startMaintenanceTasks();
 
+    // FIXED: Add delay before initializing connection pool to allow bridge nodes to fully start
+    console.log('⏳ Waiting for bridge nodes to be ready...');
+    await new Promise(resolve => setTimeout(resolve, 5000)); // 5 second delay
+
     // Initialize bridge connection pool
     console.log('🔗 Initializing bridge connection pool...');
     await this.bridgePool.initialize();

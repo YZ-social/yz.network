@@ -96,7 +96,19 @@ class BridgeConnection extends EventEmitter {
         wsUrl = `${protocol}://${this.bridgeAddr}`;
       }
 
-      this.ws = new WebSocket(wsUrl);
+      // FIXED: Add WebSocket options to handle SSL and connection issues
+      const wsOptions = {
+        // Disable SSL certificate validation for internal Docker connections
+        rejectUnauthorized: false,
+        // Add connection timeout
+        handshakeTimeout: 10000,
+        // Add headers for better proxy compatibility
+        headers: {
+          'User-Agent': 'YZ-Bootstrap-ConnectionPool/1.0'
+        }
+      };
+
+      this.ws = new WebSocket(wsUrl, wsOptions);
       this.setupWebSocketHandlers();
 
       // Wait for connection to be established
@@ -295,10 +307,12 @@ class BridgeConnection extends EventEmitter {
       return;
     }
 
-    // Exponential backoff: 1s, 2s, 4s, 8s, 16s, max 30s
-    const delay = Math.min(1000 * Math.pow(2, this.connectAttempts - 1), 30000);
+    // FIXED: Add longer delays for 502 errors (nginx/proxy issues)
+    // Exponential backoff: 2s, 4s, 8s, 16s, 32s, max 60s
+    const baseDelay = 2000; // Start with 2 seconds instead of 1
+    const delay = Math.min(baseDelay * Math.pow(2, this.connectAttempts - 1), 60000); // Max 60s instead of 30s
     
-    console.log(`⏰ Reconnecting to ${this.bridgeAddr} in ${delay}ms`);
+    console.log(`⏰ Reconnecting to ${this.bridgeAddr} in ${delay}ms (attempt ${this.connectAttempts}/${this.maxReconnectAttempts})`);
     
     this.reconnectTimer = setTimeout(() => {
       this.connect().catch(() => {
@@ -469,18 +483,44 @@ export class BridgeConnectionPool extends EventEmitter {
   async initialize() {
     console.log(`🚀 Initializing connections to ${this.bridgeNodes.length} bridge nodes`);
     
-    const connectionPromises = Array.from(this.connections.values()).map(connection => {
-      // Connect (don't wait for all to succeed)
-      return connection.connect().catch(error => {
-        console.warn(`⚠️ Initial connection failed for ${connection.bridgeAddr}: ${error.message}`);
+    // FIXED: Add retry logic for connection pool initialization
+    const maxRetries = 3;
+    let attempt = 0;
+    
+    while (attempt < maxRetries) {
+      attempt++;
+      console.log(`🔄 Connection pool initialization attempt ${attempt}/${maxRetries}`);
+      
+      const connectionPromises = Array.from(this.connections.values()).map(connection => {
+        // Connect (don't wait for all to succeed)
+        return connection.connect().catch(error => {
+          console.warn(`⚠️ Initial connection failed for ${connection.bridgeAddr}: ${error.message}`);
+        });
       });
-    });
+      
+      // Wait for all connection attempts to complete (some may fail)
+      await Promise.allSettled(connectionPromises);
+      
+      const readyConnections = this.getReadyConnections().length;
+      console.log(`🏊 Connection pool attempt ${attempt}: ${readyConnections}/${this.bridgeNodes.length} bridges ready`);
+      
+      // If we have at least one connection, consider it successful
+      if (readyConnections > 0) {
+        console.log(`✅ Connection pool initialized successfully with ${readyConnections} bridge(s)`);
+        return;
+      }
+      
+      // If no connections and not the last attempt, wait and retry
+      if (attempt < maxRetries) {
+        const delay = attempt * 2000; // 2s, 4s, 6s
+        console.log(`⏳ No connections established, retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
     
-    // Wait for all connection attempts to complete (some may fail)
-    await Promise.allSettled(connectionPromises);
-    
-    const readyConnections = this.getReadyConnections().length;
-    console.log(`🏊 Connection pool initialized: ${readyConnections}/${this.bridgeNodes.length} bridges ready`);
+    // If we get here, all attempts failed
+    console.warn(`⚠️ Connection pool initialization completed with 0/${this.bridgeNodes.length} bridges ready`);
+    console.warn(`   Bridge connections will be retried automatically in the background`);
   }
 
   /**
