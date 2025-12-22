@@ -6,6 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { PROTOCOL_VERSION, BUILD_ID, checkVersionCompatibility } from '../version.js';
+import { BridgeConnectionPool } from './BridgeConnectionPool.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -45,8 +46,20 @@ export class EnhancedBootstrapServer extends EventEmitter {
     this.server = null;
     this.genesisAssigned = false; // Track if genesis has been successfully assigned (for open network mode)
 
-    // Bridge node management (stateless)
+    // Bridge node management (persistent connections)
     this.pendingInvitations = new Map(); // invitationId -> { inviterNodeId, inviteeNodeId, inviterWs, inviteeWs, status, timestamp }
+    
+    // Initialize bridge connection pool
+    this.bridgePool = new BridgeConnectionPool(
+      this.options.bridgeNodes,
+      this.options.bridgeAuth,
+      {
+        maxReconnectAttempts: 10,
+        idleTimeout: 300000, // 5 minutes
+        healthCheckInterval: 30000, // 30 seconds
+        requestTimeout: this.options.bridgeTimeout || 30000
+      }
+    );
 
     // Authentication management
     this.authChallenges = new Map(); // nodeId -> { nonce, timestamp, publicKey, ws }
@@ -126,6 +139,11 @@ export class EnhancedBootstrapServer extends EventEmitter {
 
     // Start maintenance tasks
     this.startMaintenanceTasks();
+
+    // Initialize bridge connection pool
+    console.log('🔗 Initializing bridge connection pool...');
+    await this.bridgePool.initialize();
+    console.log('✅ Bridge connection pool initialized');
 
     this.isStarted = true;
 
@@ -616,7 +634,11 @@ export class EnhancedBootstrapServer extends EventEmitter {
     }
     this.peers.clear();
 
-    // No persistent bridge connections to clean up
+    // Shutdown bridge connection pool
+    if (this.bridgePool) {
+      console.log('🔗 Shutting down bridge connection pool...');
+      this.bridgePool.shutdown();
+    }
 
     // Close WebSocket server
     if (this.server) {
@@ -635,18 +657,14 @@ export class EnhancedBootstrapServer extends EventEmitter {
   }
 
   /**
-   * Test bridge node availability (stateless)
-   * FIXED: No persistent connections - just test reachability
+   * Test bridge node availability (using connection pool)
+   * UPDATED: Uses connection pool status instead of stateless testing
    */
   async testBridgeAvailability() {
     console.log(`🌉 Testing availability of ${this.options.bridgeNodes.length} bridge nodes`);
 
-    const availabilityPromises = this.options.bridgeNodes.map(bridgeAddr =>
-      this.testSingleBridge(bridgeAddr)
-    );
-
-    const results = await Promise.allSettled(availabilityPromises);
-    const availableBridges = results.filter(r => r.status === 'fulfilled').length;
+    const availabilityStatus = await this.checkBridgeAvailability();
+    const availableBridges = availabilityStatus.available;
 
     if (availableBridges === 0) {
       console.warn('⚠️ No bridge nodes available - reconnection services unavailable');
@@ -658,164 +676,30 @@ export class EnhancedBootstrapServer extends EventEmitter {
   }
 
   /**
-   * Test a single bridge node availability (stateless)
-   * FIXED: Use proper authentication for availability test
-   */
-  async testSingleBridge(bridgeAddr) {
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error(`Bridge availability test timeout: ${bridgeAddr}`));
-      }, 5000);
-
-      try {
-        // Handle both ws:// and wss:// protocols
-        const wsUrl = bridgeAddr.startsWith('ws://') || bridgeAddr.startsWith('wss://') 
-          ? bridgeAddr 
-          : `ws://${bridgeAddr}`;
-        const ws = new WebSocket(wsUrl);
-        let authenticated = false;
-
-        ws.onopen = () => {
-          // Send bootstrap authentication (required for bridge nodes)
-          ws.send(JSON.stringify({
-            type: 'bootstrap_auth',
-            auth_token: this.options.bridgeAuth,
-            bootstrapServer: `${this.options.host}:${this.options.port}`
-          }));
-        };
-
-        ws.onmessage = (event) => {
-          try {
-            const message = JSON.parse(event.data);
-            
-            if (message.type === 'auth_success' && !authenticated) {
-              authenticated = true;
-              // Bridge is available and authenticated successfully
-              clearTimeout(timeout);
-              ws.close(1000, 'Availability test complete');
-              resolve(bridgeAddr);
-            }
-          } catch (error) {
-            clearTimeout(timeout);
-            ws.close(1000, 'Parse error');
-            reject(new Error(`Bridge response parse error: ${bridgeAddr}`));
-          }
-        };
-
-        ws.onerror = (error) => {
-          clearTimeout(timeout);
-          reject(new Error(`Bridge unavailable: ${bridgeAddr}`));
-        };
-
-        ws.onclose = () => {
-          // Connection closed - this is expected after successful test
-        };
-
-      } catch (error) {
-        clearTimeout(timeout);
-        reject(error);
-      }
-    });
-  }
-
-  /**
-   * Request onboarding peer from bridge (stateless)
-   * FIXED: Connect, request, get response, disconnect
+   * Request onboarding peer from bridge (using connection pool)
+   * UPDATED: Uses persistent connections with request multiplexing
    */
   async requestOnboardingPeerFromBridge(nodeId, metadata) {
-    console.log(`🎲 Requesting onboarding peer for ${nodeId.substring(0, 8)}... from bridge nodes`);
+    console.log(`🎲 Requesting onboarding peer for ${nodeId.substring(0, 8)}... from bridge pool`);
 
-    // Try each bridge node until one responds
-    for (const bridgeAddr of this.options.bridgeNodes) {
-      try {
-        const result = await this.queryBridgeForOnboardingPeer(bridgeAddr, nodeId, metadata);
-        if (result) {
-          console.log(`✅ Got onboarding peer from bridge ${bridgeAddr}`);
-          return result;
-        }
-      } catch (error) {
-        console.warn(`❌ Bridge ${bridgeAddr} failed: ${error.message}`);
-        continue; // Try next bridge
+    try {
+      // Use connection pool to send request with automatic load balancing
+      const result = await this.bridgePool.sendRequest({
+        type: 'get_onboarding_peer',
+        newNodeId: nodeId,
+        newNodeMetadata: metadata
+      });
+
+      if (result && result.inviterPeerId) {
+        console.log(`✅ Got onboarding peer from bridge pool: ${result.inviterPeerId.substring(0, 8)}...`);
+        return result;
+      } else {
+        throw new Error('Invalid response from bridge pool');
       }
+    } catch (error) {
+      console.warn(`❌ Bridge pool request failed: ${error.message}`);
+      throw new Error('No bridge nodes available for onboarding coordination');
     }
-
-    throw new Error('No bridge nodes available for onboarding coordination');
-  }
-
-  /**
-   * Query a single bridge for onboarding peer (stateless)
-   */
-  async queryBridgeForOnboardingPeer(bridgeAddr, nodeId, metadata) {
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error(`Bridge query timeout: ${bridgeAddr}`));
-      }, 10000);
-
-      try {
-        // Handle protocol prefix correctly - don't add if already present
-        let wsUrl;
-        if (bridgeAddr.startsWith('wss://') || bridgeAddr.startsWith('ws://')) {
-          wsUrl = bridgeAddr;
-        } else {
-          // Use WSS for external addresses, WS for internal Docker addresses
-          const protocol = bridgeAddr.includes('imeyouwe.com') ? 'wss' : 'ws';
-          wsUrl = `${protocol}://${bridgeAddr}`;
-        }
-        const ws = new WebSocket(wsUrl);
-        let authenticated = false;
-
-        ws.onopen = () => {
-          // Authenticate first
-          ws.send(JSON.stringify({
-            type: 'bootstrap_auth',
-            auth_token: this.options.bridgeAuth,
-            bootstrapServer: `${this.options.host}:${this.options.port}`
-          }));
-        };
-
-        ws.onmessage = (event) => {
-          try {
-            const message = JSON.parse(event.data);
-
-            if (message.type === 'auth_success' && !authenticated) {
-              authenticated = true;
-              // Now request onboarding peer
-              ws.send(JSON.stringify({
-                type: 'get_onboarding_peer',
-                newNodeId: nodeId,
-                newNodeMetadata: metadata,
-                requestId: `onboarding_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-              }));
-            } else if (message.type === 'onboarding_peer_response') {
-              clearTimeout(timeout);
-              ws.close(1000, 'Request complete');
-              resolve(message.data);
-            } else if (message.type === 'error') {
-              clearTimeout(timeout);
-              ws.close(1000, 'Request failed');
-              reject(new Error(message.message || 'Bridge request failed'));
-            }
-          } catch (error) {
-            clearTimeout(timeout);
-            ws.close(1000, 'Parse error');
-            reject(error);
-          }
-        };
-
-        ws.onerror = (error) => {
-          clearTimeout(timeout);
-          reject(new Error(`Bridge connection failed: ${bridgeAddr}`));
-        };
-
-        ws.onclose = () => {
-          // Connection closed - this is expected after request
-        };
-
-      } catch (error) {
-        clearTimeout(timeout);
-        reject(error);
-      }
-    });
   }
 
   /**
@@ -864,23 +748,33 @@ export class EnhancedBootstrapServer extends EventEmitter {
   }
 
   /**
-   * Check bridge availability (stateless)
-   * FIXED: No persistent connections - test availability on demand
+   * Check bridge availability (using connection pool)
+   * UPDATED: Uses connection pool status instead of stateless testing
    */
   async checkBridgeAvailability() {
-    console.log(`🏥 Testing bridge availability (${this.options.bridgeNodes.length} bridges)...`);
+    console.log(`🏥 Checking bridge availability via connection pool...`);
 
-    const availabilityPromises = this.options.bridgeNodes.map(async (bridgeAddr) => {
-      try {
-        await this.testSingleBridge(bridgeAddr);
-        return { address: bridgeAddr, available: true };
-      } catch (error) {
-        return { address: bridgeAddr, available: false, error: error.message };
+    const poolStats = this.bridgePool.getStats();
+    const connectionStats = poolStats.connections;
+    
+    const results = [];
+    let availableCount = 0;
+    
+    for (const [address, stats] of Object.entries(connectionStats)) {
+      const isAvailable = stats.state === 'READY' || stats.state === 'IDLE';
+      if (isAvailable) {
+        availableCount++;
       }
-    });
-
-    const results = await Promise.allSettled(availabilityPromises);
-    const availableCount = results.filter(r => r.status === 'fulfilled' && r.value.available).length;
+      
+      results.push({
+        address,
+        available: isAvailable,
+        state: stats.state,
+        lastActivity: stats.lastActivity,
+        connectAttempts: stats.connectAttempts
+      });
+    }
+    
     const unavailableCount = this.options.bridgeNodes.length - availableCount;
 
     console.log(`🏥 Bridge availability: ${availableCount} available, ${unavailableCount} unavailable`);
@@ -889,7 +783,8 @@ export class EnhancedBootstrapServer extends EventEmitter {
       available: availableCount,
       unavailable: unavailableCount,
       total: this.options.bridgeNodes.length,
-      results: results.map(r => r.status === 'fulfilled' ? r.value : { available: false, error: 'Promise rejected' })
+      results,
+      poolStats
     };
   }
 
