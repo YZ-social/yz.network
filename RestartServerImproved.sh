@@ -51,21 +51,23 @@ done
 # Step 6: Wait for bridge nodes to connect and be healthy
 echo ""
 echo "⏳ Step 6: Waiting for bridge nodes to connect..."
-sleep 15
+sleep 30  # Increased from 15 to 30 seconds
 
-# Check bridge node health
+# Check bridge node health with longer timeout
 for bridge in "bridge-node-1:9083" "bridge-node-2:9084"; do
     bridge_name=$(echo $bridge | cut -d: -f1)
     bridge_port=$(echo $bridge | cut -d: -f2)
     
     echo "🔍 Checking $bridge_name health..."
-    for i in {1..20}; do
+    for i in {1..60}; do  # Increased from 20 to 60 attempts (60 seconds total)
         if curl -s http://localhost:$bridge_port/health > /dev/null 2>&1; then
             echo "✅ $bridge_name is healthy"
             break
         fi
-        if [ $i -eq 20 ]; then
-            echo "⚠️ $bridge_name not responding, but continuing..."
+        if [ $i -eq 60 ]; then
+            echo "⚠️ $bridge_name not responding after 60 seconds"
+            echo "🚨 CRITICAL: Bridge node $bridge_name may be failing"
+            echo "🚨 Bridge nodes are essential DHT infrastructure - manual intervention required"
         fi
         sleep 1
     done
@@ -74,43 +76,38 @@ done
 # Step 7: Wait for genesis node and bridge invitation process
 echo ""
 echo "⏳ Step 7: Waiting for genesis node and bridge invitations..."
-sleep 30
+sleep 45  # Increased from 30 to 45 seconds for more reliable bridge invitation
 
 # Check if genesis node is connected and bridge invitations were sent
 echo "🔍 Checking genesis connection and bridge invitations..."
-GENESIS_LOGS=$(docker logs yz-genesis-node --tail 50 2>&1)
-BOOTSTRAP_LOGS=$(docker logs yz-bootstrap-server --tail 100 2>&1)
+GENESIS_LOGS=$(docker logs yz-genesis-node --tail 100 2>&1)  # Increased from 50 to 100 lines
+BOOTSTRAP_LOGS=$(docker logs yz-bootstrap-server --tail 200 2>&1)  # Increased from 100 to 200 lines
 
 # Check if genesis is connected
 if echo "$BOOTSTRAP_LOGS" | grep -q "Genesis peer.*designated"; then
     echo "✅ Genesis peer designated successfully"
 else
     echo "⚠️ Genesis peer designation not found in logs"
+    echo "🔍 Checking for alternative genesis indicators..."
+    if echo "$BOOTSTRAP_LOGS" | grep -q "createNewDHT.*true"; then
+        echo "✅ Genesis mode is enabled - genesis should be designated on first connection"
+    fi
 fi
 
 # Check if bridge invitations were sent
 if echo "$BOOTSTRAP_LOGS" | grep -q "Bridge invitation request sent"; then
     echo "✅ Bridge invitation requests sent"
+elif echo "$BOOTSTRAP_LOGS" | grep -q "Bridge.*connected"; then
+    echo "✅ Bridge nodes connected (invitation may be automatic)"
 else
-    echo "⚠️ Bridge invitation requests not found - may need manual intervention"
-fi
-
-# Check if bridge nodes accepted invitations
-if echo "$GENESIS_LOGS" | grep -q "Successfully invited bridge node"; then
-    echo "✅ Bridge nodes successfully invited"
-else
-    echo "⚠️ Bridge node invitations not confirmed - checking bridge logs..."
+    echo "⚠️ Bridge invitation status unclear - checking bridge connection status..."
     
-    # Check bridge node logs for invitation acceptance
-    BRIDGE1_LOGS=$(docker logs yz-bridge-node-1 --tail 50 2>&1)
-    BRIDGE2_LOGS=$(docker logs yz-bridge-node-2 --tail 50 2>&1)
-    
-    if echo "$BRIDGE1_LOGS" | grep -q "Bridge node successfully accepted invitation" || 
-       echo "$BRIDGE2_LOGS" | grep -q "Bridge node successfully accepted invitation"; then
-        echo "✅ At least one bridge node accepted invitation"
+    # Check if bridge nodes are connected to DHT
+    if echo "$GENESIS_LOGS" | grep -q "bridge.*connected" || echo "$BOOTSTRAP_LOGS" | grep -q "bridge.*ready"; then
+        echo "✅ Bridge nodes appear to be connected to DHT"
     else
-        echo "❌ Bridge nodes may not have accepted invitations"
-        echo "💡 Manual intervention may be required"
+        echo "🚨 CRITICAL: Bridge nodes may not be properly connected to DHT"
+        echo "🚨 This will break network formation and connection pool"
     fi
 fi
 
@@ -124,19 +121,9 @@ if echo "$BRIDGE_TEST" | grep -q '"healthy":true'; then
     echo "✅ Bridge nodes are available for onboarding"
 else
     echo "⚠️ Bridge nodes may not be fully available"
-    echo "🔄 Attempting bridge reconnection..."
-    
-    # Restart bridge nodes to trigger reconnection
-    docker restart yz-bridge-node-1 yz-bridge-node-2
-    sleep 20
-    
-    # Re-test
-    BRIDGE_TEST=$(curl -s http://localhost:8080/bridge-health 2>/dev/null || echo '{"healthy":false}')
-    if echo "$BRIDGE_TEST" | grep -q '"healthy":true'; then
-        echo "✅ Bridge nodes recovered after restart"
-    else
-        echo "❌ Bridge nodes still not available - proceeding anyway"
-    fi
+    echo "🚨 WARNING: Not restarting bridge nodes - they cannot rejoin DHT after genesis formation"
+    echo "💡 Bridge connection pool will retry automatically in the background"
+    echo "💡 If bridge nodes are truly broken, manual intervention is required"
 fi
 
 # Step 9: Start DHT nodes
@@ -166,18 +153,28 @@ docker compose -f docker-compose.nodes.yml ps
 # Check for unhealthy nodes
 echo ""
 echo "🔍 Checking for unhealthy nodes..."
-UNHEALTHY_NODES=$(docker ps --filter "health=unhealthy" --format "{{.Names}}" | grep -E "(dht-node|bridge|bootstrap|genesis)" || true)
+UNHEALTHY_NODES=$(docker ps --filter "health=unhealthy" --format "{{.Names}}" | grep -E "(dht-node|bootstrap|genesis)" || true)
+UNHEALTHY_BRIDGES=$(docker ps --filter "health=unhealthy" --format "{{.Names}}" | grep -E "bridge" || true)
+
+if [ -n "$UNHEALTHY_BRIDGES" ]; then
+    echo "⚠️ Found unhealthy bridge nodes:"
+    echo "$UNHEALTHY_BRIDGES"
+    echo "🚨 WARNING: Bridge nodes cannot be safely restarted after genesis formation!"
+    echo "🚨 Bridge nodes that are restarted will lose DHT membership and cannot rejoin."
+    echo "🚨 This will break the connection pool and network formation."
+    echo "💡 Bridge nodes will be left running - check logs manually if needed."
+fi
 
 if [ -n "$UNHEALTHY_NODES" ]; then
-    echo "⚠️ Found unhealthy nodes:"
+    echo "⚠️ Found unhealthy non-bridge nodes:"
     echo "$UNHEALTHY_NODES"
     echo ""
-    echo "🔧 Attempting to restart unhealthy nodes..."
+    echo "🔧 Attempting to restart unhealthy non-bridge nodes..."
     echo "$UNHEALTHY_NODES" | xargs -r docker restart
     sleep 10
     echo "✅ Restart attempt completed"
 else
-    echo "✅ All nodes are healthy"
+    echo "✅ All non-bridge nodes are healthy"
 fi
 
 # Step 12: Final verification
