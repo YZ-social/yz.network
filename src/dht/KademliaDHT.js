@@ -3967,48 +3967,76 @@ export class KademliaDHT extends EventEmitter {
     // CRITICAL FIX: Always store in peerNodes Map for connection management
     this.peerNodes.set(peerId, peerNode);
 
-    // Create connection manager if not exists (for outgoing connections)
-    if (!peerNode.connectionManager) {
-      // Create new CLIENT connection manager for outgoing connections
-      // For incoming connections, RoutingTable.handlePeerConnected() sets this up
-      console.log(`🔗 Creating CLIENT connection manager for outgoing connection to ${peerId.substring(0, 8)}...`);
-      peerNode.connectionManager = ConnectionManagerFactory.getManagerForPeer(peerId, peerNode.metadata);
+    // CRITICAL FIX: Check if node already has a connection manager from incoming connection
+    // For incoming connections, RoutingTable.handlePeerConnected() already set up the dedicated manager
+    // We should NOT create a new manager - that would cause DHT message handlers to be attached
+    // to the wrong manager (the new one instead of the dedicated one that receives messages)
+    if (peerNode.connectionManager) {
+      console.log(`🔄 Using existing connection manager for ${peerId.substring(0, 8)}... (already set up by incoming connection)`);
       
-      // CRITICAL FIX: Pass routing table reference to connection manager for inactive tab filtering
-      if (peerNode.connectionManager) {
-        peerNode.connectionManager.routingTable = this.routingTable;
+      // Still need to ensure DHT message handler is attached to the EXISTING manager
+      if (!peerNode.connectionManager._dhtMessageHandlerAttached) {
+        console.log(`🔧 Attaching DHT message handler to EXISTING manager for ${peerId.substring(0, 8)}`);
+        peerNode.connectionManager.on('dhtMessage', ({ peerId: msgPeerId, message }) => {
+          console.log(`📥 DHT MESSAGE HANDLER CALLED: ${message.type} from ${msgPeerId.substring(0, 8)} (manager: ${peerNode.connectionManager.constructor.name})`);
+          this.handlePeerMessage(msgPeerId, message);
+        });
+        peerNode.connectionManager._dhtMessageHandlerAttached = true;
+        console.log(`📨 DHT message handler attached to existing manager for ${peerId.substring(0, 8)}`);
       }
-
-      // CRITICAL: Initialize connection manager with local node ID
-      peerNode.connectionManager.initialize(this.localNodeId.toString());
-
-      // CRITICAL: Set up event handler for peerConnected events (only once)
-      if (this.connectionManagerEventHandler && !peerNode.connectionManager._dhtEventHandlersAttached) {
-        peerNode.connectionManager.on('peerConnected', this.connectionManagerEventHandler);
-        console.log(`🔗 Event handler attached to ${peerNode.connectionManager.constructor.name} for ${peerId.substring(0, 8)}`);
-
-        // CRITICAL: Set up event handler for metadata updates (WebRTC handshakes)
-        peerNode.connectionManager.on('metadataUpdated', (event) => {
-          console.log(`📋 Updating routing table metadata for ${event.peerId.substring(0, 8)}`);
-          const node = this.routingTable.getNode(event.peerId);
-          if (node) {
-            // Update the routing table node with the new metadata
-            for (const [key, value] of Object.entries(event.metadata)) {
-              node.setMetadata(key, value);
-              console.log(`📋 Updated routing table: ${key}=${value} for ${event.peerId.substring(0, 8)}`);
-            }
+      
+      // Still set up DHT signaling callback if needed
+      if (typeof peerNode.connectionManager.setDHTSignalingCallback === 'function') {
+        peerNode.connectionManager.setDHTSignalingCallback(async (method, targetPeer, connectionInfo) => {
+          if (method === 'sendConnectionRequest') {
+            return await this.sendConnectionRequest(targetPeer, connectionInfo);
+          } else {
+            console.warn(`Unknown DHT signaling method: ${method}`);
           }
         });
-
-        // Mark that event handlers are attached to prevent duplicates
-        peerNode.connectionManager._dhtEventHandlersAttached = true;
-
-        // CRITICAL: Let RoutingTable set up WebRTC signal handler (proper separation of concerns)
-        // RoutingTable owns connection management, not DHT
-        this.routingTable.setupConnectionManagerHandlers(peerNode.connectionManager, peerId);
-      } else if (peerNode.connectionManager._dhtEventHandlersAttached) {
-        console.log(`🔄 Reusing existing event handlers for ${peerId.substring(0, 8)} (already attached)`);
       }
+      
+      return peerNode;
+    }
+
+    // Create connection manager only for outgoing connections (no existing manager)
+    console.log(`🔗 Creating CLIENT connection manager for outgoing connection to ${peerId.substring(0, 8)}...`);
+    peerNode.connectionManager = ConnectionManagerFactory.getManagerForPeer(peerId, peerNode.metadata);
+    
+    // CRITICAL FIX: Pass routing table reference to connection manager for inactive tab filtering
+    if (peerNode.connectionManager) {
+      peerNode.connectionManager.routingTable = this.routingTable;
+    }
+
+    // CRITICAL: Initialize connection manager with local node ID
+    peerNode.connectionManager.initialize(this.localNodeId.toString());
+
+    // CRITICAL: Set up event handler for peerConnected events (only once)
+    if (this.connectionManagerEventHandler && !peerNode.connectionManager._dhtEventHandlersAttached) {
+      peerNode.connectionManager.on('peerConnected', this.connectionManagerEventHandler);
+      console.log(`🔗 Event handler attached to ${peerNode.connectionManager.constructor.name} for ${peerId.substring(0, 8)}`);
+
+      // CRITICAL: Set up event handler for metadata updates (WebRTC handshakes)
+      peerNode.connectionManager.on('metadataUpdated', (event) => {
+        console.log(`📋 Updating routing table metadata for ${event.peerId.substring(0, 8)}`);
+        const node = this.routingTable.getNode(event.peerId);
+        if (node) {
+          // Update the routing table node with the new metadata
+          for (const [key, value] of Object.entries(event.metadata)) {
+            node.setMetadata(key, value);
+            console.log(`📋 Updated routing table: ${key}=${value} for ${event.peerId.substring(0, 8)}`);
+          }
+        }
+      });
+
+      // Mark that event handlers are attached to prevent duplicates
+      peerNode.connectionManager._dhtEventHandlersAttached = true;
+
+      // CRITICAL: Let RoutingTable set up WebRTC signal handler (proper separation of concerns)
+      // RoutingTable owns connection management, not DHT
+      this.routingTable.setupConnectionManagerHandlers(peerNode.connectionManager, peerId);
+    } else if (peerNode.connectionManager._dhtEventHandlersAttached) {
+      console.log(`🔄 Reusing existing event handlers for ${peerId.substring(0, 8)} (already attached)`);
     }
 
     // CRITICAL: Set up DHT signaling callback for connection requests (connection-agnostic)
