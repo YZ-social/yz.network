@@ -45,7 +45,7 @@ async function diagnoseConnectionIssues() {
   try {
     // Test creating a DHT node
     const dht = new KademliaDHT({
-      bootstrapServers: ['ws://localhost:8080']
+      bootstrapServers: ['wss://imeyouwe.com/ws']
     });
     
     console.log(`✅ KademliaDHT created successfully`);
@@ -66,7 +66,7 @@ async function diagnoseConnectionIssues() {
     try {
       const nodeClient = new NodeDHTClient({
         port: 0, // Use random port
-        bootstrapServers: ['ws://localhost:8080']
+        bootstrapServers: ['wss://imeyouwe.com/ws']
       });
       
       console.log(`✅ NodeDHTClient created successfully`);

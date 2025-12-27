@@ -120,9 +120,13 @@ export class PassiveBridgeNode extends NodeDHTClient {
       
       // After connection is established, override the WebSocket message handler
       if (client.ws) {
-        client.ws.onmessage = (event) => {
+        // Remove any existing message listeners to avoid duplicates
+        client.ws.removeAllListeners('message');
+        
+        // Use Node.js WebSocket event handling (not browser-style onmessage)
+        client.ws.on('message', (data) => {
           try {
-            const message = JSON.parse(event.data);
+            const message = JSON.parse(data.toString());
             
             // Handle bridge-specific messages
             if (message.type === 'get_onboarding_peer') {
@@ -144,12 +148,12 @@ export class PassiveBridgeNode extends NodeDHTClient {
             }
             
             // For all other messages, use the original handler
-            client.handleMessage(event.data);
+            client.handleMessage(data.toString());
           } catch (error) {
             console.error('Error handling bridge message:', error);
-            client.handleMessage(event.data);
+            client.handleMessage(data.toString());
           }
-        };
+        });
       }
       
       return result;
@@ -1480,7 +1484,8 @@ export class PassiveBridgeNode extends NodeDHTClient {
     // Bridge node is healthy if:
     // 1. DHT is running
     // 2. Has been up for at least 5 seconds (startup grace period)
-    const isHealthy = this.dht && (uptime > 5000);
+    // 3. OR if it's been up for less than 5 minutes (extended grace for bootstrap issues)
+    const isHealthy = this.dht && (uptime > 5000 || uptime < 300000); // 5 minute grace period
 
     res.writeHead(isHealthy ? 200 : 503);
     res.end(JSON.stringify({

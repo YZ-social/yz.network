@@ -3,8 +3,8 @@ import { PROTOCOL_VERSION, BUILD_ID } from '../version.js';
 
 // Polyfill WebSocket for Node.js environment
 let WebSocketImpl;
-if (typeof WebSocket === 'undefined') {
-  // Node.js environment - dynamically import 'ws' package
+if (typeof process !== 'undefined' && process.versions && process.versions.node) {
+  // Node.js environment - always use 'ws' package
   const wsModule = await import('ws');
   WebSocketImpl = wsModule.default || wsModule.WebSocket || wsModule;
   console.log('🔧 Using ws package for WebSocket in Node.js');
@@ -71,81 +71,162 @@ export class BootstrapClient extends EventEmitter {
           reject(new Error('Connection timeout'));
         }, this.options.timeout);
 
-        this.ws.onopen = () => {
-          clearTimeout(timeout);
-          console.log('Connected to bootstrap server');
-          this.isConnected = true;
-          this.reconnectAttempts = 0;
+        // Use Node.js WebSocket event handling for ws library
+        if (typeof process !== 'undefined' && process.versions && process.versions.node) {
+          // Node.js environment - use EventEmitter pattern
+          this.ws.on('open', () => {
+            clearTimeout(timeout);
+            console.log('Connected to bootstrap server');
+            this.isConnected = true;
+            this.reconnectAttempts = 0;
 
-          // Small delay to ensure WebSocket is fully ready
-          setTimeout(() => {
-            try {
-              // Register with server (include metadata like public key, protocol version, and build ID)
-              this.sendMessage({
-                type: 'register',
-                nodeId: this.localNodeId,
-                protocolVersion: PROTOCOL_VERSION,
-                buildId: BUILD_ID,
-                timestamp: Date.now(),
-                metadata: this.metadata || {}
-              });
-            } catch (error) {
-              console.error('Failed to send registration message:', error);
-              if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                this.ws.close();
+            // Small delay to ensure WebSocket is fully ready
+            setTimeout(() => {
+              try {
+                // Register with server (include metadata like public key, protocol version, and build ID)
+                this.sendMessage({
+                  type: 'register',
+                  nodeId: this.localNodeId,
+                  protocolVersion: PROTOCOL_VERSION,
+                  buildId: BUILD_ID,
+                  timestamp: Date.now(),
+                  metadata: this.metadata || {}
+                });
+              } catch (error) {
+                console.error('Failed to send registration message:', error);
+                if (this.ws && this.ws.readyState === 1) { // WebSocket.OPEN = 1
+                  this.ws.close();
+                }
+                reject(error);
+                return;
               }
+            }, 10); // 10ms delay to ensure WebSocket is fully ready
+
+            this.emit('connected', { serverUrl });
+            resolve();
+          });
+
+          this.ws.on('message', (data) => {
+            this.handleMessage(data.toString());
+          });
+
+          this.ws.on('close', (code, reason) => {
+            clearTimeout(timeout);
+            this.isConnected = false;
+            this.isRegistered = false; // Reset registration state on disconnect
+            console.log(`Bootstrap connection closed: ${code} ${reason}`);
+
+            if (!this.isDestroyed) {
+              this.emit('disconnected', { code, reason: reason.toString() });
+
+              // Only auto-reconnect if enabled and this wasn't a deliberate disconnect
+              if (!this.deliberateDisconnect && this.autoReconnectEnabled) {
+                this.scheduleReconnect();
+              } else {
+                if (this.deliberateDisconnect) {
+                  console.log('Deliberate disconnect - not auto-reconnecting');
+                  this.deliberateDisconnect = false; // Reset flag
+                }
+                if (!this.autoReconnectEnabled) {
+                  console.log('Auto-reconnect disabled - staying disconnected');
+                }
+              }
+            }
+          });
+
+          this.ws.on('error', (error) => {
+            clearTimeout(timeout);
+            console.error('Bootstrap connection error:', error);
+
+            if (!this.isConnected) {
               reject(error);
-              return;
-            }
-          }, 10); // 10ms delay to ensure WebSocket is fully ready
-
-          this.emit('connected', { serverUrl });
-          resolve();
-        };
-
-        this.ws.onmessage = (event) => {
-          this.handleMessage(event.data);
-        };
-
-        this.ws.onclose = (event) => {
-          clearTimeout(timeout);
-          this.isConnected = false;
-          this.isRegistered = false; // Reset registration state on disconnect
-          console.log(`Bootstrap connection closed: ${event.code} ${event.reason}`);
-
-          if (!this.isDestroyed) {
-            this.emit('disconnected', { code: event.code, reason: event.reason });
-
-            // Only auto-reconnect if enabled and this wasn't a deliberate disconnect
-            if (!this.deliberateDisconnect && this.autoReconnectEnabled) {
-              this.scheduleReconnect();
             } else {
-              if (this.deliberateDisconnect) {
-                console.log('Deliberate disconnect - not auto-reconnecting');
-                this.deliberateDisconnect = false; // Reset flag
-              }
-              if (!this.autoReconnectEnabled) {
-                console.log('Auto-reconnect disabled - staying disconnected');
+              // Safely emit error with proper error object
+              try {
+                this.emit('error', error instanceof Error ? error : new Error('WebSocket connection error'));
+              } catch (emitError) {
+                console.error('Error emitting bootstrap error:', emitError);
               }
             }
-          }
-        };
+          });
+        } else {
+          // Browser environment - use onXXX handlers
+          this.ws.onopen = () => {
+            clearTimeout(timeout);
+            console.log('Connected to bootstrap server');
+            this.isConnected = true;
+            this.reconnectAttempts = 0;
 
-        this.ws.onerror = (error) => {
-          clearTimeout(timeout);
-          console.error('Bootstrap connection error:', error);
+            // Small delay to ensure WebSocket is fully ready
+            setTimeout(() => {
+              try {
+                // Register with server (include metadata like public key, protocol version, and build ID)
+                this.sendMessage({
+                  type: 'register',
+                  nodeId: this.localNodeId,
+                  protocolVersion: PROTOCOL_VERSION,
+                  buildId: BUILD_ID,
+                  timestamp: Date.now(),
+                  metadata: this.metadata || {}
+                });
+              } catch (error) {
+                console.error('Failed to send registration message:', error);
+                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                  this.ws.close();
+                }
+                reject(error);
+                return;
+              }
+            }, 10); // 10ms delay to ensure WebSocket is fully ready
 
-          if (!this.isConnected) {
-            reject(error);
-          } else {
-            // Safely emit error with proper error object
-            try {
-              this.emit('error', error instanceof Error ? error : new Error('WebSocket connection error'));
-            } catch (emitError) {
-              console.error('Error emitting bootstrap error:', emitError);
+            this.emit('connected', { serverUrl });
+            resolve();
+          };
+
+          this.ws.onmessage = (event) => {
+            this.handleMessage(event.data);
+          };
+
+          this.ws.onclose = (event) => {
+            clearTimeout(timeout);
+            this.isConnected = false;
+            this.isRegistered = false; // Reset registration state on disconnect
+            console.log(`Bootstrap connection closed: ${event.code} ${event.reason}`);
+
+            if (!this.isDestroyed) {
+              this.emit('disconnected', { code: event.code, reason: event.reason });
+
+              // Only auto-reconnect if enabled and this wasn't a deliberate disconnect
+              if (!this.deliberateDisconnect && this.autoReconnectEnabled) {
+                this.scheduleReconnect();
+              } else {
+                if (this.deliberateDisconnect) {
+                  console.log('Deliberate disconnect - not auto-reconnecting');
+                  this.deliberateDisconnect = false; // Reset flag
+                }
+                if (!this.autoReconnectEnabled) {
+                  console.log('Auto-reconnect disabled - staying disconnected');
+                }
+              }
             }
-          }
-        };
+          };
+
+          this.ws.onerror = (error) => {
+            clearTimeout(timeout);
+            console.error('Bootstrap connection error:', error);
+
+            if (!this.isConnected) {
+              reject(error);
+            } else {
+              // Safely emit error with proper error object
+              try {
+                this.emit('error', error instanceof Error ? error : new Error('WebSocket connection error'));
+              } catch (emitError) {
+                console.error('Error emitting bootstrap error:', emitError);
+              }
+            }
+          };
+        }
 
       } catch (error) {
         reject(error);

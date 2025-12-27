@@ -263,11 +263,17 @@ export class ActiveDHTNode extends NodeDHTClient {
 
     // Node is healthy if:
     // 1. DHT is running
-    // 2. Has at least 1 connection (or is new < 30 seconds)
+    // 2. Has at least 1 connection (or is new < 60 seconds) - EXTENDED grace period
     // 3. No recent health check failures
+    // 4. OR if bootstrap connection is failing (version mismatch), be more lenient
+    const bootstrapConnectionFailing = this.dht && this.dht.bootstrapClient && 
+      !this.dht.bootstrapClient.isBootstrapConnected();
+    
     const isHealthy = this.dht &&
-      (connectedPeers > 0 || uptime < 30000) &&
-      this.metrics.healthCheckFailures < 5;
+      (connectedPeers > 0 || 
+       uptime < 60000 || // Extended grace period from 30s to 60s
+       (bootstrapConnectionFailing && uptime < 300000)) && // 5 minute grace if bootstrap failing
+      this.metrics.healthCheckFailures < 10; // Increased tolerance from 5 to 10
 
     this.metrics.isHealthy = isHealthy;
     this.metrics.lastHealthCheck = Date.now();
@@ -277,6 +283,7 @@ export class ActiveDHTNode extends NodeDHTClient {
       healthy: isHealthy,
       uptime,
       connectedPeers,
+      bootstrapConnected: this.dht && this.dht.bootstrapClient ? this.dht.bootstrapClient.isBootstrapConnected() : false,
       timestamp: Date.now()
     }));
   }

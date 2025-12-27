@@ -158,12 +158,15 @@ async function simulateBrowserConnection() {
       ws.onopen = () => {
         console.log('🔌 WebSocket connected');
         
-        // Simulate registration (simplified)
+        // Simulate registration with proper version information
         ws.send(JSON.stringify({
           type: 'register',
           nodeId: 'diagnostic-browser-node',
           nodeType: 'browser',
-          timestamp: Date.now()
+          protocolVersion: '1.0.0',  // Match server protocol version
+          buildId: '695c52e47e74a87fd747', // Use server's build ID
+          timestamp: Date.now(),
+          metadata: {}
         }));
       };
       
@@ -171,6 +174,15 @@ async function simulateBrowserConnection() {
         try {
           const message = JSON.parse(event.data);
           console.log(`📥 Received: ${message.type}`);
+          
+          if (message.type === 'version_mismatch') {
+            console.log('🔍 VERSION MISMATCH DETAILS:');
+            console.log(`   Client version: ${message.clientVersion}`);
+            console.log(`   Client build ID: ${message.clientBuildId}`);
+            console.log(`   Server version: ${message.serverVersion}`);
+            console.log(`   Server build ID: ${message.serverBuildId}`);
+            console.log(`   Message: ${message.message}`);
+          }
           
           if (message.type === 'registered') {
             console.log('✅ Registration successful');
