@@ -113,7 +113,9 @@ export class ConnectionManager extends EventEmitter {
       throw new Error('ConnectionManager is destroyed');
     }
 
-    if (!this.isConnected(peerId)) {
+    // REFACTORED: isConnected() no longer takes peerId parameter (single-connection architecture)
+    // Each manager handles exactly one peer, so we just check if the connection is open
+    if (!this.isConnected()) {
       throw new Error(`No connection to peer ${peerId}`);
     }
 

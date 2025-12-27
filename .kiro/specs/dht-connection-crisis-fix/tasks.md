@@ -15,7 +15,7 @@ This implementation plan focuses on immediate diagnosis and recovery of the DHT 
   - Identify which specific connection managers are failing
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5_
 
-- [-] 2. Debug bootstrap server connection failures
+- [x] 2. Debug bootstrap server connection failures
   - Investigate "Unexpected server response: 200" errors
   - Test bootstrap WebSocket connections from both internal Docker nodes and external clients
   - Verify bootstrap server accepts connections on correct ports with proper headers
@@ -23,7 +23,7 @@ This implementation plan focuses on immediate diagnosis and recovery of the DHT 
   - Debug why nodes can't establish initial bootstrap connections
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5_
 
-- [ ] 3. Verify WebSocket connection path integrity
+- [x] 3. Verify WebSocket connection path integrity
   - Test browser → Node.js DHT WebSocket connections
   - Verify DHT message routing over WebSocket connections
   - Check if data transfer metrics interfere with WebSocket message processing
