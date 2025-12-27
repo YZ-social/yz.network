@@ -155,16 +155,19 @@ async function simulateBrowserConnection() {
         });
       }, 30000);
       
-      ws.onopen = () => {
+      ws.onopen = async () => {
         console.log('🔌 WebSocket connected');
+        
+        // Import current version info
+        const { PROTOCOL_VERSION, BUILD_ID } = await import('../src/version.js');
         
         // Simulate registration with proper version information
         ws.send(JSON.stringify({
-          type: 'register',
+          type: 'register_peer',
           nodeId: 'diagnostic-browser-node',
           nodeType: 'browser',
-          protocolVersion: '1.0.0',  // Match server protocol version
-          buildId: '695c52e47e74a87fd747', // Use server's build ID
+          protocolVersion: PROTOCOL_VERSION,
+          buildId: BUILD_ID,
           timestamp: Date.now(),
           metadata: {}
         }));
