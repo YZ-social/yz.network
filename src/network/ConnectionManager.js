@@ -235,14 +235,17 @@ export class ConnectionManager extends EventEmitter {
    */
   async handlePing(peerId, message) {
     try {
+      console.log(`🏓 Handling ping from ${peerId.substring(0, 8)}... (requestId: ${message.requestId})`);
+      console.log(`   Manager: ${this.constructor.name}, peerId: ${this.peerId?.substring(0, 8) || 'none'}, connected: ${this.isConnected()}`);
       await this.sendMessage(peerId, {
         type: 'pong',
         requestId: message.requestId,
         timestamp: Date.now(),
         originalTimestamp: message.timestamp
       });
+      console.log(`✅ Sent pong to ${peerId.substring(0, 8)}...`);
     } catch (error) {
-      console.error(`Failed to send pong to ${peerId}:`, error);
+      console.error(`❌ Failed to send pong to ${peerId.substring(0, 8)}...: ${error.message}`);
     }
   }
 
