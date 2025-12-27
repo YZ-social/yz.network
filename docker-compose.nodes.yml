@@ -3,6 +3,9 @@
 #
 # Ports: 8086-8100 (WebSocket), 9096-9110 (Metrics)
 # WSS Paths: /node1 through /node15
+#
+# IMPORTANT: All nodes mount bundle-hash.json for version synchronization
+# This ensures nodes use the same BUILD_ID as the bootstrap server
 
 services:
   # DHT Node 1
@@ -21,6 +24,9 @@ services:
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-1
       - OPEN_NETWORK=true
+    volumes:
+      # Mount bundle-hash.json for version checking synchronization
+      - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
@@ -55,6 +61,9 @@ services:
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-2
       - OPEN_NETWORK=true
+    volumes:
+      # Mount bundle-hash.json for version checking synchronization
+      - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
@@ -89,6 +98,9 @@ services:
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-3
       - OPEN_NETWORK=true
+    volumes:
+      # Mount bundle-hash.json for version checking synchronization
+      - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
@@ -123,6 +135,9 @@ services:
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-4
       - OPEN_NETWORK=true
+    volumes:
+      # Mount bundle-hash.json for version checking synchronization
+      - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
@@ -157,6 +172,9 @@ services:
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-5
       - OPEN_NETWORK=true
+    volumes:
+      # Mount bundle-hash.json for version checking synchronization
+      - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
@@ -191,6 +209,9 @@ services:
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-6
       - OPEN_NETWORK=true
+    volumes:
+      # Mount bundle-hash.json for version checking synchronization
+      - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
@@ -225,6 +246,9 @@ services:
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-7
       - OPEN_NETWORK=true
+    volumes:
+      # Mount bundle-hash.json for version checking synchronization
+      - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
@@ -259,6 +283,9 @@ services:
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-8
       - OPEN_NETWORK=true
+    volumes:
+      # Mount bundle-hash.json for version checking synchronization
+      - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
@@ -293,6 +320,9 @@ services:
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-9
       - OPEN_NETWORK=true
+    volumes:
+      # Mount bundle-hash.json for version checking synchronization
+      - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
@@ -327,6 +357,9 @@ services:
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-10
       - OPEN_NETWORK=true
+    volumes:
+      # Mount bundle-hash.json for version checking synchronization
+      - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
@@ -361,6 +394,9 @@ services:
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-11
       - OPEN_NETWORK=true
+    volumes:
+      # Mount bundle-hash.json for version checking synchronization
+      - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
@@ -395,6 +431,9 @@ services:
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-12
       - OPEN_NETWORK=true
+    volumes:
+      # Mount bundle-hash.json for version checking synchronization
+      - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
@@ -429,6 +468,9 @@ services:
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-13
       - OPEN_NETWORK=true
+    volumes:
+      # Mount bundle-hash.json for version checking synchronization
+      - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
@@ -463,6 +505,9 @@ services:
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-14
       - OPEN_NETWORK=true
+    volumes:
+      # Mount bundle-hash.json for version checking synchronization
+      - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
@@ -497,6 +542,9 @@ services:
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-15
       - OPEN_NETWORK=true
+    volumes:
+      # Mount bundle-hash.json for version checking synchronization
+      - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
