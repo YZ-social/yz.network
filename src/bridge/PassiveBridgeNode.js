@@ -1132,9 +1132,18 @@ export class PassiveBridgeNode extends NodeDHTClient {
       return; // Return early - bootstrap_auth is handled, don't route to handleBootstrapMessage
     }
 
-    // Check if this is a bootstrap server peer
-    if (peerId.startsWith('bootstrap_')) {
-      console.log(`🔍 Routing to handleBootstrapMessage: ${message.type}`);
+    // Check if this is a bootstrap server peer (either by ID prefix or if it's in authorized list)
+    if (peerId.startsWith('bootstrap_') || this.authorizedBootstrap.has(peerId)) {
+      console.log(`🔍 Routing to handleBootstrapMessage: ${message.type} from ${peerId.substring(0, 8)}...`);
+      this.handleBootstrapMessage(peerId, message);
+      return;
+    }
+
+    // FIXED: Check for bootstrap server messages by message type
+    // Bootstrap server sends specific message types that only it should send
+    const bootstrapMessageTypes = ['get_onboarding_peer', 'connect_genesis_peer', 'validate_reconnection', 'invitation_for_bridge', 'ping'];
+    if (bootstrapMessageTypes.includes(message.type)) {
+      console.log(`🔍 Detected bootstrap message type ${message.type} from ${peerId.substring(0, 8)}... - routing to handleBootstrapMessage`);
       this.handleBootstrapMessage(peerId, message);
       return;
     }
