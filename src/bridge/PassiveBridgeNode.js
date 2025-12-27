@@ -105,6 +105,40 @@ export class PassiveBridgeNode extends NodeDHTClient {
   }
 
   /**
+   * Override bootstrap client creation to handle bridge-specific messages
+   */
+  createBootstrapClient() {
+    const client = super.createBootstrapClient();
+    
+    // Store reference to bootstrap client for sending responses
+    this.bootstrapClient = client;
+    
+    // Override the message handler to handle bridge-specific messages
+    const originalHandleMessage = client.handleMessage.bind(client);
+    client.handleMessage = (message) => {
+      // Handle bridge-specific messages
+      if (message.type === 'get_onboarding_peer') {
+        this.handleGetOnboardingPeer('bootstrap_server', message);
+        return;
+      } else if (message.type === 'connect_genesis_peer') {
+        this.handleGenesisConnection('bootstrap_server', message);
+        return;
+      } else if (message.type === 'validate_reconnection') {
+        this.handleReconnectionValidation('bootstrap_server', message);
+        return;
+      } else if (message.type === 'invitation_for_bridge') {
+        this.handleBridgeInvitation('bootstrap_server', message);
+        return;
+      }
+      
+      // For all other messages, use the original handler
+      originalHandleMessage(message);
+    };
+    
+    return client;
+  }
+
+  /**
    * Setup DHT event handlers for passive observation
    */
   setupDHTEventHandlers() {
@@ -841,9 +875,13 @@ export class PassiveBridgeNode extends NodeDHTClient {
     };
 
     try {
-      const manager = this.getManagerForPeer(bootstrapPeerId);
-      await manager.sendMessage(bootstrapPeerId, message);
-      console.log(`📤 Sent onboarding result to bootstrap (success=${success})`);
+      // Use bootstrap client to send response back to bootstrap server
+      if (this.bootstrapClient) {
+        this.bootstrapClient.sendMessage(message);
+        console.log(`📤 Sent onboarding result to bootstrap via BootstrapClient (success=${success})`);
+      } else {
+        console.error(`❌ No bootstrap client available to send onboarding result`);
+      }
     } catch (sendError) {
       console.error(`❌ Failed to send onboarding result: ${sendError.message}`);
     }
