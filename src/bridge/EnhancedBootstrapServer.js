@@ -149,10 +149,12 @@ export class EnhancedBootstrapServer extends EventEmitter {
     console.log('⏳ Waiting for bridge nodes to be ready...');
     await new Promise(resolve => setTimeout(resolve, 5000)); // 5 second delay
 
+    // DISABLED: Bridge connection pool - using existing connected bridge nodes instead
     // Initialize bridge connection pool
-    console.log('🔗 Initializing bridge connection pool...');
-    await this.bridgePool.initialize();
-    console.log('✅ Bridge connection pool initialized');
+    // console.log('🔗 Initializing bridge connection pool...');
+    // await this.bridgePool.initialize();
+    // console.log('✅ Bridge connection pool initialized');
+    console.log('🔗 Bridge connection pool disabled - using existing connected bridge nodes');
 
     this.isStarted = true;
 
@@ -685,28 +687,79 @@ export class EnhancedBootstrapServer extends EventEmitter {
   }
 
   /**
-   * Request onboarding peer from bridge (using connection pool)
-   * UPDATED: Uses persistent connections with request multiplexing
+   * Request onboarding peer from bridge (using connected bridge nodes)
+   * FIXED: Uses existing connected bridge nodes instead of connection pool
    */
   async requestOnboardingPeerFromBridge(nodeId, metadata) {
-    console.log(`🎲 Requesting onboarding peer for ${nodeId.substring(0, 8)}... from bridge pool`);
+    console.log(`🎲 Requesting onboarding peer for ${nodeId.substring(0, 8)}... from connected bridge nodes`);
+
+    // Get connected bridge nodes
+    const connectedBridgeNodes = [];
+    for (const [bridgeNodeId, client] of this.connectedClients) {
+      if (client.metadata && client.metadata.isBridgeNode) {
+        connectedBridgeNodes.push({ nodeId: bridgeNodeId, ws: client.ws, metadata: client.metadata });
+      }
+    }
+
+    if (connectedBridgeNodes.length === 0) {
+      throw new Error('No bridge nodes connected');
+    }
+
+    // Select a random bridge node
+    const selectedBridge = connectedBridgeNodes[Math.floor(Math.random() * connectedBridgeNodes.length)];
+    console.log(`🎯 Selected bridge node: ${selectedBridge.nodeId.substring(0, 8)}...`);
 
     try {
-      // Use connection pool to send request with automatic load balancing
-      const result = await this.bridgePool.sendRequest({
+      // Send request directly to connected bridge node
+      const requestId = `onboarding_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const request = {
         type: 'get_onboarding_peer',
+        requestId,
         newNodeId: nodeId,
         newNodeMetadata: metadata
+      };
+
+      console.log(`📨 Sending onboarding request to bridge ${selectedBridge.nodeId.substring(0, 8)}...`);
+      
+      // Send request and wait for response
+      const result = await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Bridge request timeout'));
+        }, 10000); // 10 second timeout
+
+        const responseHandler = (message) => {
+          if (message.type === 'onboarding_peer_response' && message.requestId === requestId) {
+            clearTimeout(timeout);
+            selectedBridge.ws.off('message', responseHandler);
+            
+            if (message.success) {
+              resolve(message.data);
+            } else {
+              reject(new Error(message.error || 'Bridge request failed'));
+            }
+          }
+        };
+
+        selectedBridge.ws.on('message', (data) => {
+          try {
+            const message = JSON.parse(data.toString());
+            responseHandler(message);
+          } catch (error) {
+            // Ignore parse errors
+          }
+        });
+
+        selectedBridge.ws.send(JSON.stringify(request));
       });
 
       if (result && result.inviterPeerId) {
-        console.log(`✅ Got onboarding peer from bridge pool: ${result.inviterPeerId.substring(0, 8)}...`);
+        console.log(`✅ Got onboarding peer from bridge: ${result.inviterPeerId.substring(0, 8)}...`);
         return result;
       } else {
-        throw new Error('Invalid response from bridge pool');
+        throw new Error('Invalid response from bridge');
       }
     } catch (error) {
-      console.warn(`❌ Bridge pool request failed: ${error.message}`);
+      console.warn(`❌ Bridge request failed: ${error.message}`);
       throw new Error('No bridge nodes available for onboarding coordination');
     }
   }
@@ -757,43 +810,41 @@ export class EnhancedBootstrapServer extends EventEmitter {
   }
 
   /**
-   * Check bridge availability (using connection pool)
-   * UPDATED: Uses connection pool status instead of stateless testing
+   * Check bridge availability (using connected bridge nodes)
+   * FIXED: Check existing connected bridge nodes instead of trying to create new connections
    */
   async checkBridgeAvailability() {
-    console.log(`🏥 Checking bridge availability via connection pool...`);
+    console.log(`🏥 Checking bridge availability via connected bridge nodes...`);
 
-    const poolStats = this.bridgePool.getStats();
-    const connectionStats = poolStats.connections;
-    
-    const results = [];
+    // Get connected bridge nodes from existing connections
+    const connectedBridgeNodes = [];
     let availableCount = 0;
     
-    for (const [address, stats] of Object.entries(connectionStats)) {
-      const isAvailable = stats.state === 'READY' || stats.state === 'IDLE';
-      if (isAvailable) {
+    for (const [nodeId, client] of this.connectedClients) {
+      if (client.metadata && client.metadata.isBridgeNode) {
+        connectedBridgeNodes.push({
+          nodeId,
+          address: client.metadata.listeningAddress || 'unknown',
+          available: true,
+          state: 'CONNECTED',
+          lastActivity: client.timestamp,
+          connectAttempts: 0
+        });
         availableCount++;
       }
-      
-      results.push({
-        address,
-        available: isAvailable,
-        state: stats.state,
-        lastActivity: stats.lastActivity,
-        connectAttempts: stats.connectAttempts
-      });
     }
     
     const unavailableCount = this.options.bridgeNodes.length - availableCount;
 
-    console.log(`🏥 Bridge availability: ${availableCount} available, ${unavailableCount} unavailable`);
+    console.log(`🏥 Bridge availability: ${availableCount} connected, ${unavailableCount} missing`);
+    console.log(`🔍 Connected bridge nodes:`, connectedBridgeNodes.map(b => `${b.nodeId.substring(0, 8)}... (${b.address})`));
 
     return {
       available: availableCount,
       unavailable: unavailableCount,
       total: this.options.bridgeNodes.length,
-      results,
-      poolStats
+      results: connectedBridgeNodes,
+      connectedBridgeNodes
     };
   }
 
