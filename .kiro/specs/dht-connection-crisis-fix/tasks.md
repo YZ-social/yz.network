@@ -6,7 +6,7 @@ This implementation plan focuses on immediate diagnosis and recovery of the DHT 
 
 ## Tasks
 
-- [x] 1. Emergency connection diagnosis and root cause identification
+- [ ] 1. Emergency connection diagnosis and root cause identification
   - Run comprehensive connection path testing to identify what broke
   - Test bootstrap server connectivity from external clients and internal Docker nodes
   - Verify WebSocket connection paths (browser → Node.js DHT)
@@ -15,7 +15,7 @@ This implementation plan focuses on immediate diagnosis and recovery of the DHT 
   - Identify which specific connection managers are failing
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5_
 
-- [ ] 2. Debug bootstrap server connection failures
+- [-] 2. Debug bootstrap server connection failures
   - Investigate "Unexpected server response: 200" errors
   - Test bootstrap WebSocket connections from both internal Docker nodes and external clients
   - Verify bootstrap server accepts connections on correct ports with proper headers

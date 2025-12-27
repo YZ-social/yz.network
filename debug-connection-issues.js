@@ -42,9 +42,10 @@ async function diagnoseConnectionIssues() {
   console.log('\n📋 Step 3: DHT Node Creation Test');
   console.log('----------------------------------');
   
+  let dht = null;
   try {
     // Test creating a DHT node
-    const dht = new KademliaDHT({
+    dht = new KademliaDHT({
       bootstrapServers: ['wss://imeyouwe.com/ws']
     });
     
@@ -55,8 +56,23 @@ async function diagnoseConnectionIssues() {
     // Check if it has WebSocket server capability
     console.log(`   Platform limits: max connections = ${dht.platformLimits.maxConnections}`);
     
+    // Clean up the DHT node to prevent background tasks
+    if (dht && typeof dht.stop === 'function') {
+      await dht.stop();
+      console.log(`   ✅ DHT node stopped`);
+    }
+    
   } catch (error) {
     console.log(`❌ DHT creation error: ${error.message}`);
+  } finally {
+    // Ensure cleanup even if error occurs
+    if (dht && typeof dht.stop === 'function') {
+      try {
+        await dht.stop();
+      } catch (cleanupError) {
+        console.log(`   ⚠️ DHT cleanup error: ${cleanupError.message}`);
+      }
+    }
   }
   
   console.log('\n📋 Step 4: NodeDHTClient Test (Node.js only)');
@@ -185,7 +201,12 @@ async function diagnoseConnectionIssues() {
 }
 
 // Run the diagnostic
-diagnoseConnectionIssues().catch(error => {
-  console.error('❌ Diagnostic failed:', error);
-  process.exit(1);
-});
+diagnoseConnectionIssues()
+  .then(() => {
+    console.log('\n✅ Diagnostic completed successfully');
+    process.exit(0);
+  })
+  .catch(error => {
+    console.error('❌ Diagnostic failed:', error);
+    process.exit(1);
+  });
