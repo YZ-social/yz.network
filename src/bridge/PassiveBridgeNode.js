@@ -113,26 +113,46 @@ export class PassiveBridgeNode extends NodeDHTClient {
     // Store reference to bootstrap client for sending responses
     this.bootstrapClient = client;
     
-    // Override the message handler to handle bridge-specific messages
-    const originalHandleMessage = client.handleMessage.bind(client);
-    client.handleMessage = (message) => {
-      // Handle bridge-specific messages
-      if (message.type === 'get_onboarding_peer') {
-        this.handleGetOnboardingPeer('bootstrap_server', message);
-        return;
-      } else if (message.type === 'connect_genesis_peer') {
-        this.handleGenesisConnection('bootstrap_server', message);
-        return;
-      } else if (message.type === 'validate_reconnection') {
-        this.handleReconnectionValidation('bootstrap_server', message);
-        return;
-      } else if (message.type === 'invitation_for_bridge') {
-        this.handleBridgeInvitation('bootstrap_server', message);
-        return;
+    // Override the WebSocket message handler after connection is established
+    const originalConnect = client.connect.bind(client);
+    client.connect = async (localNodeId, metadata = {}) => {
+      const result = await originalConnect(localNodeId, metadata);
+      
+      // After connection is established, override the WebSocket message handler
+      if (client.ws) {
+        client.ws.onmessage = (event) => {
+          try {
+            const message = JSON.parse(event.data);
+            
+            // Handle bridge-specific messages
+            if (message.type === 'get_onboarding_peer') {
+              console.log(`🌉 Bridge handling get_onboarding_peer request`);
+              this.handleGetOnboardingPeer('bootstrap_server', message);
+              return;
+            } else if (message.type === 'connect_genesis_peer') {
+              console.log(`🌉 Bridge handling connect_genesis_peer request`);
+              this.handleGenesisConnection('bootstrap_server', message);
+              return;
+            } else if (message.type === 'validate_reconnection') {
+              console.log(`🌉 Bridge handling validate_reconnection request`);
+              this.handleReconnectionValidation('bootstrap_server', message);
+              return;
+            } else if (message.type === 'invitation_for_bridge') {
+              console.log(`🌉 Bridge handling invitation_for_bridge request`);
+              this.handleBridgeInvitation('bootstrap_server', message);
+              return;
+            }
+            
+            // For all other messages, use the original handler
+            client.handleMessage(event.data);
+          } catch (error) {
+            console.error('Error handling bridge message:', error);
+            client.handleMessage(event.data);
+          }
+        };
       }
       
-      // For all other messages, use the original handler
-      originalHandleMessage(message);
+      return result;
     };
     
     return client;
