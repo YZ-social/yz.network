@@ -271,7 +271,12 @@ export class PassiveBridgeNode extends NodeDHTClient {
     // CRITICAL: Store this node's metadata in ConnectionManagerFactory so it's included in handshakes
     // Bridge nodes need to identify themselves during WebSocket connection establishment
     const { ConnectionManagerFactory } = await import('../network/ConnectionManagerFactory.js');
+    
+    // CRITICAL FIX: MERGE with existing metadata instead of overwriting
+    // The DHT may have already set membershipToken and other metadata
+    const existingMetadata = ConnectionManagerFactory.getPeerMetadata(this.dht.localNodeId.toString()) || {};
     ConnectionManagerFactory.setPeerMetadata(this.dht.localNodeId.toString(), {
+      ...existingMetadata,  // Preserve existing metadata (e.g., membershipToken)
       isBridgeNode: true,
       nodeType: 'bridge',
       listeningAddress: externalAddress,  // All connections via nginx (e.g., wss://imeyouwe.com/bridge1)

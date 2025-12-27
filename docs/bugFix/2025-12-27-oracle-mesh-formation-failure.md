@@ -8,16 +8,18 @@
 - Dashboard shows only 2 healthy nodes
 - Nodes cannot form a mesh network
 
-## Root Cause: BUILD_ID Version Mismatch
+## Root Causes Found
 
-### Discovery
+### Root Cause #1: BUILD_ID Version Mismatch ✅ FIXED
+
+#### Discovery
 Running the diagnostic script `scripts/debug-oracle-mesh-formation.js` revealed:
 - All 18 nodes (genesis, 2 bridges, 15 DHT nodes) are unhealthy
 - All nodes show `bootstrap ✗` (bootstrap connection failing)
 - WebSocket connections to nodes work externally
 - Cross-node connectivity works
 
-### The Actual Issue
+#### The Actual Issue
 When connecting to the bootstrap server, we receive:
 ```json
 {
@@ -30,9 +32,70 @@ When connecting to the bootstrap server, we receive:
 }
 ```
 
-The bootstrap server has `BUILD_ID: 0a2d87da7ff14a6729a6` but the DHT nodes have a different BUILD_ID.
+#### Solution Applied
+Added volume mount for `bundle-hash.json` to all 15 DHT nodes in `docker-compose.nodes.yml`:
+```yaml
+volumes:
+  - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
+```
 
-### How BUILD_ID Works
+---
+
+### Root Cause #2: Metadata Propagation Bug in DHT Handshakes ✅ FIXED
+
+#### Discovery
+After fixing BUILD_ID, bridge nodes still had 0 DHT peers. Logs showed:
+```
+📋 Verification: isBridgeNode=undefined for 779678f5
+🔍 [DHT find_node] Non-browser peer 779678f5... - nodeType: undefined
+Peer 779678f5: isBridge=false, isSelf=false, metadata.nodeType=undefined, metadata.isBridgeNode=undefined
+```
+
+The genesis node was sending `dht_peer_hello` with ONLY `membershipToken`:
+```json
+{
+  "type": "dht_peer_hello",
+  "peerId": "779678f5...",
+  "metadata": {
+    "membershipToken": {...}  // ONLY the token, no nodeType, no isBridgeNode!
+  }
+}
+```
+
+#### The Actual Issue
+In `src/dht/KademliaDHT.js`, the `_setMembershipToken()` method was **overwriting** all metadata:
+
+```javascript
+// BROKEN CODE (before fix):
+ConnectionManagerFactory.setPeerMetadata(this.localNodeId.toString(), {
+  membershipToken: token  // This REPLACED all existing metadata!
+});
+```
+
+The `start()` method correctly set metadata with `nodeType`, `isBridgeNode`, `listeningAddress`, etc.
+But when `_setMembershipToken()` was called later, it replaced everything with just the token.
+
+#### Solution Applied
+Changed `_setMembershipToken()` to **merge** with existing metadata:
+
+```javascript
+// FIXED CODE:
+const existingMetadata = ConnectionManagerFactory.getPeerMetadata(this.localNodeId.toString()) || {};
+ConnectionManagerFactory.setPeerMetadata(this.localNodeId.toString(), {
+  ...existingMetadata,  // Preserve existing metadata
+  membershipToken: token
+});
+```
+
+Also fixed the same issue in `src/bridge/PassiveBridgeNode.js`.
+
+#### Files Modified
+- `src/dht/KademliaDHT.js` - `_setMembershipToken()` now merges metadata
+- `src/bridge/PassiveBridgeNode.js` - Bridge metadata now merges with existing
+
+---
+
+## How BUILD_ID Works
 1. Webpack builds `bundle.HASH.js` and writes hash to `dist/bundle-hash.json`
 2. Browser extracts BUILD_ID from script src (`bundle.HASH.js`)
 3. Server reads BUILD_ID from `dist/bundle-hash.json` at startup
@@ -40,87 +103,41 @@ The bootstrap server has `BUILD_ID: 0a2d87da7ff14a6729a6` but the DHT nodes have
 5. Bootstrap checks BUILD_ID match (must match for synchronized deployment)
 6. If mismatch, sends `version_mismatch` error
 
-### Why This Happened
-The Docker containers on Oracle server were built with a different `bundle-hash.json` than what's currently deployed. This can happen when:
-1. Docker image was built at a different time than the web deployment
-2. The `dist/bundle-hash.json` file wasn't properly mounted/synced to containers
-3. Containers were restarted without rebuilding with the latest hash
-
-## Solution
-
-### Option 1: Rebuild and Redeploy Docker Images (Recommended)
-```bash
-# On the Oracle server:
-cd /path/to/yz.network
-
-# Pull latest code
-git pull
-
-# Rebuild webpack bundle (generates new bundle-hash.json)
-npm run build
-
-# Rebuild Docker images with new bundle-hash.json
-docker-compose -f docker-compose.production.yml build --no-cache
-
-# Restart all containers
-docker-compose -f docker-compose.production.yml -f docker-compose.nodes.yml down
-docker-compose -f docker-compose.production.yml -f docker-compose.nodes.yml up -d
-```
-
-### Option 2: Mount bundle-hash.json as Volume ✅ IMPLEMENTED
-The `docker-compose.production.yml` already has this for the bootstrap server:
-```yaml
-volumes:
-  - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
-```
-
-**FIXED**: All 15 DHT nodes in `docker-compose.nodes.yml` now have this volume mount added.
-This ensures all nodes read the same BUILD_ID from the deployed `dist/bundle-hash.json` file.
-
-### Option 3: Disable BUILD_ID Checking (Temporary Fix)
-Modify `src/version.js` to skip BUILD_ID checking for Node.js clients:
-```javascript
-// In checkVersionCompatibility function, add:
-const isNodeClient = clientBuildId && clientBuildId.startsWith('node_');
-if (isNodeClient) {
-  return { compatible: true }; // Skip BUILD_ID check for Node.js clients
-}
-```
-
 ## Verification
-After applying the fix, run:
+After applying both fixes, run:
 ```bash
 node scripts/debug-oracle-mesh-formation.js
 ```
 
 Expected result:
 - All nodes should show `bootstrap ✓`
-- Nodes should start forming connections
+- Genesis node metadata should include `nodeType`, `isBridgeNode`, `listeningAddress`
+- Bridge nodes should receive proper metadata in `dht_peer_hello` handshakes
+- Bridge nodes should have DHT peers (not 0)
 - Health status should improve to healthy
 
-## Prevention
-1. Always rebuild Docker images after webpack build
-2. Mount `bundle-hash.json` as a volume in all containers
-3. Use CI/CD to ensure synchronized deployments
-4. Consider using a deployment version file instead of bundle hash for server-to-server communication
+## Deployment Steps
 
-## Deployment Steps (After Fix Applied)
-
-To apply this fix on the Oracle server:
+To apply these fixes on the Oracle server:
 
 ```bash
-# 1. Pull the latest code with the docker-compose.nodes.yml fix
+# 1. Pull the latest code with both fixes
 git pull
 
-# 2. Restart the DHT nodes to pick up the new volume mount
-docker-compose -f docker-compose.nodes.yml down
-docker-compose -f docker-compose.nodes.yml up -d
+# 2. Rebuild the JavaScript bundle
+npm run build
 
-# 3. Wait 60 seconds for nodes to start and connect
+# 3. Restart all containers to pick up the code changes
+./RestartServerImproved.sh
+
+# 4. Wait 60 seconds for nodes to start and connect
 sleep 60
 
-# 4. Verify nodes are healthy
+# 5. Verify nodes are healthy
 node scripts/debug-oracle-mesh-formation.js
 ```
 
-The nodes should now all read the same BUILD_ID from the mounted `dist/bundle-hash.json` file and successfully connect to the bootstrap server.
+The nodes should now:
+1. All read the same BUILD_ID from the mounted `dist/bundle-hash.json` file
+2. Properly propagate metadata (nodeType, isBridgeNode, listeningAddress) in handshakes
+3. Bridge nodes should be able to identify genesis peer and form DHT connections

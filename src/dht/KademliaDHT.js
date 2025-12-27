@@ -248,13 +248,16 @@ export class KademliaDHT extends EventEmitter {
 
     this._membershipToken = token;
 
-    // CRITICAL FIX: Store membership token in connection manager metadata
-    // so it's included in WebRTC handshakes and find_node responses
+    // CRITICAL FIX: MERGE membership token with existing metadata instead of replacing
+    // The previous code was overwriting nodeType, isBridgeNode, listeningAddress, etc.
+    // which caused bridge nodes to see undefined metadata for genesis peer
+    const existingMetadata = ConnectionManagerFactory.getPeerMetadata(this.localNodeId.toString()) || {};
     ConnectionManagerFactory.setPeerMetadata(this.localNodeId.toString(), {
+      ...existingMetadata,
       membershipToken: token
     });
 
-    console.log('🎫 Membership token set and added to connection manager metadata');
+    console.log('🎫 Membership token merged with existing connection manager metadata');
     return true;
   }
 

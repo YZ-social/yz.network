@@ -70,6 +70,8 @@ This implementation plan focuses on immediate diagnosis and recovery of the DHT 
   - Check if nodes can reach their own advertised addresses (wss://imeyouwe.com/nodeX)
   - Debug why bridge node shows 22 connections but DHT nodes can't connect to each other
   - Test manual WebSocket connections to specific node endpoints
+  - **ROOT CAUSE #1 FIXED**: BUILD_ID mismatch - added volume mount for bundle-hash.json to all DHT nodes
+  - **ROOT CAUSE #2 FIXED**: Metadata propagation bug - `_setMembershipToken()` was overwriting all metadata with just the token, causing bridge nodes to see `nodeType=undefined`, `isBridgeNode=undefined` for genesis peer
   - _Requirements: 7.1, 7.2, 7.3_
 
 - [ ] 9. Fix peer-to-peer connection establishment
