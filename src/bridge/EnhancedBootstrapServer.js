@@ -49,6 +49,9 @@ export class EnhancedBootstrapServer extends EventEmitter {
     // Bridge node management (persistent connections)
     this.pendingInvitations = new Map(); // invitationId -> { inviterNodeId, inviteeNodeId, inviterWs, inviteeWs, status, timestamp }
     
+    // FIXED: Add pending bridge requests map for proper message handling
+    this.pendingBridgeRequests = new Map(); // requestId -> { resolve, reject, timeout, timestamp }
+    
     // Initialize bridge connection pool
     this.bridgePool = new BridgeConnectionPool(
       this.options.bridgeNodes,
@@ -687,8 +690,38 @@ export class EnhancedBootstrapServer extends EventEmitter {
   }
 
   /**
+   * Handle bridge response messages
+   */
+  handleBridgeResponse(ws, message) {
+    const { requestId } = message;
+    
+    if (!requestId || !this.pendingBridgeRequests.has(requestId)) {
+      console.warn(`⚠️ Received bridge response for unknown request: ${requestId}`);
+      return;
+    }
+
+    const pendingRequest = this.pendingBridgeRequests.get(requestId);
+    this.pendingBridgeRequests.delete(requestId);
+
+    // Clear timeout
+    if (pendingRequest.timeout) {
+      clearTimeout(pendingRequest.timeout);
+    }
+
+    console.log(`📨 Received bridge response for request ${requestId.substring(0, 16)}...`);
+
+    if (message.success) {
+      console.log(`✅ Bridge request successful: ${requestId.substring(0, 16)}...`);
+      pendingRequest.resolve(message.data);
+    } else {
+      console.warn(`❌ Bridge request failed: ${message.error || 'Unknown error'}`);
+      pendingRequest.reject(new Error(message.error || 'Bridge request failed'));
+    }
+  }
+
+  /**
    * Request onboarding peer from bridge (using connected bridge nodes)
-   * FIXED: Uses existing connected bridge nodes instead of connection pool
+   * FIXED: Uses existing connected bridge nodes with proper message handling
    */
   async requestOnboardingPeerFromBridge(nodeId, metadata) {
     console.log(`🎲 Requesting onboarding peer for ${nodeId.substring(0, 8)}... from connected bridge nodes`);
@@ -710,7 +743,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
     console.log(`🎯 Selected bridge node: ${selectedBridge.nodeId.substring(0, 8)}...`);
 
     try {
-      // Send request directly to connected bridge node
+      // Generate unique request ID
       const requestId = `onboarding_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       const request = {
         type: 'get_onboarding_peer',
@@ -719,36 +752,24 @@ export class EnhancedBootstrapServer extends EventEmitter {
         newNodeMetadata: metadata
       };
 
-      console.log(`📨 Sending onboarding request to bridge ${selectedBridge.nodeId.substring(0, 8)}...`);
+      console.log(`📨 Sending onboarding request ${requestId.substring(0, 16)}... to bridge ${selectedBridge.nodeId.substring(0, 8)}...`);
       
-      // Send request and wait for response
+      // Create promise that will be resolved by handleBridgeResponse
       const result = await new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
+          this.pendingBridgeRequests.delete(requestId);
           reject(new Error('Bridge request timeout'));
         }, 10000); // 10 second timeout
 
-        const responseHandler = (message) => {
-          if (message.type === 'onboarding_peer_response' && message.requestId === requestId) {
-            clearTimeout(timeout);
-            selectedBridge.ws.off('message', responseHandler);
-            
-            if (message.success) {
-              resolve(message.data);
-            } else {
-              reject(new Error(message.error || 'Bridge request failed'));
-            }
-          }
-        };
-
-        selectedBridge.ws.on('message', (data) => {
-          try {
-            const message = JSON.parse(data.toString());
-            responseHandler(message);
-          } catch (error) {
-            // Ignore parse errors
-          }
+        // Store pending request
+        this.pendingBridgeRequests.set(requestId, {
+          resolve,
+          reject,
+          timeout,
+          timestamp: Date.now()
         });
 
+        // Send request to bridge node
         selectedBridge.ws.send(JSON.stringify(request));
       });
 
@@ -903,6 +924,8 @@ export class EnhancedBootstrapServer extends EventEmitter {
         this.handleInvitationAccepted(ws, message);
       } else if (message.type === 'announce_independent') {
         this.handleAnnounceIndependent(ws, message);
+      } else if (message.type === 'onboarding_peer_response') {
+        this.handleBridgeResponse(ws, message);
       } else {
         console.warn('Unknown message type from client:', message.type);
       }
@@ -2487,6 +2510,11 @@ export class EnhancedBootstrapServer extends EventEmitter {
       this.cleanupStalePeers();
     }, 60000);
 
+    // Clean up stale bridge requests every minute
+    setInterval(() => {
+      this.cleanupStaleBridgeRequests();
+    }, 60000);
+
     // Log status every 5 minutes
     setInterval(() => {
       this.logStatus();
@@ -2508,6 +2536,35 @@ export class EnhancedBootstrapServer extends EventEmitter {
         console.error('❌ Bridge availability check failed:', error);
       }
     }, 5 * 60000); // Every 5 minutes (less frequent since stateless)
+  }
+
+  /**
+   * Clean up stale bridge requests
+   */
+  cleanupStaleBridgeRequests() {
+    const now = Date.now();
+    const staleRequests = [];
+
+    for (const [requestId, request] of this.pendingBridgeRequests) {
+      if (now - request.timestamp > 60000) { // 1 minute timeout
+        staleRequests.push(requestId);
+      }
+    }
+
+    for (const requestId of staleRequests) {
+      const request = this.pendingBridgeRequests.get(requestId);
+      if (request) {
+        if (request.timeout) {
+          clearTimeout(request.timeout);
+        }
+        this.pendingBridgeRequests.delete(requestId);
+        console.log(`🧹 Cleaned up stale bridge request: ${requestId.substring(0, 16)}...`);
+      }
+    }
+
+    if (staleRequests.length > 0) {
+      console.log(`🧹 Cleaned up ${staleRequests.length} stale bridge requests`);
+    }
   }
 
   /**
