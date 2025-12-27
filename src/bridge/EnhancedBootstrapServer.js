@@ -57,7 +57,12 @@ export class EnhancedBootstrapServer extends EventEmitter {
         maxReconnectAttempts: 10,
         idleTimeout: 300000, // 5 minutes
         healthCheckInterval: 30000, // 30 seconds
-        requestTimeout: this.options.bridgeTimeout || 30000
+        requestTimeout: this.options.bridgeTimeout || 30000,
+        // FIXED: Increase queue sizes to handle DHT formation load
+        queue: {
+          maxQueueSize: 500,  // Increased from default 100 to handle 15+ nodes connecting
+          maxConcurrent: 10   // Increased from default 5 for better throughput
+        }
       }
     );
 

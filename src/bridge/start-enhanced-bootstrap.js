@@ -29,7 +29,7 @@ const DEFAULT_CONFIG = {
       return addr;
     }
     // Convert external addresses to WSS format for proper communication
-    if (addr.includes('imeyouwe.com/')) {
+    if (addr.includes('imeyouwe.com')) {  // FIXED: Removed trailing slash
       return `wss://${addr}`;
     }
     return addr;
@@ -52,6 +52,10 @@ class EnhancedBootstrapManager {
     console.log('====================================');
     console.log(`🌐 Public Address: ${this.config.host}:${this.config.port}`);
     console.log(`🌉 Bridge Nodes: ${this.config.bridgeNodes.join(', ')}`);
+    console.log(`🔍 Bridge Node Details:`);
+    this.config.bridgeNodes.forEach((node, index) => {
+      console.log(`   ${index + 1}. ${node}`);
+    });
     console.log(`🆕 Create New DHT: ${this.config.createNewDHT ? 'YES (Genesis Mode)' : 'NO (Standard Mode)'}`);
     console.log(`🔓 Open Network: ${this.config.openNetwork ? 'YES (No invitations required)' : 'NO (Invitations required)'}`);
     console.log(`👥 Max Peers: ${this.config.maxPeers}`);

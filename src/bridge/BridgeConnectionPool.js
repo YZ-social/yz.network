@@ -78,6 +78,7 @@ class BridgeConnection extends EventEmitter {
    */
   async connect() {
     if (this.state === ConnectionState.CONNECTING || this.state === ConnectionState.READY) {
+      console.log(`🔗 Bridge ${this.bridgeAddr} already connecting/ready (${this.state})`);
       return;
     }
 
@@ -96,6 +97,8 @@ class BridgeConnection extends EventEmitter {
         wsUrl = `${protocol}://${this.bridgeAddr}`;
       }
 
+      console.log(`🔗 Bridge connection URL: ${wsUrl}`);
+
       // FIXED: Add WebSocket options to handle SSL and connection issues
       const wsOptions = {
         // Disable SSL certificate validation for internal Docker connections
@@ -107,6 +110,8 @@ class BridgeConnection extends EventEmitter {
           'User-Agent': 'YZ-Bootstrap-ConnectionPool/1.0'
         }
       };
+
+      console.log(`🔗 WebSocket options:`, wsOptions);
 
       this.ws = new WebSocket(wsUrl, wsOptions);
       this.setupWebSocketHandlers();
@@ -157,18 +162,23 @@ class BridgeConnection extends EventEmitter {
    */
   async authenticate() {
     this.state = ConnectionState.AUTHENTICATING;
+    console.log(`🔐 Authenticating with bridge ${this.bridgeAddr}`);
     
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
+        console.error(`❌ Authentication timeout for bridge ${this.bridgeAddr}`);
         reject(new Error('Authentication timeout'));
       }, 5000);
 
       const authHandler = (message) => {
+        console.log(`🔐 Auth response from ${this.bridgeAddr}:`, message.type);
         if (message.type === 'auth_success') {
+          console.log(`✅ Authentication successful for bridge ${this.bridgeAddr}`);
           clearTimeout(timeout);
           this.ws.off('message', authHandler);
           resolve();
         } else if (message.type === 'auth_failed' || message.type === 'error') {
+          console.error(`❌ Authentication failed for bridge ${this.bridgeAddr}:`, message.message);
           clearTimeout(timeout);
           this.ws.off('message', authHandler);
           reject(new Error(message.message || 'Authentication failed'));
@@ -180,16 +190,18 @@ class BridgeConnection extends EventEmitter {
           const message = JSON.parse(data.toString());
           authHandler(message);
         } catch (error) {
-          // Ignore parse errors during auth
+          console.error(`❌ Auth message parse error from ${this.bridgeAddr}:`, error);
         }
       });
 
       // Send authentication
-      this.ws.send(JSON.stringify({
+      const authMessage = {
         type: 'bootstrap_auth',
         auth_token: this.authToken,
         bootstrapServer: 'connection-pool'
-      }));
+      };
+      console.log(`🔐 Sending auth to ${this.bridgeAddr}:`, authMessage);
+      this.ws.send(JSON.stringify(authMessage));
     });
   }
 
@@ -198,12 +210,13 @@ class BridgeConnection extends EventEmitter {
    */
   setupWebSocketHandlers() {
     this.ws.on('open', () => {
-      console.log(`🔗 WebSocket opened to ${this.bridgeAddr}`);
+      console.log(`✅ WebSocket opened to ${this.bridgeAddr}`);
     });
 
     this.ws.on('message', (data) => {
       try {
         const message = JSON.parse(data.toString());
+        console.log(`📨 Message from ${this.bridgeAddr}:`, message.type);
         this.handleMessage(message);
       } catch (error) {
         console.error(`❌ Failed to parse message from ${this.bridgeAddr}:`, error);
@@ -216,7 +229,14 @@ class BridgeConnection extends EventEmitter {
     });
 
     this.ws.on('error', (error) => {
-      console.error(`❌ WebSocket error from ${this.bridgeAddr}:`, error);
+      console.error(`❌ WebSocket error from ${this.bridgeAddr}:`, error.message);
+      console.error(`❌ Error details:`, {
+        code: error.code,
+        errno: error.errno,
+        syscall: error.syscall,
+        address: error.address,
+        port: error.port
+      });
       this.handleDisconnection();
     });
 
@@ -477,6 +497,7 @@ export class BridgeConnectionPool extends EventEmitter {
    */
   async initialize() {
     console.log(`🚀 Initializing connections to ${this.bridgeNodes.length} bridge nodes`);
+    console.log(`🔍 Bridge addresses: ${this.bridgeNodes.join(', ')}`);
     
     // FIXED: Add retry logic for connection pool initialization
     const maxRetries = 3;
@@ -507,7 +528,7 @@ export class BridgeConnectionPool extends EventEmitter {
       
       // If no connections and not the last attempt, wait and retry
       if (attempt < maxRetries) {
-        const delay = attempt * 2000; // 2s, 4s, 6s
+        const delay = attempt * 5000; // 5s, 10s, 15s - longer delays for bridge startup
         console.log(`⏳ No connections established, retrying in ${delay}ms...`);
         await new Promise(resolve => setTimeout(resolve, delay));
       }
@@ -516,6 +537,7 @@ export class BridgeConnectionPool extends EventEmitter {
     // If we get here, all attempts failed
     console.warn(`⚠️ Connection pool initialization completed with 0/${this.bridgeNodes.length} bridges ready`);
     console.warn(`   Bridge connections will be retried automatically in the background`);
+    console.warn(`   This may be normal if bridge nodes are still starting up`);
   }
 
   /**
