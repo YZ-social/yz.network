@@ -1976,8 +1976,11 @@ export class KademliaDHT extends EventEmitter {
 
   /**
    * Handle incoming message from peer
+   * @param {string} peerId - The peer ID that sent the message
+   * @param {Object} message - The message object
+   * @param {Object} sourceManager - Optional: The connection manager that received the message (for response routing)
    */
-  async handlePeerMessage(peerId, message) {
+  async handlePeerMessage(peerId, message, sourceManager = null) {
     // Track received data using safe metrics method (Requirement 5.1: Non-interfering metrics)
     // Calculate size first, then record - ensures message processing continues even if metrics fail
     const messageSize = this.calculateMessageSize(message);
@@ -2010,7 +2013,8 @@ export class KademliaDHT extends EventEmitter {
           await this.handlePong(peerId, message);
           break;
         case 'find_node':
-          await this.handleFindNode(peerId, message);
+          // TASK 2.3: Pass sourceManager to handleFindNode for response routing
+          await this.handleFindNode(peerId, message, sourceManager);
           break;
         case 'find_value':
           await this.handleFindValue(peerId, message);
@@ -3207,9 +3211,39 @@ export class KademliaDHT extends EventEmitter {
 
   /**
    * Handle find node request
+   * @param {string} peerId - The peer ID that sent the request
+   * @param {Object} message - The find_node request message
+   * @param {Object} sourceManager - Optional: The connection manager that received the request (for response routing)
    */
-  async handleFindNode(peerId, message) {
-    console.log(`📥 FIND_NODE: Request received from ${peerId.substring(0, 8)}... (requestId: ${message.requestId})`);
+  async handleFindNode(peerId, message, sourceManager = null) {
+    // DIAGNOSTIC LOGGING: Task 1.1 - Log requestId, source peer, and manager info when request is received
+    const peerNode = this.routingTable.getNode(peerId);
+    const managerInfo = peerNode?.connectionManager ? {
+      type: peerNode.connectionManager.constructor.name,
+      managerPeerId: peerNode.connectionManager.peerId?.substring(0, 8) || 'none',
+      connected: peerNode.connectionManager.isConnected?.() || false,
+      hasHandler: peerNode.connectionManager._dhtMessageHandlerAttached || false
+    } : { type: 'none', managerPeerId: 'none', connected: false, hasHandler: false };
+    
+    // TASK 2.3: Log source manager info for response routing verification
+    const sourceManagerInfo = sourceManager ? {
+      type: sourceManager.constructor.name,
+      managerPeerId: sourceManager.peerId?.substring(0, 8) || 'none',
+      connected: sourceManager.isConnected?.() || false
+    } : { type: 'none (not provided)', managerPeerId: 'none', connected: false };
+    
+    console.log(`📥 FIND_NODE REQUEST RECEIVED:`);
+    console.log(`   RequestId: ${message.requestId}`);
+    console.log(`   Source Peer: ${peerId.substring(0, 8)}...`);
+    console.log(`   Target: ${message.target?.substring(0, 8) || 'unknown'}...`);
+    console.log(`   Manager Type: ${managerInfo.type}`);
+    console.log(`   Manager PeerId: ${managerInfo.managerPeerId}`);
+    console.log(`   Manager Connected: ${managerInfo.connected}`);
+    console.log(`   DHT Handler Attached: ${managerInfo.hasHandler}`);
+    console.log(`   Source Manager (for response): ${sourceManagerInfo.type}`);
+    console.log(`   Source Manager PeerId: ${sourceManagerInfo.managerPeerId}`);
+    console.log(`   Source Manager Connected: ${sourceManagerInfo.connected}`);
+    console.log(`   Timestamp: ${new Date().toISOString()}`);
 
     const targetId = DHTNodeId.fromString(message.target);
     const closestNodes = this.routingTable.findClosestNodes(targetId, this.options.k);
@@ -3233,9 +3267,42 @@ export class KademliaDHT extends EventEmitter {
       nodes: closestNodes.map(node => node.toCompact())
     };
 
-    console.log(`📤 FIND_NODE: Sending response to ${peerId.substring(0, 8)}... with ${response.nodes.length} nodes`);
-    await this.sendMessage(peerId, response);
-    console.log(`✅ FIND_NODE: Response sent successfully to ${peerId.substring(0, 8)}...`);
+    // DIAGNOSTIC LOGGING: Task 1.1 - Log requestId, destination peer, and manager info when response is sent
+    // TASK 2.3: Log that we're using source manager for response routing
+    console.log(`📤 FIND_NODE RESPONSE SENDING:`);
+    console.log(`   RequestId: ${message.requestId}`);
+    console.log(`   Destination Peer: ${peerId.substring(0, 8)}...`);
+    console.log(`   Node Count: ${response.nodes.length}`);
+    console.log(`   Using Source Manager: ${sourceManager ? 'YES (same manager that received request)' : 'NO (default resolution)'}`);
+    console.log(`   Response Manager Type: ${sourceManager ? sourceManagerInfo.type : managerInfo.type}`);
+    console.log(`   Response Manager PeerId: ${sourceManager ? sourceManagerInfo.managerPeerId : managerInfo.managerPeerId}`);
+    console.log(`   Response Manager Connected: ${sourceManager ? sourceManagerInfo.connected : managerInfo.connected}`);
+    console.log(`   Timestamp: ${new Date().toISOString()}`);
+    
+    try {
+      // TASK 2.3: Pass sourceManager to sendMessage for response routing
+      // This ensures the response goes via the same connection manager that received the request
+      await this.sendMessage(peerId, response, sourceManager);
+      // DIAGNOSTIC LOGGING: Task 1.1 - Log success of response delivery
+      console.log(`✅ FIND_NODE RESPONSE DELIVERED:`);
+      console.log(`   RequestId: ${message.requestId}`);
+      console.log(`   Destination Peer: ${peerId.substring(0, 8)}...`);
+      console.log(`   Status: SUCCESS`);
+      console.log(`   Used Source Manager: ${sourceManager ? 'YES' : 'NO'}`);
+      console.log(`   Timestamp: ${new Date().toISOString()}`);
+    } catch (error) {
+      // DIAGNOSTIC LOGGING: Task 1.1 - Log failure of response delivery
+      console.error(`❌ FIND_NODE RESPONSE FAILED:`);
+      console.error(`   RequestId: ${message.requestId}`);
+      console.error(`   Destination Peer: ${peerId.substring(0, 8)}...`);
+      console.error(`   Status: FAILED`);
+      console.error(`   Error: ${error.message}`);
+      console.error(`   Used Source Manager: ${sourceManager ? 'YES' : 'NO'}`);
+      console.error(`   Manager Type: ${sourceManager ? sourceManagerInfo.type : managerInfo.type}`);
+      console.error(`   Manager Connected: ${sourceManager ? sourceManagerInfo.connected : managerInfo.connected}`);
+      console.error(`   Timestamp: ${new Date().toISOString()}`);
+      throw error;
+    }
   }
 
   /**
@@ -3709,16 +3776,59 @@ export class KademliaDHT extends EventEmitter {
 
   /**
    * Send message to peer using per-node connection manager
+   * @param {string} peerId - Target peer ID
+   * @param {Object} message - Message to send
+   * @param {Object} sourceManager - Optional: Use this specific manager instead of resolving one (for response routing)
    */
-  async sendMessage(peerId, message) {
+  async sendMessage(peerId, message, sourceManager = null) {
     try {
       // Calculate message size for data transfer tracking using safe method (Requirement 5.1)
       // Size is calculated before sending to ensure metrics don't block message delivery
       const messageSize = this.calculateMessageSize(message);
       
-      // Use getOrCreatePeerNode to ensure connection manager exists
-      const peerNode = this.getOrCreatePeerNode(peerId);
-      const result = await peerNode.connectionManager.sendMessage(peerId, message);
+      // TASK 2.2: Use sourceManager if provided, otherwise use existing resolution
+      let connectionManager;
+      let managerSource;
+      
+      if (sourceManager && sourceManager.isConnected && sourceManager.isConnected()) {
+        // Use the provided source manager (for response routing)
+        connectionManager = sourceManager;
+        managerSource = 'sourceManager (request origin)';
+        console.log(`📤 SEND_MESSAGE: Using SOURCE MANAGER for ${message.type} response`);
+        console.log(`   Reason: Response should go via same manager that received request`);
+      } else {
+        // Fall back to existing resolution via getOrCreatePeerNode
+        const peerNode = this.getOrCreatePeerNode(peerId);
+        connectionManager = peerNode.connectionManager;
+        managerSource = 'getOrCreatePeerNode (default resolution)';
+        
+        if (sourceManager) {
+          console.log(`📤 SEND_MESSAGE: Source manager provided but not connected, falling back to default resolution`);
+        }
+      }
+      
+      // DIAGNOSTIC LOGGING: Task 1.2 - Log which connection manager is being used for each message
+      const managerType = connectionManager?.constructor.name || 'unknown';
+      const managerPeerId = connectionManager?.peerId || 'none';
+      const isConnected = connectionManager?.isConnected?.() || false;
+      
+      console.log(`📤 SEND_MESSAGE: Using ${managerType} for ${message.type}`);
+      console.log(`   Target PeerId: ${peerId.substring(0, 8)}...`);
+      console.log(`   Manager PeerId: ${managerPeerId?.substring?.(0, 8) || managerPeerId}...`);
+      console.log(`   Manager Connected: ${isConnected}`);
+      console.log(`   Manager Source: ${managerSource}`);
+      
+      // DIAGNOSTIC LOGGING: Task 1.2 - Log manager peerId vs target peerId comparison
+      if (managerPeerId && managerPeerId !== 'none' && managerPeerId !== peerId) {
+        // DIAGNOSTIC LOGGING: Task 1.2 - Log warning if manager mismatch detected
+        console.warn(`⚠️ MANAGER MISMATCH DETECTED:`);
+        console.warn(`   Expected PeerId: ${peerId.substring(0, 8)}...`);
+        console.warn(`   Manager PeerId: ${managerPeerId?.substring?.(0, 8) || managerPeerId}...`);
+        console.warn(`   Message Type: ${message.type}`);
+        console.warn(`   This may cause response delivery failures!`);
+      }
+      
+      const result = await connectionManager.sendMessage(peerId, message);
       
       // Track data sent using safe metrics method (only after successful send)
       if (messageSize > 0) {
@@ -3736,6 +3846,7 @@ export class KademliaDHT extends EventEmitter {
         const isConnected = peerNode.connectionManager.isConnected();
         console.error(`   Connection state: isConnected=${isConnected}`);
         console.error(`   Connection manager type: ${peerNode.connectionManager.constructor.name}`);
+        console.error(`   Manager peerId: ${peerNode.connectionManager.peerId?.substring(0, 8) || 'none'}`);
       } else {
         console.error(`   No connection manager found for peer`);
       }
@@ -4309,9 +4420,10 @@ export class KademliaDHT extends EventEmitter {
       // Still need to ensure DHT message handler is attached to the EXISTING manager
       if (!peerNode.connectionManager._dhtMessageHandlerAttached) {
         console.log(`🔧 Attaching DHT message handler to EXISTING manager for ${peerId.substring(0, 8)}`);
-        peerNode.connectionManager.on('dhtMessage', ({ peerId: msgPeerId, message }) => {
+        peerNode.connectionManager.on('dhtMessage', ({ peerId: msgPeerId, message, sourceManager }) => {
           console.log(`📥 DHT MESSAGE HANDLER CALLED: ${message.type} from ${msgPeerId.substring(0, 8)} (manager: ${peerNode.connectionManager.constructor.name})`);
-          this.handlePeerMessage(msgPeerId, message);
+          // TASK 2.1: Pass sourceManager to handlePeerMessage for response routing
+          this.handlePeerMessage(msgPeerId, message, sourceManager);
         });
         peerNode.connectionManager._dhtMessageHandlerAttached = true;
         console.log(`📨 DHT message handler attached to existing manager for ${peerId.substring(0, 8)}`);
@@ -4388,9 +4500,10 @@ export class KademliaDHT extends EventEmitter {
       console.log(`🔧 DEBUG: Manager instance ID: ${peerNode.connectionManager.localNodeId?.substring(0,8) || 'not initialized'}`);
       console.log(`🔧 DEBUG: Manager peerId: ${peerNode.connectionManager.peerId?.substring(0,8) || 'not set'}`);
 
-      peerNode.connectionManager.on('dhtMessage', ({ peerId: msgPeerId, message }) => {
+      peerNode.connectionManager.on('dhtMessage', ({ peerId: msgPeerId, message, sourceManager }) => {
         console.log(`📥 DHT MESSAGE HANDLER CALLED: ${message.type} from ${msgPeerId.substring(0, 8)} (manager: ${peerNode.connectionManager.constructor.name})`);
-        this.handlePeerMessage(msgPeerId, message);
+        // TASK 2.1: Pass sourceManager to handlePeerMessage for response routing
+        this.handlePeerMessage(msgPeerId, message, sourceManager);
       });
       peerNode.connectionManager._dhtMessageHandlerAttached = true;
       console.log(`📨 DHT message handler attached for ${peerId.substring(0, 8)}`);

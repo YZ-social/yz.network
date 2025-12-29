@@ -206,9 +206,29 @@ export class ConnectionManager extends EventEmitter {
         case 'connection_candidate':
         case 'create_invitation_for_peer':
         case 'forward_invitation':
-          // Emit to DHT for handling
-          console.log(`🔔 DEBUG: Emitting dhtMessage event for ${message.type} from ${peerId.substring(0, 8)} (manager: ${this.constructor.name}, listeners: ${this.listenerCount('dhtMessage')})`);
-          this.emit('dhtMessage', { peerId, message });
+          // DIAGNOSTIC LOGGING: Task 1.3 - Log number of listeners when dhtMessage event is emitted
+          const listenerCount = this.listenerCount('dhtMessage');
+          console.log(`🔔 DHT_MESSAGE EVENT:`);
+          console.log(`   Message Type: ${message.type}`);
+          console.log(`   From Peer: ${peerId.substring(0, 8)}...`);
+          console.log(`   Manager: ${this.constructor.name}`);
+          console.log(`   Manager PeerId: ${this.peerId?.substring(0, 8) || 'none'}`);
+          console.log(`   Listener Count: ${listenerCount}`);
+          console.log(`   Handler Attached Flag: ${this._dhtMessageHandlerAttached || false}`);
+          console.log(`   Timestamp: ${new Date().toISOString()}`);
+          
+          // DIAGNOSTIC LOGGING: Task 1.3 - Log warning if no listeners attached
+          if (listenerCount === 0) {
+            console.warn(`⚠️ NO DHT MESSAGE LISTENERS ATTACHED!`);
+            console.warn(`   Message Type: ${message.type}`);
+            console.warn(`   From Peer: ${peerId.substring(0, 8)}...`);
+            console.warn(`   Manager: ${this.constructor.name}`);
+            console.warn(`   This message will NOT be processed by DHT!`);
+            console.warn(`   RequestId: ${message.requestId || 'none'}`);
+          }
+          
+          // Emit to DHT for handling - TASK 2.1: Include manager reference for response routing
+          this.emit('dhtMessage', { peerId, message, sourceManager: this });
           break;
         case 'connect_genesis_peer':
         case 'validate_reconnection':
