@@ -752,12 +752,22 @@ export class EnhancedBootstrapServer extends EventEmitter {
         newNodeMetadata: metadata
       };
 
+      // Check WebSocket state before sending
+      const wsState = selectedBridge.ws.readyState;
+      const wsStateNames = ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'];
       console.log(`📨 Sending onboarding request ${requestId.substring(0, 16)}... to bridge ${selectedBridge.nodeId.substring(0, 8)}...`);
+      console.log(`   WebSocket state: ${wsStateNames[wsState] || wsState} (${wsState})`);
+      
+      if (wsState !== 1) { // 1 = OPEN
+        console.warn(`⚠️ Bridge WebSocket not OPEN (state: ${wsStateNames[wsState]}), skipping send`);
+        throw new Error(`Bridge WebSocket not open (state: ${wsStateNames[wsState]})`);
+      }
       
       // Create promise that will be resolved by handleBridgeResponse
       const result = await new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
           this.pendingBridgeRequests.delete(requestId);
+          console.warn(`⏰ Bridge request ${requestId.substring(0, 16)}... timed out after 10s`);
           reject(new Error('Bridge request timeout'));
         }, 10000); // 10 second timeout
 
@@ -770,7 +780,15 @@ export class EnhancedBootstrapServer extends EventEmitter {
         });
 
         // Send request to bridge node
-        selectedBridge.ws.send(JSON.stringify(request));
+        try {
+          selectedBridge.ws.send(JSON.stringify(request));
+          console.log(`✅ Onboarding request sent successfully to bridge ${selectedBridge.nodeId.substring(0, 8)}...`);
+        } catch (sendError) {
+          console.error(`❌ Failed to send onboarding request: ${sendError.message}`);
+          this.pendingBridgeRequests.delete(requestId);
+          clearTimeout(timeout);
+          reject(sendError);
+        }
       });
 
       if (result && result.inviterPeerId) {

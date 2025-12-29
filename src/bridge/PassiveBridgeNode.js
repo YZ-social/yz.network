@@ -128,6 +128,9 @@ export class PassiveBridgeNode extends NodeDHTClient {
           try {
             const message = JSON.parse(data.toString());
             
+            // DEBUG: Log all incoming messages
+            console.log(`📥 [Bridge WS] Received message type: ${message.type}`);
+            
             // Handle bridge-specific messages
             if (message.type === 'get_onboarding_peer') {
               console.log(`🌉 Bridge handling get_onboarding_peer request`);
