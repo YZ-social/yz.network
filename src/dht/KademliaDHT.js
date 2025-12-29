@@ -630,8 +630,10 @@ export class KademliaDHT extends EventEmitter {
     }
 
     // Connect to bootstrap server and register with public key
+    // Include membership token if we have one (for reconnection after tab inactive)
     await this.bootstrap.connect(this.localNodeId.toString(), {
       publicKey: this.keyPair.publicKey,
+      membershipToken: this._membershipToken, // Include for reconnection
       ...this.bootstrapMetadata
     });
 
@@ -3255,7 +3257,7 @@ export class KademliaDHT extends EventEmitter {
         
         // Handle the inner DHT request
         switch (payload.type) {
-          case 'find_node':
+          case 'find_node': {
             const targetId = DHTNodeId.fromString(payload.target);
             const closestNodes = this.routingTable.findClosestNodes(targetId, this.options.k);
             responsePayload = {
@@ -3264,6 +3266,7 @@ export class KademliaDHT extends EventEmitter {
               nodes: closestNodes.map(node => node.toCompact())
             };
             break;
+          }
           case 'ping':
             responsePayload = {
               type: 'pong',

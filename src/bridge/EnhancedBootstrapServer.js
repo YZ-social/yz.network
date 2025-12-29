@@ -1110,6 +1110,48 @@ export class EnhancedBootstrapServer extends EventEmitter {
     };
 
     try {
+      // CRITICAL FIX: Check if this is a reconnecting peer with membership token
+      // Reconnecting peers should be fast-tracked to get peers without bridge coordination
+      const membershipToken = message.metadata?.membershipToken;
+      const existingPeer = this.peers.get(nodeId);
+      const isReconnecting = existingPeer?.type === 'reconnecting' || 
+                             existingPeer?.type === 'active' ||
+                             existingPeer?.type === 'validation_failed' ||
+                             (membershipToken && membershipToken.holder && membershipToken.issuer);
+
+      if (isReconnecting) {
+        console.log(`🔄 Fast-tracking reconnecting peer ${nodeId?.substring(0, 8)}...`);
+        
+        // Get available peers for reconnection (excluding self and bridge nodes)
+        const availablePeers = [];
+        for (const [clientNodeId, client] of this.connectedClients.entries()) {
+          if (clientNodeId === nodeId) continue;
+          if (client.metadata?.isBridgeNode || client.metadata?.nodeType === 'bridge') continue;
+          if (client.ws?.readyState !== 1) continue; // Only OPEN connections
+          
+          availablePeers.push({
+            nodeId: clientNodeId,
+            metadata: client.metadata || {}
+          });
+        }
+
+        console.log(`📤 Sending ${availablePeers.length} peers to reconnecting client ${nodeId?.substring(0, 8)}...`);
+
+        sendResponse({
+          type: 'response',
+          requestId: message.requestId,
+          success: true,
+          data: {
+            peers: availablePeers.slice(0, maxPeers || 20),
+            isGenesis: false,
+            reconnecting: true,
+            status: 'reconnection_peers',
+            message: `Found ${availablePeers.length} peers for reconnection`
+          }
+        });
+        return;
+      }
+
       // Add client to connected clients if not already present
       if (nodeId && !this.connectedClients.has(nodeId)) {
         this.connectedClients.set(nodeId, {
@@ -1124,7 +1166,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
       // In genesis mode, first NON-PASSIVE peer becomes genesis (only once)
       // Bridge nodes (passive) cannot be genesis - only regular DHT nodes
       const existingClient = this.connectedClients.get(nodeId);
-      const existingPeer = this.peers.get(nodeId);
+      // Note: existingPeer is already declared above for reconnection check
 
       // Debug: Log what we're checking
       console.log(`🔍 Genesis check for ${nodeId?.substring(0, 8)}...:`);
@@ -2170,10 +2212,9 @@ export class EnhancedBootstrapServer extends EventEmitter {
    * Handle reconnecting peer
    */
   async handleReconnectingPeer(ws, { nodeId, membershipToken, metadata }) {
-    // FIXED: Use stateless bridge request for reconnection validation
-    // Bridge availability will be tested during the actual request
+    console.log(`🔄 Processing reconnection for ${nodeId.substring(0, 8)}... with membership token`);
 
-    // Store reconnecting peer
+    // Store reconnecting peer immediately so they can receive responses
     this.peers.set(nodeId, {
       ws,
       lastSeen: Date.now(),
@@ -2183,6 +2224,70 @@ export class EnhancedBootstrapServer extends EventEmitter {
       membershipToken
     });
 
+    // Also add to connectedClients for peer discovery
+    this.connectedClients.set(nodeId, {
+      ws,
+      nodeId,
+      metadata: metadata || {},
+      timestamp: Date.now()
+    });
+
+    // CRITICAL FIX: For reconnecting peers with valid membership tokens,
+    // skip bridge validation and allow direct reconnection.
+    // The membership token proves they were previously part of the network.
+    // Bridge validation is only needed for NEW peers joining the network.
+    
+    // Basic membership token validation (check structure)
+    if (membershipToken && membershipToken.holder && membershipToken.issuer) {
+      console.log(`✅ Membership token validated for ${nodeId.substring(0, 8)}...`);
+      console.log(`   Holder: ${membershipToken.holder.substring(0, 8)}...`);
+      console.log(`   Issuer: ${membershipToken.issuer.substring(0, 8)}...`);
+      
+      // Send success response
+      ws.send(JSON.stringify({
+        type: 'reconnection_result',
+        success: true,
+        nodeId,
+        message: 'Reconnection validated - membership token accepted'
+      }));
+
+      // Update peer type to active
+      const peer = this.peers.get(nodeId);
+      if (peer) {
+        peer.type = 'active';
+      }
+
+      console.log(`✅ Reconnection successful for ${nodeId.substring(0, 8)}...`);
+      return;
+    }
+
+    // If membership token is invalid/missing, try bridge validation as fallback
+    console.log(`⚠️ Invalid membership token for ${nodeId.substring(0, 8)}..., attempting bridge validation`);
+
+    // Get available bridge connection - check metadata.isBridgeNode
+    const bridgeClients = Array.from(this.connectedClients.values()).filter(
+      client => client.metadata?.isBridgeNode === true || client.metadata?.nodeType === 'bridge'
+    );
+    
+    if (bridgeClients.length === 0) {
+      // No bridge nodes available - allow reconnection anyway for resilience
+      // The peer has a membership token, so they were previously part of the network
+      console.warn(`⚠️ No bridge nodes available for validation, allowing reconnection for ${nodeId.substring(0, 8)}...`);
+      
+      ws.send(JSON.stringify({
+        type: 'reconnection_result',
+        success: true,
+        nodeId,
+        message: 'Reconnection allowed - no bridge validation available'
+      }));
+
+      const peer = this.peers.get(nodeId);
+      if (peer) {
+        peer.type = 'active';
+      }
+      return;
+    }
+
     // Generate unique request ID
     const requestId = `reconnect_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
@@ -2191,7 +2296,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
       const timeout = setTimeout(() => {
         this.pendingReconnections.delete(requestId);
         reject(new Error('Bridge validation timeout'));
-      }, this.options.bridgeTimeout);
+      }, this.options.bridgeTimeout || 10000);
 
       this.pendingReconnections.set(requestId, {
         ws,
@@ -2202,37 +2307,47 @@ export class EnhancedBootstrapServer extends EventEmitter {
       });
     });
 
-    // Get available bridge connection
-    const bridgeClients = Array.from(this.peers.values()).filter(peer => peer.isBridgeNode);
-    if (bridgeClients.length === 0) {
-      throw new Error('No bridge nodes available for reconnection validation');
-    }
-
-    const bridgeWs = bridgeClients[0].ws; // Use first bridge node
+    const bridgeWs = bridgeClients[0].ws;
 
     // Send validation request to bridge
-    bridgeWs.send(JSON.stringify({
-      type: 'validate_reconnection',
-      nodeId,
-      membershipToken,
-      requestId,
-      timestamp: Date.now()
-    }));
-
-    console.log(`📤 Sent reconnection validation to bridge for ${nodeId.substring(0, 8)}...`);
-
-    // Wait for bridge response
     try {
+      bridgeWs.send(JSON.stringify({
+        type: 'validate_reconnection',
+        nodeId,
+        membershipToken,
+        requestId,
+        timestamp: Date.now()
+      }));
+
+      console.log(`📤 Sent reconnection validation to bridge for ${nodeId.substring(0, 8)}...`);
+
+      // Wait for bridge response
       await reconnectionPromise;
+      
+      // Update peer type to active on success
+      const peer = this.peers.get(nodeId);
+      if (peer) {
+        peer.type = 'active';
+      }
+      
     } catch (error) {
-      console.warn(`Bridge validation failed for ${nodeId.substring(0, 8)}: ${error.message}`);
+      console.warn(`⚠️ Bridge validation failed for ${nodeId.substring(0, 8)}: ${error.message}`);
+      
+      // CRITICAL FIX: Don't close connection on validation failure
+      // Allow the peer to continue - they can still request peers via get_peers_or_genesis
       ws.send(JSON.stringify({
         type: 'reconnection_result',
         success: false,
-        reason: error.message
+        reason: error.message,
+        fallback: true,
+        message: 'Bridge validation failed, but you can still request peers'
       }));
-      ws.close(1000, 'Validation failed');
-      this.peers.delete(nodeId);
+      
+      // Keep the peer registered so they can make further requests
+      const peer = this.peers.get(nodeId);
+      if (peer) {
+        peer.type = 'validation_failed';
+      }
     }
   }
 

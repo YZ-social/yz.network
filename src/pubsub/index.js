@@ -18,3 +18,4 @@ export { SubscribeOperation } from './SubscribeOperation.js';
 
 // Phase 3: High-Level Client API
 export { PubSubClient } from './PubSubClient.js';
+export { ChannelJoinManager } from './ChannelJoinManager.js';
