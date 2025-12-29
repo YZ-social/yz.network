@@ -943,6 +943,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
       } else if (message.type === 'announce_independent') {
         this.handleAnnounceIndependent(ws, message);
       } else if (message.type === 'onboarding_peer_response') {
+        console.log(`📥 Received onboarding_peer_response from bridge (requestId: ${message.requestId?.substring(0, 16)}...)`);
         this.handleBridgeResponse(ws, message);
       } else {
         console.warn('Unknown message type from client:', message.type);
