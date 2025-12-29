@@ -54,20 +54,22 @@ This implementation fixes the critical bug where browser clients cannot create P
   - **Property 4: Response Manager Consistency (Core Fix)**
   - **Validates: Requirements 4.1, 4.2**
 
-- [ ] 3. Ensure DHT message handlers are attached to dedicated managers
+- [x] 3. Ensure DHT message handlers are attached to dedicated managers
   - Fix handler attachment timing to prevent race conditions
+  - **ADDITIONAL FIX**: Prevent duplicate connections when server connects while browser is connecting
   - _Requirements: 2.1, 2.2, 2.3_
 
-- [ ] 3.1 Verify handler attachment in RoutingTable.handlePeerConnected
+- [x] 3.1 Verify handler attachment in RoutingTable.handlePeerConnected
   - Check if handlers are attached when dedicated manager is created
   - Add handler attachment if missing
   - Log handler attachment status
   - _Requirements: 2.2, 2.3_
 
-- [ ] 3.2 Add handler verification in getOrCreatePeerNode
+- [x] 3.2 Add handler verification in getOrCreatePeerNode
   - Verify handlers are attached to existing managers
   - Re-attach handlers if missing
   - Log verification results
+  - **ADDITIONAL FIX**: Modified connectToPeerViaDHT to check for existing connections before creating new ones
   - _Requirements: 2.2, 2.5_
 
 - [ ]* 3.3 Write property test for handler attachment timing
@@ -127,3 +129,22 @@ This implementation fixes the critical bug where browser clients cannot create P
 - Task 1 (logging) helps verify the fix is working
 - Task 3 (handler attachment) addresses potential race conditions
 - Task 5 (diagnostics) helps identify any remaining issues
+
+## Additional Fix (Task 3.2)
+
+The root cause of the PubSub channel creation failure was identified:
+
+1. Browser receives peer list from bootstrap server
+2. Browser calls `connectToPeerViaDHT` for each peer
+3. `isPeerConnected` returns `false` because the server hasn't connected yet
+4. Browser creates a NEW WebSocket connection to the server
+5. Meanwhile, the server also creates an incoming connection to the browser
+6. Now there are TWO WebSocket connections between browser and server
+7. The browser's outgoing connection manager sends messages, but the server responds on the incoming connection
+8. The browser's outgoing connection manager never receives the response → timeout
+
+**Fix implemented in `connectToPeerViaDHT`:**
+- Check if peer already has a connection manager that is connected before creating a new connection
+- Check if the existing manager has a connection in progress and wait for it
+- Double-check connection status after `getOrCreatePeerNode` in case peer connected during setup
+- Handle "Manager already has connection" error gracefully as a successful connection

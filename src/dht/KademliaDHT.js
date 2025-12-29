@@ -2176,17 +2176,62 @@ export class KademliaDHT extends EventEmitter {
       return false;
     }
 
+    // CRITICAL FIX: Check if peer already has a connection manager that is connected
+    // This prevents creating duplicate connections when server connects to us while we're connecting to them
+    // The server creates a dedicated manager for incoming connections, and we should reuse that
+    const existingPeerNode = this.routingTable.getNode(peerId) || (this.peerNodes && this.peerNodes.get(peerId));
+    if (existingPeerNode && existingPeerNode.connectionManager) {
+      const existingManager = existingPeerNode.connectionManager;
+      
+      // Check if the existing manager is already connected
+      if (existingManager.isConnected && existingManager.isConnected()) {
+        console.log(`🔄 Peer ${peerId.substring(0, 8)}... already has connected manager - reusing existing connection`);
+        return true;
+      }
+      
+      // Check if the existing manager has a connection (even if not fully set up)
+      if (existingManager.connection) {
+        console.log(`🔄 Peer ${peerId.substring(0, 8)}... already has connection in progress - waiting for it`);
+        // Wait a short time for the connection to complete
+        await new Promise(resolve => setTimeout(resolve, 500));
+        if (existingManager.isConnected && existingManager.isConnected()) {
+          console.log(`✅ Existing connection for ${peerId.substring(0, 8)}... is now ready`);
+          return true;
+        }
+      }
+    }
+
     try {
       // Use connection-agnostic approach: let connection manager handle transport selection
       console.log(`🔗 Connecting to peer ${peerId.substring(0, 8)}...`);
 
       const peerNodeOrCreate = this.getOrCreatePeerNode(peerId);
+      
+      // CRITICAL FIX: Double-check connection status after getOrCreatePeerNode
+      // The peer might have connected while we were setting up
+      if (peerNodeOrCreate.connectionManager.isConnected && peerNodeOrCreate.connectionManager.isConnected()) {
+        console.log(`🔄 Peer ${peerId.substring(0, 8)}... connected while setting up - using existing connection`);
+        return true;
+      }
+      
+      // CRITICAL FIX: Check if manager already has a connection (incoming connection from server)
+      if (peerNodeOrCreate.connectionManager.connection) {
+        console.log(`🔄 Peer ${peerId.substring(0, 8)}... already has connection object - skipping createConnection`);
+        return true;
+      }
+      
       // CRITICAL: Pass metadata from routing table node so connection manager has listeningAddress
       await peerNodeOrCreate.connectionManager.createConnection(peerId, true, peerNodeOrCreate.metadata);
 
 
       return true;
     } catch (error) {
+      // Handle "Manager already has connection" error gracefully - this means connection succeeded
+      if (error.message && error.message.includes('already has connection')) {
+        console.log(`🔄 Peer ${peerId.substring(0, 8)}... connection already established (race condition resolved)`);
+        return true;
+      }
+      
       console.error(`Failed to connect to ${peerId} via DHT:`, error);
 
       // Clean up pending request on error
