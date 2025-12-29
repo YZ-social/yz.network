@@ -2083,9 +2083,9 @@ export class EnhancedBootstrapServer extends EventEmitter {
   }
 
   /**
-   * Handle response from bridge node
+   * Handle response from bridge node (address-based routing)
    */
-  handleBridgeResponse(bridgeAddr, response) {
+  handleBridgeResponseByAddress(bridgeAddr, response) {
     if (response.type === 'reconnection_result') {
       this.handleReconnectionResult(response);
     } else if (response.type === 'genesis_connection_result') {
