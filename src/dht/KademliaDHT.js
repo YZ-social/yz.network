@@ -1613,6 +1613,16 @@ export class KademliaDHT extends EventEmitter {
       console.log(`✅ WebRTC coordination completed for ${peerId.substring(0, 8)}... - connection established`);
     }
 
+    // CRITICAL FIX: Attach DHT message handlers IMMEDIATELY, not after a delay
+    // This prevents race condition where messages arrive before handlers are attached
+    // The getOrCreatePeerNode method has guards to prevent duplicate handler attachment
+    try {
+      this.getOrCreatePeerNode(peerId);
+      console.log(`✅ DHT handlers attached immediately for ${peerId.substring(0, 8)}`);
+    } catch (error) {
+      console.error(`❌ Failed to attach DHT handlers for ${peerId.substring(0, 8)}:`, error);
+    }
+
     // Double-check connection with a small delay to ensure it's stable
     setTimeout(() => {
       if (!this.isPeerConnected(peerId)) {
@@ -1620,17 +1630,8 @@ export class KademliaDHT extends EventEmitter {
       }
 
       if (this.routingTable.getNode(peerId)) {
-        // Node already exists - still need to ensure DHT handlers are attached!
-        console.log(`📋 Node ${peerId} already in routing table - ensuring DHT handlers attached`);
-
-        // CRITICAL FIX: Call getOrCreatePeerNode() to attach DHT message handlers
-        // Even though node exists in routing table, handlers may not be attached yet
-        try {
-          this.getOrCreatePeerNode(peerId);
-          console.log(`✅ DHT handlers ensured for existing peer ${peerId.substring(0, 8)}`);
-        } catch (error) {
-          console.error(`❌ Failed to ensure DHT handlers for ${peerId.substring(0, 8)}:`, error);
-        }
+        // Node already exists - handlers should already be attached from above
+        console.log(`📋 Node ${peerId.substring(0, 8)} confirmed in routing table`);
 
         this.considerDHTSignaling();
         return;
@@ -1645,14 +1646,12 @@ export class KademliaDHT extends EventEmitter {
       if (addResult) {
         console.log(`📋 Added ${peerId} to routing table (${this.routingTable.getAllNodes().length} total)`);
 
-        // CRITICAL FIX: Attach DHT message handlers immediately after adding to routing table
-        // This ensures the peer can respond to DHT queries (find_node, find_value, etc.)
-        // The getOrCreatePeerNode method has guards to prevent duplicate handler attachment
+        // DHT handlers should already be attached from the immediate call above
+        // But call again just in case (guards prevent duplicate attachment)
         try {
           this.getOrCreatePeerNode(peerId);
-          console.log(`✅ DHT handlers initialized for newly connected peer ${peerId.substring(0, 8)}`);
         } catch (error) {
-          console.error(`❌ Failed to initialize DHT handlers for ${peerId.substring(0, 8)}:`, error);
+          console.error(`❌ Failed to ensure DHT handlers for ${peerId.substring(0, 8)}:`, error);
         }
 
         this.considerDHTSignaling();
