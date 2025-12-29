@@ -141,3 +141,115 @@ The nodes should now:
 1. All read the same BUILD_ID from the mounted `dist/bundle-hash.json` file
 2. Properly propagate metadata (nodeType, isBridgeNode, listeningAddress) in handshakes
 3. Bridge nodes should be able to identify genesis peer and form DHT connections
+
+
+---
+
+### Root Cause #3: Duplicate Connection Manager Creation ✅ FIXED
+
+#### Discovery
+After fixing metadata propagation, `find_node` queries were still timing out. Logs showed:
+```
+⏰ find_node timeout for 26b4947c... (10000ms) - failure count: 19
+```
+
+But the connection manager showed the peer as connected.
+
+#### The Actual Issue
+In `KademliaDHT.getOrCreatePeerNode()`, when an incoming connection arrived, the code was creating a NEW connection manager even though one already existed:
+
+```javascript
+// BROKEN CODE (before fix):
+if (!peerNode.connectionManager) {
+  peerNode.connectionManager = ConnectionManagerFactory.createForConnection(...);
+}
+```
+
+The problem: For incoming connections, `RoutingTable.handlePeerConnected()` already created a dedicated connection manager. But `getOrCreatePeerNode()` was checking `peerNode.connectionManager` which was undefined (the manager was stored elsewhere), so it created a NEW manager.
+
+Result: DHT message handlers were attached to the NEW manager, but messages arrived on the ORIGINAL dedicated manager (which had 0 listeners).
+
+#### Solution Applied
+Check if `peerNode.connectionManager` already exists before creating a new one:
+
+```javascript
+// FIXED CODE:
+if (peerNode.connectionManager) {
+  console.log(`🔄 Using existing connection manager for ${peerId.substring(0, 8)}...`);
+  // Still attach DHT handlers to existing manager
+} else {
+  peerNode.connectionManager = ConnectionManagerFactory.createForConnection(...);
+}
+```
+
+#### Files Modified
+- `src/dht/KademliaDHT.js` - `getOrCreatePeerNode()` now reuses existing connection managers
+
+---
+
+### Root Cause #4: DHT Message Handler Race Condition ✅ FIXED
+
+#### Discovery
+After fixing the duplicate connection manager issue, bridge nodes still showed `0 connected, 0 routing` peers even though WebSocket connections were established. Logs showed:
+```
+🔔 DEBUG: Emitting dhtMessage event for find_node from 627871f3 (manager: WebSocketConnectionManager, listeners: 0)
+```
+
+The connection manager was emitting `dhtMessage` events but there were **0 listeners** - the DHT message handler wasn't attached yet.
+
+#### The Actual Issue
+In `KademliaDHT.handlePeerConnected()`, the DHT message handler was attached inside a `setTimeout()` callback:
+
+```javascript
+// BROKEN CODE (before fix):
+handlePeerConnected(peerId) {
+  // Double-check connection with a small delay to ensure it's stable
+  setTimeout(() => {
+    // ... DHT handler attached here, AFTER messages already arrived
+    this.getOrCreatePeerNode(peerId);
+  }, ...);
+}
+```
+
+This caused a race condition:
+1. Incoming connection arrives
+2. Connection manager starts receiving messages immediately
+3. `find_node` messages arrive with 0 listeners (handler not attached yet)
+4. `setTimeout` fires and attaches handler (too late!)
+
+#### Solution Applied
+Attach DHT message handlers IMMEDIATELY when peer connects, not after a delay:
+
+```javascript
+// FIXED CODE:
+handlePeerConnected(peerId) {
+  // CRITICAL FIX: Attach DHT message handlers IMMEDIATELY
+  this.getOrCreatePeerNode(peerId);
+  console.log(`✅ DHT handlers attached immediately for ${peerId.substring(0, 8)}`);
+  
+  // Double-check connection with a small delay (for other operations)
+  setTimeout(() => {
+    // ... other operations
+  }, ...);
+}
+```
+
+#### Files Modified
+- `src/dht/KademliaDHT.js` - `handlePeerConnected()` now attaches handlers immediately
+
+---
+
+## Final Status (December 29, 2025)
+
+After applying all four fixes:
+- **All 15 DHT nodes are healthy** ✅
+- **Genesis node is healthy** ✅
+- **Both bridge nodes are healthy** ✅
+- **Bootstrap server is healthy** ✅
+
+The Oracle YZ mesh network is now fully operational.
+
+### Commits
+1. `60fde5e` - fix: metadata propagation bug in DHT peer handshakes
+2. `28fd95d` - fix: prevent duplicate connection manager creation for incoming connections
+3. `b830acf` - fix: attach DHT message handlers immediately on peer connection to prevent race condition

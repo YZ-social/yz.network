@@ -72,6 +72,9 @@ This implementation plan focuses on immediate diagnosis and recovery of the DHT 
   - Test manual WebSocket connections to specific node endpoints
   - **ROOT CAUSE #1 FIXED**: BUILD_ID mismatch - added volume mount for bundle-hash.json to all DHT nodes
   - **ROOT CAUSE #2 FIXED**: Metadata propagation bug - `_setMembershipToken()` was overwriting all metadata with just the token, causing bridge nodes to see `nodeType=undefined`, `isBridgeNode=undefined` for genesis peer
+  - **ROOT CAUSE #3 FIXED**: Duplicate connection manager creation - `getOrCreatePeerNode()` was creating new managers for incoming connections that already had dedicated managers
+  - **ROOT CAUSE #4 FIXED**: DHT message handler race condition - handlers were attached in `setTimeout()` callback, causing messages to arrive before handlers were ready
+  - **RESULT**: All 15 DHT nodes are now healthy ✅
   - _Requirements: 7.1, 7.2, 7.3_
 
 - [ ] 9. Fix peer-to-peer connection establishment
