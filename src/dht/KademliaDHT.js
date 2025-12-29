@@ -159,6 +159,14 @@ export class KademliaDHT extends EventEmitter {
     this._membershipToken = null; // Proves this node is part of DHT (private)
     this._isGenesisPeer = false; // Will be set by bootstrap server for first node (private)
 
+    // Data Transfer Metrics Configuration (Requirement 5: Metrics Safety)
+    // Metrics tracking is completely optional and fail-safe
+    this.metricsEnabled = options.metricsEnabled !== false; // Default: enabled
+    this.metricsTracker = null; // Will be set by ActiveDHTNode or BrowserDHTClient
+    this.metricsFailureCount = 0; // Track consecutive failures
+    this.metricsMaxFailures = 10; // Disable metrics after this many consecutive failures
+    this.metricsDisabledDueToFailures = false; // Flag to track if metrics were auto-disabled
+
     // Remove all legacy insecure genesis methods
     if (options.isGenesisPeer || options.genesisSecret) {
       console.warn('⚠️ Legacy genesis options ignored - use bootstrap server -createNewDHT flag');
@@ -279,6 +287,150 @@ export class KademliaDHT extends EventEmitter {
    */
   setupEventHandlers() {
     this.setupBootstrapEventHandlers();
+  }
+
+  /**
+   * Safe metrics recording method (Requirement 5: Data Transfer Metrics Safety)
+   * 
+   * This method ensures metrics recording never interferes with message processing.
+   * It handles all error cases gracefully and can auto-disable metrics if too many failures occur.
+   * 
+   * @param {number} bytesSent - Bytes sent (0 for received messages)
+   * @param {number} bytesReceived - Bytes received (0 for sent messages)
+   * @param {Object} message - The message object (optional, for size calculation)
+   * @returns {boolean} - True if metrics were recorded, false if skipped/failed
+   */
+  safeRecordMetrics(bytesSent, bytesReceived, message = null) {
+    // Skip if metrics are disabled by configuration
+    if (!this.metricsEnabled) {
+      return false;
+    }
+
+    // Skip if metrics were auto-disabled due to too many failures
+    if (this.metricsDisabledDueToFailures) {
+      return false;
+    }
+
+    // Skip if no metrics tracker is available
+    if (!this.metricsTracker || typeof this.metricsTracker.recordDataTransfer !== 'function') {
+      return false;
+    }
+
+    try {
+      // Calculate message size if message is provided and size not already known
+      let actualBytesSent = bytesSent;
+      let actualBytesReceived = bytesReceived;
+
+      if (message && (bytesSent === 0 && bytesReceived === 0)) {
+        // Need to calculate size from message
+        try {
+          const messageSize = this.calculateMessageSize(message);
+          // Determine direction based on context (caller should provide correct values)
+          // This is a fallback for when size wasn't pre-calculated
+          actualBytesReceived = messageSize;
+        } catch (sizeError) {
+          // Size calculation failed, skip metrics for this message
+          return false;
+        }
+      }
+
+      // Record the metrics
+      this.metricsTracker.recordDataTransfer(actualBytesSent, actualBytesReceived);
+
+      // Reset failure count on success
+      if (this.metricsFailureCount > 0) {
+        this.metricsFailureCount = 0;
+      }
+
+      return true;
+    } catch (error) {
+      // Increment failure count
+      this.metricsFailureCount++;
+
+      // Log warning (but don't spam logs)
+      if (this.metricsFailureCount <= 3 || this.metricsFailureCount % 10 === 0) {
+        console.warn(`⚠️ Metrics recording failed (${this.metricsFailureCount}/${this.metricsMaxFailures}): ${error.message}`);
+      }
+
+      // Auto-disable metrics if too many consecutive failures
+      if (this.metricsFailureCount >= this.metricsMaxFailures) {
+        this.metricsDisabledDueToFailures = true;
+        console.warn(`⚠️ Metrics auto-disabled after ${this.metricsMaxFailures} consecutive failures. System continues normally.`);
+      }
+
+      return false;
+    }
+  }
+
+  /**
+   * Calculate message size safely (Requirement 5.2: Handle JSON serialization errors gracefully)
+   * 
+   * @param {Object} message - The message to calculate size for
+   * @returns {number} - Size in bytes, or 0 if calculation fails
+   */
+  calculateMessageSize(message) {
+    if (!message) {
+      return 0;
+    }
+
+    try {
+      // Handle circular references and other JSON serialization issues
+      const seen = new WeakSet();
+      const safeStringify = (obj) => {
+        return JSON.stringify(obj, (key, value) => {
+          // Skip functions
+          if (typeof value === 'function') {
+            return undefined;
+          }
+          // Handle circular references
+          if (typeof value === 'object' && value !== null) {
+            if (seen.has(value)) {
+              return '[Circular]';
+            }
+            seen.add(value);
+          }
+          return value;
+        });
+      };
+
+      const jsonString = safeStringify(message);
+      return jsonString ? jsonString.length : 0;
+    } catch (error) {
+      // Return 0 if serialization fails - don't break message processing
+      return 0;
+    }
+  }
+
+  /**
+   * Enable or disable metrics tracking at runtime (Requirement 5.3: Make metrics optional)
+   * 
+   * @param {boolean} enabled - Whether to enable metrics
+   */
+  setMetricsEnabled(enabled) {
+    this.metricsEnabled = enabled;
+    
+    // Reset failure tracking when re-enabling
+    if (enabled) {
+      this.metricsFailureCount = 0;
+      this.metricsDisabledDueToFailures = false;
+    }
+
+    console.log(`📊 Metrics tracking ${enabled ? 'enabled' : 'disabled'}`);
+  }
+
+  /**
+   * Get metrics status for debugging (Requirement 5.4: Verify system operates identically)
+   * 
+   * @returns {Object} - Metrics status information
+   */
+  getMetricsStatus() {
+    return {
+      enabled: this.metricsEnabled,
+      trackerAvailable: !!(this.metricsTracker && typeof this.metricsTracker.recordDataTransfer === 'function'),
+      failureCount: this.metricsFailureCount,
+      maxFailures: this.metricsMaxFailures,
+      autoDisabled: this.metricsDisabledDueToFailures
+    };
   }
 
   /**
@@ -1824,16 +1976,10 @@ export class KademliaDHT extends EventEmitter {
    * Handle incoming message from peer
    */
   async handlePeerMessage(peerId, message) {
-    // Track received data if metrics tracker is available (fail-safe)
-    if (this.metricsTracker && this.metricsTracker.recordDataTransfer) {
-      try {
-        const messageSize = JSON.stringify(message).length;
-        this.metricsTracker.recordDataTransfer(0, messageSize);
-      } catch (error) {
-        // Silently ignore metrics errors to prevent breaking message handling
-        console.warn(`⚠️ Metrics tracking failed for received message: ${error.message}`);
-      }
-    }
+    // Track received data using safe metrics method (Requirement 5.1: Non-interfering metrics)
+    // Calculate size first, then record - ensures message processing continues even if metrics fail
+    const messageSize = this.calculateMessageSize(message);
+    this.safeRecordMetrics(0, messageSize);
 
     // Sleep/Wake detection for debugging (global message limit DISABLED)
     const currentTime = Date.now();
@@ -3372,24 +3518,17 @@ export class KademliaDHT extends EventEmitter {
    */
   async sendMessage(peerId, message) {
     try {
-      // Calculate message size for data transfer tracking (fail-safe)
-      let messageSize = 0;
-      if (this.metricsTracker && this.metricsTracker.recordDataTransfer) {
-        try {
-          messageSize = JSON.stringify(message).length;
-        } catch (error) {
-          // Silently ignore metrics errors to prevent breaking message sending
-          console.warn(`⚠️ Metrics tracking failed for sent message: ${error.message}`);
-        }
-      }
+      // Calculate message size for data transfer tracking using safe method (Requirement 5.1)
+      // Size is calculated before sending to ensure metrics don't block message delivery
+      const messageSize = this.calculateMessageSize(message);
       
       // Use getOrCreatePeerNode to ensure connection manager exists
       const peerNode = this.getOrCreatePeerNode(peerId);
       const result = await peerNode.connectionManager.sendMessage(peerId, message);
       
-      // Track data sent if metrics tracker is available and size was calculated
-      if (this.metricsTracker && this.metricsTracker.recordDataTransfer && messageSize > 0) {
-        this.metricsTracker.recordDataTransfer(messageSize, 0);
+      // Track data sent using safe metrics method (only after successful send)
+      if (messageSize > 0) {
+        this.safeRecordMetrics(messageSize, 0);
       }
       
       return result;

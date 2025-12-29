@@ -714,8 +714,23 @@ export class EnhancedBootstrapServer extends EventEmitter {
       console.log(`✅ Bridge request successful: ${requestId.substring(0, 16)}...`);
       pendingRequest.resolve(message.data);
     } else {
-      console.warn(`❌ Bridge request failed: ${message.error || 'Unknown error'}`);
-      pendingRequest.reject(new Error(message.error || 'Bridge request failed'));
+      // EMERGENCY MODE: Check if bridge provided network state for fallback
+      if (message.data?.emergencyMode && message.data?.networkState) {
+        console.log(`🚨 Bridge returned emergency mode data with network state`);
+        console.log(`   Connected peers: ${message.data.networkState.connectedPeerCount}`);
+        console.log(`   Routing table size: ${message.data.networkState.routingTableSize}`);
+        console.log(`   Available peers: ${message.data.networkState.availablePeers?.length || 0}`);
+        
+        // Store emergency data for the error handler to use
+        const error = new Error(message.error || 'Bridge request failed');
+        error.emergencyMode = true;
+        error.networkState = message.data.networkState;
+        error.availablePeers = message.data.networkState.availablePeers || [];
+        pendingRequest.reject(error);
+      } else {
+        console.warn(`❌ Bridge request failed: ${message.error || 'Unknown error'}`);
+        pendingRequest.reject(new Error(message.error || 'Bridge request failed'));
+      }
     }
   }
 
@@ -726,6 +741,17 @@ export class EnhancedBootstrapServer extends EventEmitter {
   async requestOnboardingPeerFromBridge(nodeId, metadata) {
     console.log(`🎲 Requesting onboarding peer for ${nodeId.substring(0, 8)}... from connected bridge nodes`);
 
+    // DEBUG: Log all connected clients and their metadata in detail
+    console.log(`🔍 DEBUG: Checking ${this.connectedClients.size} connected clients for bridge nodes:`);
+    for (const [clientNodeId, client] of this.connectedClients) {
+      console.log(`   Client ${clientNodeId.substring(0, 8)}...:`);
+      console.log(`      metadata: ${JSON.stringify(client.metadata || {})}`);
+      console.log(`      metadata.isBridgeNode: ${client.metadata?.isBridgeNode} (type: ${typeof client.metadata?.isBridgeNode})`);
+      console.log(`      metadata.nodeType: ${client.metadata?.nodeType}`);
+      console.log(`      ws.readyState: ${client.ws?.readyState}`);
+      console.log(`      isBridgeNode check: ${client.metadata && client.metadata.isBridgeNode}`);
+    }
+
     // Get connected bridge nodes
     const connectedBridgeNodes = [];
     for (const [bridgeNodeId, client] of this.connectedClients) {
@@ -733,6 +759,8 @@ export class EnhancedBootstrapServer extends EventEmitter {
         connectedBridgeNodes.push({ nodeId: bridgeNodeId, ws: client.ws, metadata: client.metadata });
       }
     }
+
+    console.log(`🔍 DEBUG: Found ${connectedBridgeNodes.length} bridge nodes`);
 
     if (connectedBridgeNodes.length === 0) {
       throw new Error('No bridge nodes connected');
@@ -846,6 +874,93 @@ export class EnhancedBootstrapServer extends EventEmitter {
       console.error(`❌ Failed to coordinate onboarding invitation: ${error.message}`);
       throw error;
     }
+  }
+
+  /**
+   * Get emergency bootstrap targets when DHT network is empty/sparse
+   * Returns connected DHT nodes (non-bridge) that can accept direct connections
+   */
+  getEmergencyBootstrapTargets(excludeNodeId) {
+    const targets = [];
+    
+    for (const [clientNodeId, client] of this.connectedClients.entries()) {
+      // Skip the requesting node
+      if (clientNodeId === excludeNodeId) continue;
+      
+      // Skip bridge nodes - they can't create invitation tokens
+      if (client.metadata?.isBridgeNode || client.metadata?.nodeType === 'bridge') continue;
+      
+      // Skip inactive browser tabs
+      if (client.metadata?.nodeType === 'browser' && client.metadata?.tabVisible === false) continue;
+      
+      // Check if WebSocket is still open
+      if (client.ws?.readyState !== 1) continue; // 1 = OPEN
+      
+      // This is a valid direct connection target
+      targets.push({
+        nodeId: clientNodeId,
+        metadata: {
+          ...client.metadata,
+          emergencyTarget: true,
+          directConnection: true
+        }
+      });
+    }
+    
+    console.log(`🚨 Emergency targets: Found ${targets.length} direct connection candidates (excluding ${excludeNodeId?.substring(0, 8)}...)`);
+    return targets;
+  }
+
+  /**
+   * Get genesis peer for emergency direct connection
+   * Used when no other peers are available
+   */
+  getGenesisPeerForEmergency(excludeNodeId) {
+    // Find the genesis peer from connected clients
+    for (const [clientNodeId, client] of this.connectedClients.entries()) {
+      if (clientNodeId === excludeNodeId) continue;
+      
+      // Check if this is the genesis peer
+      const peer = this.peers.get(clientNodeId);
+      if (peer?.isGenesisPeer) {
+        // Check if WebSocket is still open
+        if (client.ws?.readyState !== 1) continue;
+        
+        console.log(`🌟 Found genesis peer for emergency: ${clientNodeId.substring(0, 8)}...`);
+        return {
+          nodeId: clientNodeId,
+          metadata: {
+            ...client.metadata,
+            isGenesis: true,
+            emergencyTarget: true,
+            directConnection: true
+          }
+        };
+      }
+    }
+    
+    // Also check peers map for genesis
+    for (const [peerId, peer] of this.peers.entries()) {
+      if (peerId === excludeNodeId) continue;
+      if (!peer.isGenesisPeer) continue;
+      
+      const client = this.connectedClients.get(peerId);
+      if (client?.ws?.readyState === 1) {
+        console.log(`🌟 Found genesis peer from peers map: ${peerId.substring(0, 8)}...`);
+        return {
+          nodeId: peerId,
+          metadata: {
+            ...peer.metadata,
+            isGenesis: true,
+            emergencyTarget: true,
+            directConnection: true
+          }
+        };
+      }
+    }
+    
+    console.log(`⚠️ No genesis peer available for emergency connection`);
+    return null;
   }
 
   /**
@@ -1206,8 +1321,52 @@ export class EnhancedBootstrapServer extends EventEmitter {
         } catch (error) {
           console.error(`❌ Failed to get onboarding peer from bridge: ${error.message}`);
           
-          // Fallback to async coordination if synchronous fails
-          console.log(`📤 Falling back to async onboarding coordination...`);
+          // EMERGENCY BOOTSTRAP MODE: When bridge can't find DHT peers, provide direct connection alternatives
+          // This solves the chicken-and-egg problem where new nodes can't join an empty/sparse network
+          console.log(`🚨 EMERGENCY BOOTSTRAP MODE: Providing direct connection alternatives`);
+          
+          // Collect direct connection targets from connected clients
+          const directTargets = this.getEmergencyBootstrapTargets(nodeId);
+          
+          if (directTargets.length > 0) {
+            console.log(`✅ Emergency mode: Found ${directTargets.length} direct connection targets`);
+            
+            sendResponse({
+              type: 'response',
+              requestId: message.requestId,
+              success: true,
+              data: {
+                peers: directTargets,
+                isGenesis: false,
+                emergencyMode: true,
+                status: 'emergency_direct_connect',
+                message: `DHT network sparse - connecting directly to ${directTargets.length} available nodes`
+              }
+            });
+            return;
+          }
+          
+          // Last resort: Return genesis peer if available
+          const genesisPeer = this.getGenesisPeerForEmergency(nodeId);
+          if (genesisPeer) {
+            console.log(`✅ Emergency mode: Providing genesis peer as direct target`);
+            sendResponse({
+              type: 'response',
+              requestId: message.requestId,
+              success: true,
+              data: {
+                peers: [genesisPeer],
+                isGenesis: false,
+                emergencyMode: true,
+                status: 'emergency_genesis_connect',
+                message: 'DHT network empty - connecting directly to genesis peer'
+              }
+            });
+            return;
+          }
+          
+          // Absolute fallback: No peers available at all
+          console.warn(`⚠️ Emergency mode: No direct connection targets available`);
           sendResponse({
             type: 'response',
             requestId: message.requestId,
@@ -1215,8 +1374,9 @@ export class EnhancedBootstrapServer extends EventEmitter {
             data: {
               peers: [],
               isGenesis: false,
-              status: 'helper_coordinating',
-              message: `Onboarding peer lookup failed, retrying: ${error.message}`
+              emergencyMode: true,
+              status: 'network_empty',
+              message: 'No peers available - you may be the first node in the network'
             }
           });
           return;
@@ -1498,6 +1658,12 @@ export class EnhancedBootstrapServer extends EventEmitter {
   async handleClientRegistration(ws, message) {
     const { nodeId, metadata, membershipToken, protocolVersion, buildId } = message;
 
+    // DEBUG: Log incoming registration
+    console.log(`🔍 handleClientRegistration DEBUG - nodeId: ${nodeId?.substring(0, 8)}...`);
+    console.log(`   metadata: ${JSON.stringify(metadata || {})}`);
+    console.log(`   metadata.isBridgeNode: ${metadata?.isBridgeNode} (type: ${typeof metadata?.isBridgeNode})`);
+    console.log(`   metadata.nodeType: ${metadata?.nodeType}`);
+
     if (!nodeId) {
       ws.close(1002, 'Missing nodeId');
       return;
@@ -1535,6 +1701,11 @@ export class EnhancedBootstrapServer extends EventEmitter {
    * Handle new peer registration
    */
   async handleNewPeer(ws, { nodeId, metadata }) {
+    // DEBUG: Log incoming metadata
+    console.log(`🔍 handleNewPeer DEBUG - nodeId: ${nodeId?.substring(0, 8)}...`);
+    console.log(`   metadata: ${JSON.stringify(metadata || {})}`);
+    console.log(`   metadata.isBridgeNode: ${metadata?.isBridgeNode} (type: ${typeof metadata?.isBridgeNode})`);
+    
     // Check peer limit
     if (this.peers.size >= this.options.maxPeers) {
       ws.send(JSON.stringify({

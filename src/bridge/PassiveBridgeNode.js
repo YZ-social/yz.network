@@ -889,8 +889,53 @@ export class PassiveBridgeNode extends NodeDHTClient {
 
     } catch (error) {
       console.error(`❌ Onboarding peer discovery failed: ${error.message}`);
-      await this.sendOnboardingPeerResult(bootstrapPeerId, requestId, false, null, error.message);
+      
+      // EMERGENCY MODE: Provide network state information to help bootstrap server
+      // This allows bootstrap to make informed decisions about direct connections
+      const networkState = this.getNetworkStateForEmergency();
+      
+      await this.sendOnboardingPeerResult(bootstrapPeerId, requestId, false, {
+        emergencyMode: true,
+        networkState,
+        reason: error.message
+      }, error.message);
     }
+  }
+
+  /**
+   * Get network state information for emergency bootstrap mode
+   * Helps bootstrap server understand why DHT lookup failed
+   */
+  getNetworkStateForEmergency() {
+    const connectedPeers = this.dht.getConnectedPeers ? this.dht.getConnectedPeers() : [];
+    const routingTableSize = this.dht.routingTable?.getAllNodes?.()?.length || 0;
+    
+    // Get list of connected non-bridge peers that could potentially help
+    const availablePeers = [];
+    for (const peerId of connectedPeers) {
+      const peerNode = this.dht.routingTable?.getNode?.(peerId);
+      if (!peerNode) continue;
+      
+      // Skip bridge nodes
+      if (peerNode.metadata?.isBridgeNode || peerNode.metadata?.nodeType === 'bridge') continue;
+      
+      // Skip inactive browser tabs
+      if (peerNode.metadata?.nodeType === 'browser' && peerNode.metadata?.tabVisible === false) continue;
+      
+      availablePeers.push({
+        nodeId: peerId,
+        metadata: peerNode.metadata || {},
+        connected: true
+      });
+    }
+    
+    return {
+      connectedPeerCount: connectedPeers.length,
+      routingTableSize,
+      availablePeers,
+      bridgeNodeId: this.dht.localNodeId?.toString(),
+      timestamp: Date.now()
+    };
   }
 
   /**

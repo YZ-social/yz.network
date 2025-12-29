@@ -486,35 +486,47 @@ export class ActiveDHTNode extends NodeDHTClient {
 
   /**
    * Record data transfer (bytes sent/received)
+   * Fail-safe implementation that never throws (Requirement 5.1, 5.3)
    */
   recordDataTransfer(bytesSent = 0, bytesReceived = 0) {
-    // Update totals
-    this.metrics.bytesSent += bytesSent;
-    this.metrics.bytesReceived += bytesReceived;
+    try {
+      // Validate inputs - ensure they're numbers
+      const safeSent = typeof bytesSent === 'number' && !isNaN(bytesSent) ? Math.max(0, bytesSent) : 0;
+      const safeReceived = typeof bytesReceived === 'number' && !isNaN(bytesReceived) ? Math.max(0, bytesReceived) : 0;
 
-    // Add sample for rate calculation
-    const sample = {
-      timestamp: Date.now(),
-      sent: bytesSent,
-      received: bytesReceived
-    };
+      // Update totals
+      this.metrics.bytesSent += safeSent;
+      this.metrics.bytesReceived += safeReceived;
 
-    if (!this.metrics.dataTransferSamples) {
-      this.metrics.dataTransferSamples = [];
+      // Add sample for rate calculation
+      const sample = {
+        timestamp: Date.now(),
+        sent: safeSent,
+        received: safeReceived
+      };
+
+      // Ensure dataTransferSamples array exists
+      if (!this.metrics.dataTransferSamples) {
+        this.metrics.dataTransferSamples = [];
+      }
+
+      this.metrics.dataTransferSamples.push(sample);
+
+      // Keep only last 100 samples (about 10 minutes at 6 samples/minute)
+      if (this.metrics.dataTransferSamples.length > 100) {
+        this.metrics.dataTransferSamples.shift();
+      }
+
+      // Clean up old samples (older than 5 minutes)
+      const fiveMinutesAgo = Date.now() - 300000;
+      this.metrics.dataTransferSamples = this.metrics.dataTransferSamples.filter(
+        sample => sample && sample.timestamp > fiveMinutesAgo
+      );
+    } catch (error) {
+      // Silently ignore errors - metrics should never break the system
+      // This ensures Requirement 5.3: metrics tracking fails gracefully
+      console.warn(`⚠️ ActiveDHTNode metrics recording failed: ${error.message}`);
     }
-
-    this.metrics.dataTransferSamples.push(sample);
-
-    // Keep only last 100 samples (about 10 minutes at 6 samples/minute)
-    if (this.metrics.dataTransferSamples.length > 100) {
-      this.metrics.dataTransferSamples.shift();
-    }
-
-    // Clean up old samples (older than 5 minutes)
-    const fiveMinutesAgo = Date.now() - 300000;
-    this.metrics.dataTransferSamples = this.metrics.dataTransferSamples.filter(
-      sample => sample.timestamp > fiveMinutesAgo
-    );
   }
 
   /**

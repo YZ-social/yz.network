@@ -51,6 +51,9 @@ services:
       - NODE_NAME=bridge-node-1
       - METRICS_PORT=9090
       - BRIDGE_AUTH=${BRIDGE_AUTH:-default-bridge-auth-key}
+    volumes:
+      # Mount bundle-hash.json for version checking synchronization
+      - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
@@ -84,6 +87,9 @@ services:
       - NODE_NAME=bridge-node-2
       - METRICS_PORT=9090
       - BRIDGE_AUTH=${BRIDGE_AUTH:-default-bridge-auth-key}
+    volumes:
+      # Mount bundle-hash.json for version checking synchronization
+      - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
