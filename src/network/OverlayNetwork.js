@@ -373,6 +373,14 @@ export class OverlayNetwork extends EventEmitter {
 
     // Check if we're the destination
     if (destination === this.dht.localNodeId.toString()) {
+      // Check if this is a DHT-specific routed message that needs special handling
+      if (payload && (payload.type === 'routed_dht_request' || payload.type === 'routed_dht_response')) {
+        // Forward to DHT for processing
+        console.log(`📥 Forwarding routed DHT message (${payload.type}) to DHT handler`);
+        await this.dht.handlePeerMessage(source, payload);
+        return;
+      }
+      
       this.emit('routedMessage', {
         source,
         payload,

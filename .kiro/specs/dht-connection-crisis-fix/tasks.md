@@ -95,6 +95,12 @@ This implementation plan focuses on immediate diagnosis and recovery of the DHT 
   - Verify WebSocket servers are actually listening on advertised addresses
   - Debug nginx WebSocket upgrade request routing
   - Test if nodes can connect to each other using internal Docker network names
+  - **BROWSER RELAY FIX IMPLEMENTED**:
+    - Modified `sendFindNode()` to use OverlayNetwork routing when no direct connection exists
+    - Added `sendRoutedFindNode()` method for routing find_node queries through connected peers
+    - Added `handleRoutedDHTRequest()` and `handleRoutedDHTResponse()` handlers in KademliaDHT
+    - Updated OverlayNetwork `handleRoutedMessage()` to forward DHT-specific routed messages
+    - This allows browsers to query peers they're not directly connected to by routing through existing connections
   - _Requirements: 7.2, 7.3, 7.4_
 
 - [ ] 10. Checkpoint - Verify basic connectivity is restored

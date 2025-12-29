@@ -2080,6 +2080,14 @@ export class KademliaDHT extends EventEmitter {
           console.log(`📥 [Push] Received push_request from ${peerId.substring(0, 8)}... for topic ${message.topicID?.substring(0, 8) || 'unknown'}...`);
           this.emit('pubsub_push_request', message);
           break;
+        case 'routed_dht_request':
+          // Handle routed DHT request (forwarded through OverlayNetwork)
+          await this.handleRoutedDHTRequest(peerId, message);
+          break;
+        case 'routed_dht_response':
+          // Handle routed DHT response (forwarded through OverlayNetwork)
+          await this.handleRoutedDHTResponse(peerId, message);
+          break;
         default:
           console.warn(`Unknown message type from ${peerId}: ${message.type}`);
       }
@@ -3072,8 +3080,21 @@ export class KademliaDHT extends EventEmitter {
     // Record this find_node request
     this.findNodeRateLimit.set(peerId, Date.now());
 
-    // Verify connection before sending request
-    if (!this.isPeerConnected(peerId)) {
+    // Check if we have a direct connection to the peer
+    const hasDirectConnection = this.isPeerConnected(peerId);
+    
+    // BROWSER RELAY FIX: If no direct connection, try to use OverlayNetwork routing
+    // This allows browsers to query peers they're not directly connected to
+    // by routing through their existing connections
+    if (!hasDirectConnection) {
+      // Check if we can route through OverlayNetwork
+      if (this.overlayNetwork && options.allowRouting !== false) {
+        const connectedPeers = this.getConnectedPeers();
+        if (connectedPeers.length > 0) {
+          console.log(`🔄 No direct connection to ${peerId.substring(0, 8)}... - attempting routed find_node via OverlayNetwork`);
+          return this.sendRoutedFindNode(peerId, targetId, options);
+        }
+      }
       throw new Error(`No connection to peer ${peerId}`);
     }
 
@@ -3124,6 +3145,65 @@ export class KademliaDHT extends EventEmitter {
   }
 
   /**
+   * Send find_node request via OverlayNetwork routing (for peers we're not directly connected to)
+   * This allows browsers to query peers through their existing connections
+   */
+  async sendRoutedFindNode(peerId, targetId, options = {}) {
+    const requestId = this.generateRequestId();
+    const timeout = options.timeout || 15000; // Longer timeout for routed requests
+
+    console.log(`🔄 Sending routed find_node to ${peerId.substring(0, 8)}... via OverlayNetwork (requestId: ${requestId})`);
+
+    // Create the find_node message
+    const findNodeMessage = {
+      type: 'find_node',
+      requestId: requestId,
+      target: targetId.toString(),
+      nodeId: this.localNodeId.toString()
+    };
+
+    // Wrap in a routed DHT message envelope
+    const routedMessage = {
+      type: 'routed_dht_request',
+      requestId: requestId,
+      source: this.localNodeId.toString(),
+      destination: peerId,
+      payload: findNodeMessage,
+      timestamp: Date.now()
+    };
+
+    // Set up response handler
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        this.pendingRequests.delete(requestId);
+        reject(new Error(`Routed find_node timeout for ${peerId.substring(0, 8)}...`));
+      }, timeout);
+
+      this.pendingRequests.set(requestId, {
+        resolve: (response) => {
+          clearTimeout(timeoutId);
+          this.pendingRequests.delete(requestId);
+          resolve(response);
+        },
+        reject: (error) => {
+          clearTimeout(timeoutId);
+          this.pendingRequests.delete(requestId);
+          reject(error);
+        },
+        timeout: timeoutId
+      });
+
+      // Send via OverlayNetwork routing
+      this.overlayNetwork.sendViaRouting(peerId, routedMessage, { timeout })
+        .catch(error => {
+          clearTimeout(timeoutId);
+          this.pendingRequests.delete(requestId);
+          reject(new Error(`Failed to route find_node to ${peerId.substring(0, 8)}...: ${error.message}`));
+        });
+    });
+  }
+
+  /**
    * Handle find node request
    */
   async handleFindNode(peerId, message) {
@@ -3154,6 +3234,117 @@ export class KademliaDHT extends EventEmitter {
     console.log(`📤 FIND_NODE: Sending response to ${peerId.substring(0, 8)}... with ${response.nodes.length} nodes`);
     await this.sendMessage(peerId, response);
     console.log(`✅ FIND_NODE: Response sent successfully to ${peerId.substring(0, 8)}...`);
+  }
+
+  /**
+   * Handle routed DHT request (forwarded through OverlayNetwork)
+   * This allows peers to query nodes they're not directly connected to
+   */
+  async handleRoutedDHTRequest(fromPeer, message) {
+    const { source, destination, payload, requestId } = message;
+    
+    console.log(`🔄 Routed DHT request from ${source.substring(0, 8)}... to ${destination.substring(0, 8)}... (via ${fromPeer.substring(0, 8)}...)`);
+
+    // Check if we're the destination
+    if (destination === this.localNodeId.toString()) {
+      // We're the destination - process the request and send response back
+      console.log(`📥 Processing routed ${payload.type} request from ${source.substring(0, 8)}...`);
+      
+      try {
+        let responsePayload;
+        
+        // Handle the inner DHT request
+        switch (payload.type) {
+          case 'find_node':
+            const targetId = DHTNodeId.fromString(payload.target);
+            const closestNodes = this.routingTable.findClosestNodes(targetId, this.options.k);
+            responsePayload = {
+              type: 'find_node_response',
+              requestId: payload.requestId,
+              nodes: closestNodes.map(node => node.toCompact())
+            };
+            break;
+          case 'ping':
+            responsePayload = {
+              type: 'pong',
+              requestId: payload.requestId,
+              nodeId: this.localNodeId.toString(),
+              timestamp: Date.now()
+            };
+            break;
+          default:
+            console.warn(`Unsupported routed DHT request type: ${payload.type}`);
+            return;
+        }
+
+        // Send response back to source via routing
+        const routedResponse = {
+          type: 'routed_dht_response',
+          requestId: requestId,
+          source: this.localNodeId.toString(),
+          destination: source,
+          payload: responsePayload,
+          timestamp: Date.now()
+        };
+
+        // Try to send directly if connected, otherwise route
+        if (this.isPeerConnected(source)) {
+          await this.sendMessage(source, routedResponse);
+        } else if (this.overlayNetwork) {
+          await this.overlayNetwork.sendViaRouting(source, routedResponse);
+        } else {
+          console.warn(`Cannot send routed response to ${source.substring(0, 8)}... - no route available`);
+        }
+        
+        console.log(`✅ Sent routed ${responsePayload.type} response to ${source.substring(0, 8)}...`);
+      } catch (error) {
+        console.error(`Error processing routed DHT request: ${error.message}`);
+      }
+    } else {
+      // We're not the destination - forward the request
+      console.log(`🔀 Forwarding routed DHT request to ${destination.substring(0, 8)}...`);
+      
+      if (this.isPeerConnected(destination)) {
+        await this.sendMessage(destination, message);
+      } else if (this.overlayNetwork) {
+        await this.overlayNetwork.sendViaRouting(destination, message);
+      } else {
+        console.warn(`Cannot forward routed request to ${destination.substring(0, 8)}... - no route available`);
+      }
+    }
+  }
+
+  /**
+   * Handle routed DHT response (forwarded through OverlayNetwork)
+   */
+  async handleRoutedDHTResponse(fromPeer, message) {
+    const { source, destination, payload, requestId } = message;
+    
+    console.log(`🔄 Routed DHT response from ${source.substring(0, 8)}... to ${destination.substring(0, 8)}... (via ${fromPeer.substring(0, 8)}...)`);
+
+    // Check if we're the destination
+    if (destination === this.localNodeId.toString()) {
+      // We're the destination - resolve the pending request
+      console.log(`📥 Received routed ${payload.type} response from ${source.substring(0, 8)}...`);
+      
+      const pending = this.pendingRequests.get(requestId);
+      if (pending) {
+        pending.resolve(payload);
+      } else {
+        console.warn(`No pending request found for routed response ${requestId}`);
+      }
+    } else {
+      // We're not the destination - forward the response
+      console.log(`🔀 Forwarding routed DHT response to ${destination.substring(0, 8)}...`);
+      
+      if (this.isPeerConnected(destination)) {
+        await this.sendMessage(destination, message);
+      } else if (this.overlayNetwork) {
+        await this.overlayNetwork.sendViaRouting(destination, message);
+      } else {
+        console.warn(`Cannot forward routed response to ${destination.substring(0, 8)}... - no route available`);
+      }
+    }
   }
 
   /**
