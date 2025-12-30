@@ -9,7 +9,7 @@
 import WebSocket from 'ws';
 
 const BOOTSTRAP_URL = 'wss://imeyouwe.com/ws';
-const BUILD_ID = '1175e908e202515e8b1a';
+const BUILD_ID = '4dc3012681af4cde9c5a'; // Server's current build ID
 
 async function checkBootstrapState() {
   console.log('🔍 CHECKING BOOTSTRAP SERVER STATE');
@@ -70,15 +70,33 @@ async function checkBootstrapState() {
       console.log(`📥 ${msg.type}:`, JSON.stringify(msg, null, 2));
       
       if (msg.type === 'registered') {
-        // Request peer list
+        // Request peer list using get_peers_or_genesis (what browser uses)
+        console.log('📤 Sending get_peers_or_genesis request...');
         ws.send(JSON.stringify({
-          type: 'get_peers',
+          type: 'get_peers_or_genesis',
+          requestId: 'diag_' + Date.now(),
           nodeId: 'diagnostic_' + Date.now(),
-          maxPeers: 100
+          maxPeers: 100,
+          metadata: {
+            nodeType: 'browser',
+            capabilities: ['websocket']
+          }
         }));
       }
       
       if (msg.type === 'peer_list' || msg.type === 'response') {
+        console.log('\n📊 PEER LIST RECEIVED:');
+        if (msg.data?.peers) {
+          console.log(`   Total peers: ${msg.data.peers.length}`);
+          for (const peer of msg.data.peers) {
+            console.log(`   - ${peer.nodeId?.substring(0, 12)}... (${peer.metadata?.nodeType || 'unknown'})`);
+          }
+        } else if (msg.peers) {
+          console.log(`   Total peers: ${msg.peers.length}`);
+          for (const peer of msg.peers) {
+            console.log(`   - ${peer.nodeId?.substring(0, 12)}... (${peer.metadata?.nodeType || 'unknown'})`);
+          }
+        }
         clearTimeout(timeout);
         setTimeout(() => {
           ws.close();

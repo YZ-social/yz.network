@@ -157,7 +157,15 @@ export class EnhancedBootstrapServer extends EventEmitter {
     // console.log('🔗 Initializing bridge connection pool...');
     // await this.bridgePool.initialize();
     // console.log('✅ Bridge connection pool initialized');
-    console.log('🔗 Bridge connection pool disabled - using existing connected bridge nodes');
+    // FIXED: Re-enable bridge connection pool as fallback when no bridge nodes are connected
+    console.log('🔗 Initializing bridge connection pool (fallback for on-demand connections)...');
+    try {
+      await this.bridgePool.initialize();
+      console.log('✅ Bridge connection pool initialized');
+    } catch (poolError) {
+      console.warn(`⚠️ Bridge connection pool initialization failed: ${poolError.message}`);
+      console.log('   Will rely on bridge nodes connecting to bootstrap server');
+    }
 
     this.isStarted = true;
 
@@ -737,19 +745,18 @@ export class EnhancedBootstrapServer extends EventEmitter {
   /**
    * Request onboarding peer from bridge (using connected bridge nodes)
    * FIXED: Uses existing connected bridge nodes with proper message handling
+   * FALLBACK: Uses connection pool if no bridge nodes are connected
    */
   async requestOnboardingPeerFromBridge(nodeId, metadata) {
-    console.log(`🎲 Requesting onboarding peer for ${nodeId.substring(0, 8)}... from connected bridge nodes`);
+    console.log(`🎲 Requesting onboarding peer for ${nodeId.substring(0, 8)}... from bridge nodes`);
 
     // DEBUG: Log all connected clients and their metadata in detail
     console.log(`🔍 DEBUG: Checking ${this.connectedClients.size} connected clients for bridge nodes:`);
     for (const [clientNodeId, client] of this.connectedClients) {
       console.log(`   Client ${clientNodeId.substring(0, 8)}...:`);
-      console.log(`      metadata: ${JSON.stringify(client.metadata || {})}`);
-      console.log(`      metadata.isBridgeNode: ${client.metadata?.isBridgeNode} (type: ${typeof client.metadata?.isBridgeNode})`);
+      console.log(`      metadata.isBridgeNode: ${client.metadata?.isBridgeNode}`);
       console.log(`      metadata.nodeType: ${client.metadata?.nodeType}`);
       console.log(`      ws.readyState: ${client.ws?.readyState}`);
-      console.log(`      isBridgeNode check: ${client.metadata && client.metadata.isBridgeNode}`);
     }
 
     // Get connected bridge nodes
@@ -760,10 +767,12 @@ export class EnhancedBootstrapServer extends EventEmitter {
       }
     }
 
-    console.log(`🔍 DEBUG: Found ${connectedBridgeNodes.length} bridge nodes`);
+    console.log(`🔍 DEBUG: Found ${connectedBridgeNodes.length} connected bridge nodes`);
 
+    // FALLBACK: If no bridge nodes connected, try using the connection pool
     if (connectedBridgeNodes.length === 0) {
-      throw new Error('No bridge nodes connected');
+      console.log(`⚠️ No bridge nodes connected, trying connection pool fallback...`);
+      return await this.requestOnboardingPeerViaPool(nodeId, metadata);
     }
 
     // Select a random bridge node
@@ -828,6 +837,52 @@ export class EnhancedBootstrapServer extends EventEmitter {
     } catch (error) {
       console.warn(`❌ Bridge request failed: ${error.message}`);
       throw new Error('No bridge nodes available for onboarding coordination');
+    }
+  }
+
+  /**
+   * Request onboarding peer via connection pool (fallback when no bridge nodes connected)
+   * Uses the BridgeConnectionPool to connect to bridge nodes on-demand
+   */
+  async requestOnboardingPeerViaPool(nodeId, metadata) {
+    console.log(`🔗 Using connection pool to request onboarding peer for ${nodeId.substring(0, 8)}...`);
+
+    if (!this.bridgePool) {
+      throw new Error('Bridge connection pool not initialized');
+    }
+
+    try {
+      // Use the connection pool to send the request
+      const result = await this.bridgePool.sendRequest({
+        type: 'get_onboarding_peer',
+        newNodeId: nodeId,
+        newNodeMetadata: metadata,
+        requestId: `pool_onboarding_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      });
+
+      if (result && result.inviterPeerId) {
+        console.log(`✅ Got onboarding peer via pool: ${result.inviterPeerId.substring(0, 8)}...`);
+        return result;
+      } else if (result && result.emergencyMode && result.networkState) {
+        // Bridge returned emergency mode data
+        console.log(`🚨 Bridge returned emergency mode via pool`);
+        const error = new Error('Bridge returned emergency mode');
+        error.emergencyMode = true;
+        error.networkState = result.networkState;
+        error.availablePeers = result.networkState?.availablePeers || [];
+        throw error;
+      } else {
+        throw new Error('Invalid response from bridge via pool');
+      }
+    } catch (error) {
+      console.warn(`❌ Connection pool request failed: ${error.message}`);
+      
+      // Preserve emergency mode data if present
+      if (error.emergencyMode) {
+        throw error;
+      }
+      
+      throw new Error(`Bridge connection pool failed: ${error.message}`);
     }
   }
 
@@ -1367,7 +1422,38 @@ export class EnhancedBootstrapServer extends EventEmitter {
           // This solves the chicken-and-egg problem where new nodes can't join an empty/sparse network
           console.log(`🚨 EMERGENCY BOOTSTRAP MODE: Providing direct connection alternatives`);
           
-          // Collect direct connection targets from connected clients
+          // FIRST: Check if bridge provided available peers in emergency response
+          // Bridge nodes have DHT routing tables with peers that may not be connected to bootstrap
+          if (error.emergencyMode && error.availablePeers && error.availablePeers.length > 0) {
+            console.log(`✅ Emergency mode: Using ${error.availablePeers.length} peers from bridge's DHT routing table`);
+            
+            // Format peers for response
+            const bridgePeers = error.availablePeers.map(peer => ({
+              nodeId: peer.nodeId,
+              metadata: {
+                ...peer.metadata,
+                emergencyTarget: true,
+                directConnection: true,
+                fromBridgeRouting: true
+              }
+            }));
+            
+            sendResponse({
+              type: 'response',
+              requestId: message.requestId,
+              success: true,
+              data: {
+                peers: bridgePeers,
+                isGenesis: false,
+                emergencyMode: true,
+                status: 'emergency_bridge_routing',
+                message: `DHT network sparse - connecting to ${bridgePeers.length} peers from bridge routing table`
+              }
+            });
+            return;
+          }
+          
+          // FALLBACK: Collect direct connection targets from connected clients
           const directTargets = this.getEmergencyBootstrapTargets(nodeId);
           
           if (directTargets.length > 0) {

@@ -76,7 +76,7 @@ This implementation fixes the critical bug where browser clients cannot create P
   - **Property 3: Handler Attachment Before Messages**
   - **Validates: Requirements 2.2**
 
-- [ ] 4. Checkpoint - Verify fix with manual testing
+- [x] 4. Checkpoint - Verify fix with manual testing
   - Test browser client can send find_node and receive response
   - Test PubSub channel creation works
   - Ensure all tests pass, ask the user if questions arise.
