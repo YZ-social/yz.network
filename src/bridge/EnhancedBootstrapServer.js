@@ -2882,11 +2882,22 @@ export class EnhancedBootstrapServer extends EventEmitter {
    * Handle client disconnection
    */
   handleClientDisconnection(ws) {
-    // Find and remove the peer
+    // Find and remove the peer from peers map
     for (const [nodeId, peer] of this.peers) {
       if (peer.ws === ws) {
         console.log(`🔌 Peer disconnected: ${nodeId.substring(0, 8)}...`);
         this.peers.delete(nodeId);
+        break;
+      }
+    }
+
+    // CRITICAL FIX: Also remove from connectedClients to prevent stale WebSocket references
+    // This fixes the bug where bridge nodes appear connected but have closed WebSockets
+    for (const [nodeId, client] of this.connectedClients) {
+      if (client.ws === ws) {
+        const isBridge = client.metadata?.isBridgeNode || client.metadata?.nodeType === 'bridge';
+        console.log(`🔌 Client disconnected: ${nodeId.substring(0, 8)}...${isBridge ? ' (bridge node)' : ''}`);
+        this.connectedClients.delete(nodeId);
         break;
       }
     }
