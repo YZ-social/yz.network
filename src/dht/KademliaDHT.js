@@ -3929,6 +3929,17 @@ export class KademliaDHT extends EventEmitter {
   }
 
   /**
+   * Check if the DHT is connected to the network
+   * Returns true if DHT is started and has at least one connected peer
+   */
+  isConnected() {
+    if (!this.isStarted) {
+      return false;
+    }
+    return this.getConnectedPeers().length > 0;
+  }
+
+  /**
    * Get all connected peers from all connection managers
    * REFACTORED: Uses routing table to check each node's connectionManager (single-connection architecture)
    */
