@@ -9,7 +9,8 @@ export default {
     '**/test/Howard/*.test.js',
     '**/test/pubsub/*.test.js',
     '**/test/bridge/*.test.js',
-    '**/test/network/*.test.js'
+    '**/test/network/*.test.js',
+    '**/test/unit/*.test.js'
   ],
   
   collectCoverageFrom: [

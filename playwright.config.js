@@ -42,7 +42,8 @@ export default defineConfig({
   // Shared settings for all the projects below
   use: {
     // Base URL to use in actions like `await page.goto('/')`
-    baseURL: process.env.CI ? 'http://localhost:3000' : 'http://localhost:3000',
+    // Use production server for browser tests (DHT requires production bootstrap)
+    baseURL: process.env.TEST_BASE_URL || 'https://imeyouwe.com',
 
     // Collect trace when retrying the failed test
     trace: 'on-first-retry',
