@@ -1625,15 +1625,19 @@ export class KademliaDHT extends EventEmitter {
       console.log(`   Listening address: ${targetPeerMetadata.listeningAddress}`);
       console.log(`   Node type: ${targetPeerMetadata.nodeType}`);
 
-      // Store metadata first so connectToPeer can use it
-      this.getOrCreatePeerNode(targetPeer, targetPeerMetadata);
+      try {
+        // Store metadata first so connectToPeer can use it
+        this.getOrCreatePeerNode(targetPeer, targetPeerMetadata);
 
-      // Use connectToPeer() which respects max connections via shouldConnectToPeer()
-      const connected = await this.connectToPeer(targetPeer);
-      if (connected) {
-        console.log(`✅ WebSocket connection initiated to ${targetPeer.substring(0, 8)}...`);
-      } else {
-        console.log(`⚠️ Could not connect to ${targetPeer.substring(0, 8)}... (max connections or already connected)`);
+        // Use connectToPeer() which respects max connections via shouldConnectToPeer()
+        const connected = await this.connectToPeer(targetPeer);
+        if (connected) {
+          console.log(`✅ WebSocket connection initiated to ${targetPeer.substring(0, 8)}...`);
+        } else {
+          console.log(`⚠️ Could not connect to ${targetPeer.substring(0, 8)}... (max connections or already connected)`);
+        }
+      } catch (error) {
+        console.error(`❌ Error connecting to invitee ${targetPeer.substring(0, 8)}...:`, error.message);
       }
     }
 
@@ -1644,20 +1648,30 @@ export class KademliaDHT extends EventEmitter {
       console.log(`   Public WSS address: ${fromPeerMetadata.publicWssAddress || 'not set'}`);
       console.log(`   Node type: ${fromPeerMetadata.nodeType}`);
 
-      // Check max connections before proceeding
-      if (!(await this.shouldConnectToPeer(fromPeer))) {
-        console.log(`⚠️ Skipping invitation from ${fromPeer.substring(0, 8)}... (max connections or already connected)`);
-        return;
-      }
+      try {
+        // Check max connections before proceeding
+        if (!(await this.shouldConnectToPeer(fromPeer))) {
+          console.log(`⚠️ Skipping invitation from ${fromPeer.substring(0, 8)}... (max connections or already connected)`);
+          return;
+        }
 
-      // Create peer node and let connection manager handle invitation logic
-      // CRITICAL: handleInvitation() has special browser/nodejs connection initiation logic
-      const peerNode = this.getOrCreatePeerNode(fromPeer, fromPeerMetadata);
+        // Create peer node and let connection manager handle invitation logic
+        // CRITICAL: handleInvitation() has special browser/nodejs connection initiation logic
+        const peerNode = this.getOrCreatePeerNode(fromPeer, fromPeerMetadata);
+        console.log(`🔍 DEBUG: Created peer node for ${fromPeer.substring(0, 8)}...`);
+        console.log(`   connectionManager: ${peerNode.connectionManager?.constructor.name || 'none'}`);
+        console.log(`   localNodeType: ${peerNode.connectionManager?.localNodeType || 'unknown'}`);
 
-      if (peerNode.connectionManager) {
-        await peerNode.connectionManager.handleInvitation(fromPeer, fromPeerMetadata);
-      } else {
-        console.warn(`⚠️ No connection manager for peer ${fromPeer.substring(0, 8)}...`);
+        if (peerNode.connectionManager) {
+          console.log(`🔗 Calling handleInvitation for ${fromPeer.substring(0, 8)}...`);
+          await peerNode.connectionManager.handleInvitation(fromPeer, fromPeerMetadata);
+          console.log(`✅ handleInvitation completed for ${fromPeer.substring(0, 8)}...`);
+        } else {
+          console.warn(`⚠️ No connection manager for peer ${fromPeer.substring(0, 8)}...`);
+        }
+      } catch (error) {
+        console.error(`❌ Error handling invitation from ${fromPeer.substring(0, 8)}...:`, error.message);
+        console.error(`   Stack:`, error.stack);
       }
     }
   }

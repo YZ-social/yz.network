@@ -330,6 +330,8 @@ export class WebSocketConnectionManager extends ConnectionManager {
     console.log(`🔍 handleInvitation DEBUG:`);
     console.log(`   localNodeType: ${this.localNodeType}, localIsBrowser: ${localIsBrowser}`);
     console.log(`   peer nodeType: ${peerMetadata.nodeType}, peerIsNodejs: ${peerIsNodejs}, peerIsBrowser: ${peerIsBrowser}`);
+    console.log(`   publicWssAddress: ${peerMetadata.publicWssAddress || 'not set'}`);
+    console.log(`   listeningAddress: ${peerMetadata.listeningAddress || 'not set'}`);
 
     // CRITICAL: Browsers can't be WebSocket servers!
     // Only browsers can initiate connections to Node.js servers
@@ -338,11 +340,16 @@ export class WebSocketConnectionManager extends ConnectionManager {
       const connectAddress = peerMetadata.publicWssAddress || peerMetadata.listeningAddress;
       console.log(`🔗 Browser initiating WebSocket connection to nodejs at ${connectAddress}`);
 
+      if (!connectAddress) {
+        console.error(`❌ No WebSocket address available for peer ${peerId.substring(0, 8)}...`);
+        throw new Error(`No WebSocket address for nodejs peer ${peerId}`);
+      }
+
       try {
         await this.createConnection(peerId, true, peerMetadata);
         console.log(`✅ Browser successfully connected to inviter ${peerId.substring(0, 8)}...`);
       } catch (error) {
-        console.error(`❌ Browser failed to connect to inviter: ${error.message}`);
+        console.error(`❌ Browser failed to connect to inviter ${peerId.substring(0, 8)}...: ${error.message}`);
         throw error;
       }
     } else if (!localIsBrowser && peerIsBrowser) {
