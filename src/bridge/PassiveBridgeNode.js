@@ -148,6 +148,15 @@ export class PassiveBridgeNode extends NodeDHTClient {
               console.log(`🌉 Bridge handling invitation_for_bridge request`);
               this.handleBridgeInvitation('bootstrap_server', message);
               return;
+            } else if (message.type === 'pong') {
+              // Handle pong response from bootstrap server - route to DHT's handlePong
+              console.log(`🏓 Bridge received pong from bootstrap server (requestId: ${message.requestId})`);
+              if (this.dht) {
+                // Use a synthetic bootstrap peer ID for the pong handler
+                const bootstrapPeerId = `bootstrap_${Date.now()}`;
+                this.dht.handlePong(bootstrapPeerId, message);
+              }
+              return;
             }
             
             // For all other messages, use the original handler
@@ -1163,6 +1172,14 @@ export class PassiveBridgeNode extends NodeDHTClient {
     // Store DHT peer connection AND dedicated manager (single-connection-per-manager architecture)
     this.dhtPeerConnections.set(peerId, connection);
     this.peerManagers.set(peerId, manager);
+
+    // CRITICAL FIX: Stop automatic pinging for bootstrap server connections
+    // Bootstrap server connections use a different ping mechanism (via BootstrapClient)
+    // The WebSocketConnectionManager's ping will fail because bootstrap server doesn't respond to DHT pings
+    if (peerId.startsWith('bootstrap_') && manager && manager.stopPing) {
+      console.log(`🛑 Stopping automatic ping for bootstrap server connection ${peerId.substring(0, 16)}...`);
+      manager.stopPing();
+    }
 
     // Set up event listeners on the DEDICATED manager for this specific peer
     if (manager) {

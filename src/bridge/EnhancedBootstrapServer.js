@@ -1115,6 +1115,9 @@ export class EnhancedBootstrapServer extends EventEmitter {
       } else if (message.type === 'onboarding_peer_response') {
         console.log(`📥 Received onboarding_peer_response from bridge (requestId: ${message.requestId?.substring(0, 16)}...)`);
         this.handleBridgeResponse(ws, message);
+      } else if (message.type === 'ping') {
+        // Handle ping from bridge nodes or any client - respond with pong to keep connection alive
+        this.handleClientPing(ws, message);
       } else {
         console.warn('Unknown message type from client:', message.type);
       }
@@ -3269,5 +3272,35 @@ export class EnhancedBootstrapServer extends EventEmitter {
 
     // Optional: Could track this state if needed for monitoring
     // For now, just acknowledge the message silently (no warning)
+  }
+
+  /**
+   * Handle ping message from client (bridge nodes or any connected client)
+   * Responds with pong to keep the WebSocket connection alive
+   */
+  handleClientPing(ws, message) {
+    const nodeId = ws.nodeId || message.from || 'unknown';
+    const requestId = message.requestId;
+    
+    // Update lastSeen for this client
+    if (ws.nodeId && this.connectedClients.has(ws.nodeId)) {
+      this.connectedClients.get(ws.nodeId).timestamp = Date.now();
+    }
+    if (ws.nodeId && this.peers.has(ws.nodeId)) {
+      this.peers.get(ws.nodeId).lastSeen = Date.now();
+    }
+    
+    // Send pong response
+    try {
+      ws.send(JSON.stringify({
+        type: 'pong',
+        requestId,
+        from: 'bootstrap_server',
+        timestamp: Date.now()
+      }));
+      console.log(`🏓 Sent pong to ${nodeId.substring(0, 8)}... (requestId: ${requestId?.substring(0, 16) || 'none'})`);
+    } catch (error) {
+      console.error(`❌ Failed to send pong to ${nodeId.substring(0, 8)}...:`, error.message);
+    }
   }
 }

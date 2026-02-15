@@ -813,6 +813,13 @@ export class WebSocketConnectionManager extends ConnectionManager {
       return;
     }
 
+    // CRITICAL FIX: Don't ping bootstrap server connections
+    // Bootstrap servers use a different ping mechanism and don't respond to DHT pings
+    if (this.peerId && this.peerId.startsWith('bootstrap_')) {
+      console.log(`⏭️ Skipping ping for bootstrap server connection ${this.peerId.substring(0, 16)}...`);
+      return;
+    }
+
     console.log(`🏓 Starting ping for ${this.peerId?.substring(0, 8)}... (interval: ${this.pingInterval}ms)`);
 
     // Send initial ping immediately
