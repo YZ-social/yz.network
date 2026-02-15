@@ -17,6 +17,8 @@ import { ConnectionVerifier, ConnectionType } from './helpers/ConnectionVerifier
 // Default configuration - can be overridden via environment variables
 const DEFAULT_BROWSER_COUNT = parseInt(process.env.MESH_BROWSER_COUNT || '4', 10);
 const MESH_FORMATION_TIMEOUT = parseInt(process.env.MESH_FORMATION_TIMEOUT || '120000', 10);
+// Production server URL - browser tests require production DHT infrastructure
+const BASE_URL = process.env.TEST_BASE_URL || 'https://imeyouwe.com';
 
 test.describe('Mesh Formation Tests', () => {
   let coordinator;
@@ -54,7 +56,7 @@ test.describe('Mesh Formation Tests', () => {
     console.log(`   Timeout: ${MESH_FORMATION_TIMEOUT}ms`);
 
     // Connect all browsers to DHT
-    await coordinator.connectAll('http://localhost:3000', 60000);
+    await coordinator.connectAll(BASE_URL, 60000);
 
     // Verify mesh formation
     const meshStatus = await coordinator.verifyMeshFormation(MESH_FORMATION_TIMEOUT);
@@ -91,7 +93,7 @@ test.describe('Mesh Formation Tests', () => {
    * Requirements: 2.4
    */
   test('should report mesh formation time', async () => {
-    await coordinator.connectAll('http://localhost:3000', 60000);
+    await coordinator.connectAll(BASE_URL, 60000);
     
     const startTime = Date.now();
     const meshStatus = await coordinator.verifyMeshFormation(MESH_FORMATION_TIMEOUT);
@@ -115,7 +117,7 @@ test.describe('Mesh Formation Tests', () => {
    * Requirements: 2.5
    */
   test('should report missing connections on timeout', async () => {
-    await coordinator.connectAll('http://localhost:3000', 60000);
+    await coordinator.connectAll(BASE_URL, 60000);
     
     // Use a very short timeout to likely get incomplete mesh
     const shortTimeout = 1000; // 1 second
@@ -225,7 +227,7 @@ test.describe('Property 3: Mesh Completeness Invariant', () => {
     
     try {
       await coordinator.launchBrowsers(browser);
-      await coordinator.connectAll('http://localhost:3000', 60000);
+      await coordinator.connectAll(BASE_URL, 60000);
       
       const meshStatus = await coordinator.verifyMeshFormation(MESH_FORMATION_TIMEOUT);
       
@@ -269,7 +271,7 @@ test.describe('Property 3: Mesh Completeness Invariant', () => {
     
     try {
       await coordinator.launchBrowsers(browser);
-      await coordinator.connectAll('http://localhost:3000', 60000);
+      await coordinator.connectAll(BASE_URL, 60000);
       
       const meshStatus = await coordinator.verifyMeshFormation(MESH_FORMATION_TIMEOUT);
       

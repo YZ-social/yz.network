@@ -34,7 +34,7 @@ Browser tests (Playwright) CANNOT be run locally against localhost. They require
 1. Commit and push changes to git
 2. Deploy to production server:
    ```bash
-   ssh oracle-yz "cd YZSocialC && git pull && ./DockerServerDown.sh && ./DockerServerUp.sh"
+   ssh oracle-yz "cd yz.network && git pull && ./DockerServerDown.sh && ./DockerServerUp.sh"
    ```
 3. Wait for Docker containers to start (builds the app inside container)
 4. Run Playwright tests locally - they connect to `https://imeyouwe.com`:

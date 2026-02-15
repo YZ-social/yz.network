@@ -86,12 +86,14 @@ export default defineConfig({
   ],
 
   // Run your local dev server before starting the tests
-  webServer: process.env.CI ? undefined : {
+  // Disabled by default - browser tests use production server at https://imeyouwe.com
+  // Set TEST_USE_LOCAL=true to use local server instead
+  webServer: process.env.TEST_USE_LOCAL ? {
     command: 'npm run test:server',
     url: 'http://localhost:3000',
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: true,
     timeout: 120 * 1000,
     stdout: 'pipe',
     stderr: 'pipe',
-  },
+  } : undefined,
 });

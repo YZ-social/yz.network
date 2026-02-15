@@ -81,7 +81,7 @@ class TestCoordinator {
    * @param {number} timeout - Connection timeout in ms
    * @returns {Promise<void>}
    */
-  async connectAll(baseUrl = 'http://localhost:3000', timeout = 60000) {
+  async connectAll(baseUrl = 'https://imeyouwe.com', timeout = 60000) {
     console.log(`🔗 Connecting ${this.pages.length} browsers to DHT...`);
     
     // Navigate all pages to the app
@@ -91,6 +91,24 @@ class TestCoordinator {
         timeout: 10000
       });
       console.log(`  ✅ Browser ${i + 1} loaded YZSocialC`);
+    }));
+    
+    // CRITICAL: Override document.hidden to prevent inactive tab detection
+    // In Playwright, multiple browser contexts may report as hidden which
+    // triggers the DHT's inactive tab handling and prevents connections
+    await Promise.all(this.pages.map(async (page) => {
+      await page.evaluate(() => {
+        // Force document.hidden to always return false
+        Object.defineProperty(document, 'hidden', {
+          get: () => false,
+          configurable: true
+        });
+        // Force visibilityState to always return 'visible'
+        Object.defineProperty(document, 'visibilityState', {
+          get: () => 'visible',
+          configurable: true
+        });
+      });
     }));
     
     // Start DHT on all browsers

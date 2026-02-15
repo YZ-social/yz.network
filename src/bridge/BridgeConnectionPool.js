@@ -574,6 +574,51 @@ export class BridgeConnectionPool extends EventEmitter {
     const maxRetries = Math.min(3, this.connections.size);
     let lastError = null;
     
+    // CRITICAL FIX: If no connections are ready, try to establish one first
+    let readyConnections = this.getReadyConnections();
+    if (readyConnections.length === 0) {
+      console.log(`⚠️ No ready bridge connections, attempting to establish connection...`);
+      
+      // Try to connect to any disconnected bridge
+      const disconnectedConnections = Array.from(this.connections.values())
+        .filter(conn => conn.state === ConnectionState.DISCONNECTED || 
+                       conn.state === ConnectionState.FAILED ||
+                       conn.state === ConnectionState.IDLE);
+      
+      if (disconnectedConnections.length > 0) {
+        // Try to connect to the first disconnected bridge with a timeout
+        const connectionPromises = disconnectedConnections.map(conn => {
+          return new Promise(async (resolve) => {
+            try {
+              // Reset connect attempts for idle connections
+              if (conn.state === ConnectionState.IDLE) {
+                conn.connectAttempts = 0;
+              }
+              await conn.connect();
+              resolve(conn);
+            } catch (error) {
+              console.warn(`⚠️ Failed to reconnect to ${conn.bridgeAddr}: ${error.message}`);
+              resolve(null);
+            }
+          });
+        });
+        
+        // Wait for any connection to succeed (with 15s timeout)
+        const timeoutPromise = new Promise(resolve => setTimeout(() => resolve(null), 15000));
+        const racePromises = [...connectionPromises, timeoutPromise];
+        
+        await Promise.race(racePromises);
+        
+        // Check again for ready connections
+        readyConnections = this.getReadyConnections();
+        if (readyConnections.length > 0) {
+          console.log(`✅ Successfully established ${readyConnections.length} bridge connection(s)`);
+        } else {
+          console.warn(`❌ Failed to establish any bridge connections`);
+        }
+      }
+    }
+    
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
         const connection = this.getConnection();
@@ -587,7 +632,7 @@ export class BridgeConnectionPool extends EventEmitter {
         console.warn(`⚠️ Request attempt ${attempt + 1} failed: ${error.message}`);
         
         // If it's a connection issue, try another bridge
-        if (error.message.includes('not ready') || error.message.includes('Connection lost')) {
+        if (error.message.includes('not ready') || error.message.includes('Connection lost') || error.message.includes('No bridge connections')) {
           continue;
         }
         

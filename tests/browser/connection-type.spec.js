@@ -15,6 +15,9 @@ import { TestCoordinator } from './helpers/TestCoordinator.js';
  * - Property 2: Browser-to-NodeJS connections use WebSocket
  */
 
+// Production server URL - browser tests require production DHT infrastructure
+const BASE_URL = process.env.TEST_BASE_URL || 'https://imeyouwe.com';
+
 test.describe('Connection Type Verification', () => {
   
   test.describe('Single Browser Connection Types', () => {
@@ -107,7 +110,7 @@ test.describe('Connection Type Verification', () => {
     });
 
     test('browser-to-browser connections should use WebRTC', async () => {
-      await coordinator.connectAll('http://localhost:3000', 60000);
+      await coordinator.connectAll(BASE_URL, 60000);
 
       console.log('Waiting for WebRTC mesh formation...');
       
@@ -158,7 +161,7 @@ test.describe('Connection Type Verification', () => {
     });
 
     test('all browser-to-browser connections use WebRTC connection manager', async () => {
-      await coordinator.connectAll('http://localhost:3000', 60000);
+      await coordinator.connectAll(BASE_URL, 60000);
       
       const meshStatus = await coordinator.verifyMeshFormation(120000);
       

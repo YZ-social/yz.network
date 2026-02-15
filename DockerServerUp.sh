@@ -2,6 +2,14 @@
 
 # DockerServerUp.sh - Start YZ Network services
 
+echo "📦 Building browser bundle..."
+npm run build
+
+echo ""
+echo "🐳 Rebuilding Docker image with latest code..."
+docker build -t itsmeront/yz-dht-node:latest .
+
+echo ""
 echo "🚀 Starting YZ Network production services..."
 docker compose -f docker-compose.production.yml up -d
 

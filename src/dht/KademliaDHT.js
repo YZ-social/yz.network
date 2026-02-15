@@ -1860,8 +1860,12 @@ export class KademliaDHT extends EventEmitter {
 
       // Disable bootstrap auto-reconnect to prevent reconnection every ~6 minutes
       // It will be re-enabled temporarily when sending invitations
-      if (this.bootstrap) {
+      // CRITICAL: Bridge nodes (passiveMode) must KEEP their bootstrap connection
+      // because they receive onboarding requests through it
+      if (this.bootstrap && !this.options.passiveMode) {
         this.bootstrap.disableAutoReconnect();
+      } else if (this.options.passiveMode) {
+        console.log(`🌉 Bridge node keeping bootstrap connection alive for onboarding requests`);
       }
 
       // Emit event for UI updates
