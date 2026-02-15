@@ -157,6 +157,21 @@ export class PassiveBridgeNode extends NodeDHTClient {
                 this.dht.handlePong(bootstrapPeerId, message);
               }
               return;
+            } else if (message.type === 'ping') {
+              // CRITICAL FIX: Handle keepalive ping from bootstrap server
+              // Respond with pong to keep the connection alive and prevent timeout
+              console.log(`🏓 Bridge received keepalive ping from bootstrap server (requestId: ${message.requestId})`);
+              try {
+                client.sendMessage({
+                  type: 'pong',
+                  requestId: message.requestId,
+                  timestamp: Date.now()
+                });
+                console.log(`🏓 Bridge sent pong response to bootstrap server`);
+              } catch (error) {
+                console.error(`❌ Failed to send pong to bootstrap server:`, error);
+              }
+              return;
             }
             
             // For all other messages, use the original handler

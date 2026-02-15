@@ -6,7 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { PROTOCOL_VERSION, BUILD_ID, checkVersionCompatibility } from '../version.js';
-import { BridgeConnectionPool } from './BridgeConnectionPool.js';
+// REMOVED: BridgeConnectionPool - bridge nodes now maintain persistent connections to bootstrap server
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1118,6 +1118,11 @@ export class EnhancedBootstrapServer extends EventEmitter {
       } else if (message.type === 'ping') {
         // Handle ping from bridge nodes or any client - respond with pong to keep connection alive
         this.handleClientPing(ws, message);
+      } else if (message.type === 'pong') {
+        // Handle pong response from bridge nodes - lastSeen already updated above
+        // Just log for debugging
+        const nodeId = ws.nodeId || 'unknown';
+        console.log(`🏓 Received pong from ${nodeId.substring(0, 8)}... (keepalive acknowledged)`);
       } else {
         console.warn('Unknown message type from client:', message.type);
       }
@@ -2920,6 +2925,13 @@ export class EnhancedBootstrapServer extends EventEmitter {
       this.cleanupStaleBridgeRequests();
     }, 60000);
 
+    // CRITICAL FIX: Send keepalive pings to bridge nodes every 2 minutes
+    // This prevents bridge node connections from timing out (5 minute timeout)
+    // Bridge nodes respond to pings, which updates their lastSeen timestamp
+    setInterval(() => {
+      this.sendBridgeKeepalives();
+    }, 2 * 60000); // Every 2 minutes (well under 5 minute timeout)
+
     // Log status every 5 minutes
     setInterval(() => {
       this.logStatus();
@@ -2996,6 +3008,50 @@ export class EnhancedBootstrapServer extends EventEmitter {
 
     if (stalePeers.length > 0) {
       console.log(`🧹 Cleaned up ${stalePeers.length} stale peers`);
+    }
+  }
+
+  /**
+   * Send keepalive pings to connected bridge nodes
+   * This prevents bridge connections from timing out due to inactivity
+   */
+  sendBridgeKeepalives() {
+    // Find all connected bridge nodes
+    const bridgeNodes = [];
+    for (const [nodeId, client] of this.connectedClients) {
+      if (client.metadata?.isBridgeNode === true || client.metadata?.nodeType === 'bridge') {
+        if (client.ws?.readyState === WebSocket.OPEN) {
+          bridgeNodes.push({ nodeId, ws: client.ws });
+        }
+      }
+    }
+
+    if (bridgeNodes.length === 0) {
+      console.log(`🏓 No connected bridge nodes to ping`);
+      return;
+    }
+
+    console.log(`🏓 Sending keepalive pings to ${bridgeNodes.length} bridge nodes`);
+
+    for (const { nodeId, ws } of bridgeNodes) {
+      try {
+        const requestId = `keepalive_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        ws.send(JSON.stringify({
+          type: 'ping',
+          requestId,
+          timestamp: Date.now()
+        }));
+        
+        // Update lastSeen when we send the ping (bridge will respond with pong)
+        const peer = this.peers.get(nodeId);
+        if (peer) {
+          peer.lastSeen = Date.now();
+        }
+        
+        console.log(`  🏓 Pinged bridge ${nodeId.substring(0, 8)}...`);
+      } catch (error) {
+        console.warn(`  ⚠️ Failed to ping bridge ${nodeId.substring(0, 8)}...: ${error.message}`);
+      }
     }
   }
 
