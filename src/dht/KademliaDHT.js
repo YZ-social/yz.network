@@ -48,6 +48,11 @@ export class KademliaDHT extends EventEmitter {
       lowConnectivity: 60 * 1000,  // 1 minute when few connections
       stable: this.options.pingInterval  // 5 minutes when network is stable
     };
+
+    // CRITICAL FIX: Store bootstrap metadata from options
+    // This metadata (including isBridgeNode for bridge nodes) is passed from NodeDHTClient.getBootstrapMetadata()
+    // and must be stored so it can be used in start() when registering with bootstrap server
+    this.bootstrapMetadata = options.bootstrapMetadata || {};
     this.currentPingInterval = this.adaptivePingInterval.startup;
 
     // Generate or use provided node ID
