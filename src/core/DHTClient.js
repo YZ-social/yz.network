@@ -228,6 +228,18 @@ export class DHTClient extends EventEmitter {
   }
 
   /**
+   * Check if the DHT is connected to the network
+   * Returns true if DHT is started and has at least one connected peer
+   */
+  isConnected() {
+    if (!this.dht || !this.dht.isStarted) {
+      return false;
+    }
+
+    return this.dht.isConnected();
+  }
+
+  /**
    * Store data in DHT
    */
   async store(key, value) {
