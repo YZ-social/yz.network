@@ -6,7 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { PROTOCOL_VERSION, BUILD_ID, checkVersionCompatibility } from '../version.js';
-// REMOVED: BridgeConnectionPool - bridge nodes now maintain persistent connections to bootstrap server
+import { BridgeConnectionPool } from './BridgeConnectionPool.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
