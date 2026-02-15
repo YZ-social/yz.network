@@ -3957,9 +3957,13 @@ export class KademliaDHT extends EventEmitter {
    */
   isConnected() {
     if (!this.isStarted) {
+      console.log(`🔍 isConnected: false (not started)`);
       return false;
     }
-    return this.getConnectedPeers().length > 0;
+    const peers = this.getConnectedPeers();
+    const result = peers.length > 0;
+    console.log(`🔍 isConnected: ${result} (${peers.length} peers: ${peers.map(p => p.substring(0, 8)).join(', ')})`);
+    return result;
   }
 
   /**
