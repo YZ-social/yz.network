@@ -54,11 +54,32 @@ test.describe('Debug Browser Connection', () => {
       const dht = window.YZSocialC?.dht;
       if (!dht) return { hasDHT: false };
       
+      // Explicitly call isConnected and log what happens
+      console.log('=== EXPLICIT isConnected() CALL ===');
+      console.log('dht.isConnected type:', typeof dht.isConnected);
+      console.log('dht.isStarted:', dht.isStarted);
+      
+      let isConnectedResult = false;
+      if (typeof dht.isConnected === 'function') {
+        console.log('Calling dht.isConnected()...');
+        isConnectedResult = dht.isConnected();
+        console.log('dht.isConnected() returned:', isConnectedResult);
+      } else {
+        console.log('WARNING: dht.isConnected is not a function!');
+        console.log('dht.isConnected value:', dht.isConnected);
+      }
+      
+      const connectedPeers = dht.getConnectedPeers?.() || [];
+      console.log('getConnectedPeers() returned:', connectedPeers.length, 'peers');
+      console.log('Peer IDs:', connectedPeers.map(p => p.substring(0, 8)).join(', '));
+      
       return {
         hasDHT: true,
         isStarted: dht.isStarted,
-        isConnected: dht.isConnected?.() || false,
-        connectedPeers: dht.getConnectedPeers?.()?.length || 0,
+        isConnected: isConnectedResult,
+        isConnectedType: typeof dht.isConnected,
+        connectedPeers: connectedPeers.length,
+        connectedPeerIds: connectedPeers.map(p => p.substring(0, 8)),
         routingTableSize: dht.routingTable?.getAllNodes?.()?.length || 0
       };
     });
@@ -72,11 +93,21 @@ test.describe('Debug Browser Connection', () => {
       const dht = window.YZSocialC?.dht;
       if (!dht) return { hasDHT: false };
       
+      console.log('=== FINAL isConnected() CALL ===');
+      let isConnectedResult = false;
+      if (typeof dht.isConnected === 'function') {
+        isConnectedResult = dht.isConnected();
+        console.log('Final dht.isConnected() returned:', isConnectedResult);
+      }
+      
+      const connectedPeers = dht.getConnectedPeers?.() || [];
+      
       return {
         hasDHT: true,
         isStarted: dht.isStarted,
-        isConnected: dht.isConnected?.() || false,
-        connectedPeers: dht.getConnectedPeers?.()?.length || 0,
+        isConnected: isConnectedResult,
+        connectedPeers: connectedPeers.length,
+        connectedPeerIds: connectedPeers.map(p => p.substring(0, 8)),
         routingTableSize: dht.routingTable?.getAllNodes?.()?.length || 0
       };
     });
