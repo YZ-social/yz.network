@@ -2192,11 +2192,24 @@ export class KademliaDHT extends EventEmitter {
     }
 
     // CRITICAL: Check if peer can accept connections before trying to initiate
-    // Browsers have canAcceptConnections=false and must initiate connections themselves
+    // This check is ONLY for WebSocket connections (Node.js → Browser)
+    // For WebRTC (Browser → Browser), both sides CAN initiate via WebRTC signaling
     const peerNode = this.routingTable.getNode(peerId);
     if (peerNode && peerNode.metadata && peerNode.metadata.canAcceptConnections === false) {
-      console.log(`🚫 Peer ${peerId.substring(0, 8)}... cannot accept connections - waiting for them to connect to us`);
-      return false;
+      // Check if this is a browser-to-browser connection (WebRTC)
+      // Use same detection as in localMetadata setup (line ~616)
+      const localNodeType = typeof process === 'undefined' ? 'browser' : 'nodejs';
+      const peerNodeType = peerNode.metadata.nodeType;
+      
+      if (localNodeType === 'browser' && peerNodeType === 'browser') {
+        // Browser-to-browser: Use WebRTC - both sides CAN initiate!
+        console.log(`🚀 Browser-to-browser connection to ${peerId.substring(0, 8)}... - using WebRTC (both can initiate)`);
+        // Continue with connection - WebRTC will handle signaling
+      } else {
+        // Node.js → Browser: Cannot initiate WebSocket - browser must connect to us
+        console.log(`🚫 Peer ${peerId.substring(0, 8)}... cannot accept WebSocket connections - waiting for them to connect to us`);
+        return false;
+      }
     }
 
     // CRITICAL FIX: Check if peer already has a connection manager that is connected
