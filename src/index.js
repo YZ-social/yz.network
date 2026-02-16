@@ -131,10 +131,55 @@ class App {
       dht: this.dht,
       visualizer: this.visualizer,
 
+      // Tab visibility state (exposed from BrowserDHTClient)
+      get tabState() { return this.dht?.tabState || 'active'; },
+      get disconnectTimer() { return this.dht?.disconnectTimer || null; },
+      get reconnectInProgress() { return this.dht?.reconnectInProgress || false; },
+      get savedSubscriptions() { return this.dht?.savedSubscriptions || []; },
+
       // Helper functions
       getStats: () => this.dht ? this.dht.getStats() : null,
       getNodes: () => this.dht ? this.dht.routingTable.getAllNodes() : [],
       getPeers: () => this.dht ? this.dht.routingTable.getAllNodes().filter(node => node.isConnected()).map(node => node.id.toString()) : [],
+      getNodeId: () => this.dht ? this.dht.localNodeId.toString() : null,
+      
+      async stopDHT() {
+        if (!this.dht) {
+          console.warn('DHT not initialized');
+          return false;
+        }
+        if (!this.dht.isStarted) {
+          console.log('DHT already stopped');
+          return true;
+        }
+        try {
+          console.log('Stopping DHT...');
+          await this.dht.stop();
+          console.log('DHT stopped successfully');
+          return true;
+        } catch (error) {
+          console.error('Failed to stop DHT:', error);
+          return false;
+        }
+      },
+
+      // PubSub helper
+      async createChannel(channelName) {
+        if (!this.pubsub) {
+          console.warn('PubSub not initialized - start DHT first');
+          return false;
+        }
+        try {
+          await this.pubsub.subscribe(channelName, (message) => {
+            console.log(`[${channelName}] Received:`, message);
+          });
+          console.log(`Created/subscribed to channel: ${channelName}`);
+          return true;
+        } catch (error) {
+          console.error('Failed to create channel:', error);
+          return false;
+        }
+      },
 
       // Development tools
       async testStore(key = 'test-key', value = 'test-value') {
