@@ -6,7 +6,8 @@ export default {
     '**/test/core/*.test.js',
     '**/test/dht/*.test.js',
     '**/test/local/*.test.js',
-    '**/test/Howard/*.test.js',
+    // Howard tests require full infrastructure (bootstrap + bridge nodes) - run separately
+    // '**/test/Howard/*.test.js',
     '**/test/pubsub/*.test.js',
     '**/test/bridge/*.test.js',
     '**/test/network/*.test.js',
