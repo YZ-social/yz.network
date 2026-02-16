@@ -139,8 +139,8 @@ class App {
 
       // Helper functions
       getStats: () => this.dht ? this.dht.getStats() : null,
-      getNodes: () => this.dht ? this.dht.routingTable.getAllNodes() : [],
-      getPeers: () => this.dht ? this.dht.routingTable.getAllNodes().filter(node => node.isConnected()).map(node => node.id.toString()) : [],
+      getNodes: () => this.dht?.routingTable ? this.dht.routingTable.getAllNodes() : [],
+      getPeers: () => this.dht?.routingTable ? this.dht.routingTable.getAllNodes().filter(node => node.isConnected()).map(node => node.id.toString()) : [],
       getNodeId: () => this.dht ? this.dht.localNodeId.toString() : null,
       
       async stopDHT() {
