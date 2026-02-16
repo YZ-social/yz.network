@@ -759,15 +759,15 @@ export class EnhancedBootstrapServer extends EventEmitter {
       console.log(`      ws.readyState: ${client.ws?.readyState}`);
     }
 
-    // Get connected bridge nodes
+    // Get connected bridge nodes with OPEN WebSocket connections
     const connectedBridgeNodes = [];
     for (const [bridgeNodeId, client] of this.connectedClients) {
-      if (client.metadata && client.metadata.isBridgeNode) {
+      if (client.metadata && client.metadata.isBridgeNode && client.ws?.readyState === 1) {
         connectedBridgeNodes.push({ nodeId: bridgeNodeId, ws: client.ws, metadata: client.metadata });
       }
     }
 
-    console.log(`🔍 DEBUG: Found ${connectedBridgeNodes.length} connected bridge nodes`);
+    console.log(`🔍 DEBUG: Found ${connectedBridgeNodes.length} connected bridge nodes with OPEN connections`);
 
     // FALLBACK: If no bridge nodes connected, try using the connection pool
     if (connectedBridgeNodes.length === 0) {
@@ -775,68 +775,88 @@ export class EnhancedBootstrapServer extends EventEmitter {
       return await this.requestOnboardingPeerViaPool(nodeId, metadata);
     }
 
-    // Select a random bridge node
-    const selectedBridge = connectedBridgeNodes[Math.floor(Math.random() * connectedBridgeNodes.length)];
-    console.log(`🎯 Selected bridge node: ${selectedBridge.nodeId.substring(0, 8)}...`);
+    // Shuffle bridge nodes for load balancing
+    const shuffledBridges = connectedBridgeNodes.sort(() => Math.random() - 0.5);
+    
+    // Try each bridge node until one succeeds
+    const errors = [];
+    for (let i = 0; i < shuffledBridges.length; i++) {
+      const selectedBridge = shuffledBridges[i];
+      console.log(`🎯 Trying bridge node ${i + 1}/${shuffledBridges.length}: ${selectedBridge.nodeId.substring(0, 8)}...`);
 
-    try {
-      // Generate unique request ID
-      const requestId = `onboarding_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      const request = {
-        type: 'get_onboarding_peer',
-        requestId,
-        newNodeId: nodeId,
-        newNodeMetadata: metadata
-      };
-
-      // Check WebSocket state before sending
-      const wsState = selectedBridge.ws.readyState;
-      const wsStateNames = ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'];
-      console.log(`📨 Sending onboarding request ${requestId.substring(0, 16)}... to bridge ${selectedBridge.nodeId.substring(0, 8)}...`);
-      console.log(`   WebSocket state: ${wsStateNames[wsState] || wsState} (${wsState})`);
-      
-      if (wsState !== 1) { // 1 = OPEN
-        console.warn(`⚠️ Bridge WebSocket not OPEN (state: ${wsStateNames[wsState]}), skipping send`);
-        throw new Error(`Bridge WebSocket not open (state: ${wsStateNames[wsState]})`);
-      }
-      
-      // Create promise that will be resolved by handleBridgeResponse
-      const result = await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          this.pendingBridgeRequests.delete(requestId);
-          console.warn(`⏰ Bridge request ${requestId.substring(0, 16)}... timed out after 10s`);
-          reject(new Error('Bridge request timeout'));
-        }, 10000); // 10 second timeout
-
-        // Store pending request
-        this.pendingBridgeRequests.set(requestId, {
-          resolve,
-          reject,
-          timeout,
-          timestamp: Date.now()
-        });
-
-        // Send request to bridge node
-        try {
-          selectedBridge.ws.send(JSON.stringify(request));
-          console.log(`✅ Onboarding request sent successfully to bridge ${selectedBridge.nodeId.substring(0, 8)}...`);
-        } catch (sendError) {
-          console.error(`❌ Failed to send onboarding request: ${sendError.message}`);
-          this.pendingBridgeRequests.delete(requestId);
-          clearTimeout(timeout);
-          reject(sendError);
+      try {
+        const result = await this.tryBridgeForOnboarding(selectedBridge, nodeId, metadata);
+        if (result && result.inviterPeerId) {
+          console.log(`✅ Got onboarding peer from bridge ${selectedBridge.nodeId.substring(0, 8)}...: ${result.inviterPeerId.substring(0, 8)}...`);
+          return result;
         }
+      } catch (error) {
+        console.warn(`⚠️ Bridge ${selectedBridge.nodeId.substring(0, 8)}... failed: ${error.message}`);
+        errors.push({ bridge: selectedBridge.nodeId.substring(0, 8), error: error.message });
+        // Continue to next bridge
+      }
+    }
+
+    // All bridges failed
+    console.error(`❌ All ${shuffledBridges.length} bridge nodes failed to find onboarding peer`);
+    errors.forEach(e => console.error(`   - ${e.bridge}...: ${e.error}`));
+    throw new Error(`All ${shuffledBridges.length} bridge nodes failed for onboarding coordination`);
+  }
+
+  /**
+   * Try a single bridge node for onboarding peer discovery
+   */
+  async tryBridgeForOnboarding(bridge, nodeId, metadata) {
+    const requestId = `onboarding_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const request = {
+      type: 'get_onboarding_peer',
+      requestId,
+      newNodeId: nodeId,
+      newNodeMetadata: metadata
+    };
+
+    // Check WebSocket state before sending
+    const wsState = bridge.ws.readyState;
+    const wsStateNames = ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'];
+    console.log(`📨 Sending onboarding request ${requestId.substring(0, 16)}... to bridge ${bridge.nodeId.substring(0, 8)}...`);
+    console.log(`   WebSocket state: ${wsStateNames[wsState] || wsState} (${wsState})`);
+    
+    if (wsState !== 1) { // 1 = OPEN
+      throw new Error(`Bridge WebSocket not open (state: ${wsStateNames[wsState]})`);
+    }
+    
+    // Create promise that will be resolved by handleBridgeResponse
+    const result = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingBridgeRequests.delete(requestId);
+        console.warn(`⏰ Bridge request ${requestId.substring(0, 16)}... timed out after 10s`);
+        reject(new Error('Bridge request timeout'));
+      }, 10000); // 10 second timeout
+
+      // Store pending request
+      this.pendingBridgeRequests.set(requestId, {
+        resolve,
+        reject,
+        timeout,
+        timestamp: Date.now()
       });
 
-      if (result && result.inviterPeerId) {
-        console.log(`✅ Got onboarding peer from bridge: ${result.inviterPeerId.substring(0, 8)}...`);
-        return result;
-      } else {
-        throw new Error('Invalid response from bridge');
+      // Send request to bridge node
+      try {
+        bridge.ws.send(JSON.stringify(request));
+        console.log(`✅ Onboarding request sent successfully to bridge ${bridge.nodeId.substring(0, 8)}...`);
+      } catch (sendError) {
+        console.error(`❌ Failed to send onboarding request: ${sendError.message}`);
+        this.pendingBridgeRequests.delete(requestId);
+        clearTimeout(timeout);
+        reject(sendError);
       }
-    } catch (error) {
-      console.warn(`❌ Bridge request failed: ${error.message}`);
-      throw new Error('No bridge nodes available for onboarding coordination');
+    });
+
+    if (result && result.inviterPeerId) {
+      return result;
+    } else {
+      throw new Error('Invalid response from bridge');
     }
   }
 
@@ -1118,6 +1138,12 @@ export class EnhancedBootstrapServer extends EventEmitter {
       } else if (message.type === 'ping') {
         // Handle ping from bridge nodes or any client - respond with pong to keep connection alive
         this.handleClientPing(ws, message);
+      } else if (message.type === 'get_connected_clients') {
+        // Handle request for connected clients list (used by bridge nodes for emergency recovery)
+        await this.handleGetConnectedClients(ws, message);
+      } else if (message.type === 'bridge_health_update') {
+        // Handle health status update from bridge nodes
+        this.handleBridgeHealthUpdate(ws, message);
       } else if (message.type === 'pong') {
         // Handle pong response from bridge nodes - lastSeen already updated above
         // Just log for debugging
@@ -1356,7 +1382,45 @@ export class EnhancedBootstrapServer extends EventEmitter {
       }
 
       // Bridge nodes in genesis mode - wait for genesis peer to connect
+      // UNLESS they're in emergency recovery mode (0 peers)
       if (this.options.createNewDHT && isBridgeNode) {
+        const isEmergencyRecovery = message.metadata?.emergencyRecovery === true || 
+                                    message.metadata?.needsPeers === true ||
+                                    message.bridgeNeedsPeers === true;
+        
+        if (isEmergencyRecovery) {
+          console.log(`🆘 Bridge node ${nodeId?.substring(0, 8)}... in emergency recovery - providing DHT peers`);
+          
+          // Get available DHT peers (non-bridge nodes) for emergency recovery
+          const emergencyPeers = [];
+          for (const [clientNodeId, client] of this.connectedClients.entries()) {
+            if (clientNodeId === nodeId) continue;
+            if (client.metadata?.isBridgeNode || client.metadata?.nodeType === 'bridge') continue;
+            if (client.ws?.readyState !== 1) continue; // Only OPEN connections
+            
+            emergencyPeers.push({
+              nodeId: clientNodeId,
+              metadata: client.metadata || {}
+            });
+          }
+          
+          console.log(`📤 Sending ${emergencyPeers.length} DHT peers to bridge for emergency recovery`);
+          
+          sendResponse({
+            type: 'response',
+            requestId: message.requestId,
+            success: true,
+            data: {
+              peers: emergencyPeers.slice(0, maxPeers || 20),
+              isGenesis: false,
+              emergencyRecovery: true,
+              status: 'emergency_peers_for_bridge',
+              message: `Found ${emergencyPeers.length} DHT peers for bridge emergency recovery`
+            }
+          });
+          return;
+        }
+        
         console.log(`🌉 Bridge node ${nodeId?.substring(0, 8)}... registered - waiting for genesis peer (passive nodes cannot be genesis)`);
 
         // Send empty peer list - bridges will be invited by genesis peer
@@ -3357,6 +3421,108 @@ export class EnhancedBootstrapServer extends EventEmitter {
       console.log(`🏓 Sent pong to ${nodeId.substring(0, 8)}... (requestId: ${requestId?.substring(0, 16) || 'none'})`);
     } catch (error) {
       console.error(`❌ Failed to send pong to ${nodeId.substring(0, 8)}...:`, error.message);
+    }
+  }
+
+  /**
+   * Handle health status update from bridge nodes
+   * Updates the bridge node's metadata with current health status
+   */
+  handleBridgeHealthUpdate(ws, message) {
+    const { bridgeNodeId, bridgeHealth } = message;
+    const nodeId = ws.nodeId || bridgeNodeId;
+    
+    if (!nodeId) {
+      console.warn(`⚠️ Received bridge_health_update without node ID`);
+      return;
+    }
+    
+    // Update the connected client's metadata with health status
+    const client = this.connectedClients.get(nodeId);
+    if (client) {
+      client.metadata = client.metadata || {};
+      client.metadata.bridgeHealth = bridgeHealth;
+      
+      const healthStatus = bridgeHealth?.isHealthy ? '✅ healthy' : '❌ unhealthy';
+      console.log(`📊 Bridge ${nodeId.substring(0, 8)}... health update: ${healthStatus} (peers: ${bridgeHealth?.connectedPeers || 0}, bootstrapped: ${bridgeHealth?.hasBootstrapped})`);
+    }
+    
+    // Also update peers map if exists
+    const peer = this.peers.get(nodeId);
+    if (peer) {
+      peer.metadata = peer.metadata || {};
+      peer.metadata.bridgeHealth = bridgeHealth;
+    }
+  }
+
+  /**
+   * Handle request for connected clients list
+   * Used by bridge nodes for emergency recovery when they have 0 peers
+   */
+  async handleGetConnectedClients(ws, message) {
+    const { requestId, bridgeNodeId, reason } = message;
+    const nodeId = ws.nodeId || bridgeNodeId || 'unknown';
+    
+    console.log(`📋 Received get_connected_clients request from ${nodeId.substring(0, 8)}... (reason: ${reason})`);
+    
+    try {
+      // Get all connected clients including healthy bridge nodes
+      const connectedClients = [];
+      for (const [clientNodeId, client] of this.connectedClients.entries()) {
+        // Skip the requesting node
+        if (clientNodeId === nodeId) continue;
+        
+        // Skip inactive connections
+        if (client.ws?.readyState !== 1) continue; // 1 = OPEN
+        
+        const isBridgeNode = client.metadata?.isBridgeNode || client.metadata?.nodeType === 'bridge';
+        
+        // For bridge nodes, check if they're healthy (have peers)
+        // Skip unhealthy bridge nodes (0 peers after bootstrapping)
+        if (isBridgeNode) {
+          const bridgeHealth = client.metadata?.bridgeHealth;
+          const isHealthy = bridgeHealth?.isHealthy !== false; // Default to healthy if not reported
+          const hasBootstrapped = bridgeHealth?.hasBootstrapped === true;
+          
+          // Skip bridge nodes that have bootstrapped but now have 0 peers (unhealthy)
+          if (hasBootstrapped && !isHealthy) {
+            console.log(`⏭️ Skipping unhealthy bridge node ${clientNodeId.substring(0, 8)}... (0 peers after bootstrap)`);
+            continue;
+          }
+        }
+        
+        connectedClients.push({
+          nodeId: clientNodeId,
+          metadata: {
+            nodeType: client.metadata?.nodeType || 'unknown',
+            isBridgeNode: isBridgeNode,
+            listeningAddress: client.metadata?.listeningAddress,
+            publicWssAddress: client.metadata?.publicWssAddress,
+            capabilities: client.metadata?.capabilities || [],
+            bridgeHealth: isBridgeNode ? client.metadata?.bridgeHealth : undefined
+          }
+        });
+      }
+      
+      console.log(`📤 Sending ${connectedClients.length} connected clients to ${nodeId.substring(0, 8)}...`);
+      
+      ws.send(JSON.stringify({
+        type: 'connected_clients_response',
+        requestId,
+        success: true,
+        clients: connectedClients,
+        totalConnected: this.connectedClients.size,
+        timestamp: Date.now()
+      }));
+      
+    } catch (error) {
+      console.error(`❌ Error handling get_connected_clients:`, error);
+      ws.send(JSON.stringify({
+        type: 'connected_clients_response',
+        requestId,
+        success: false,
+        error: error.message
+      }));
     }
   }
 }

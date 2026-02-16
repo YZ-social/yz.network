@@ -57,7 +57,47 @@ export class PassiveBridgeNode extends NodeDHTClient {
     this.peerManagers = new Map();          // peerId -> dedicated ConnectionManager
     this.isStarted = false;
 
+    // Health tracking for bridge node
+    // Bridge is unhealthy if it has 0 peers after having successfully bootstrapped
+    this.hasBootstrapped = false;           // True once we've connected to at least one DHT peer
+    this.peakPeerCount = 0;                 // Highest number of peers we've had
+    this.lastHealthReport = 0;              // Timestamp of last health report to bootstrap
+
     // Note: DHT event handlers will be set up after DHT is created in start() method
+  }
+
+  /**
+   * Check if bridge node is healthy
+   * Unhealthy = has bootstrapped but now has 0 peers
+   */
+  isHealthy() {
+    const connectedPeers = this.dht?.getConnectedPeers()?.length || 0;
+    const routingNodes = this.dht?.routingTable?.getAllNodes()?.length || 0;
+    
+    // If we haven't bootstrapped yet, we're still healthy (just starting up)
+    if (!this.hasBootstrapped) {
+      return true;
+    }
+    
+    // After bootstrapping, we're unhealthy if we have 0 peers
+    return connectedPeers > 0 || routingNodes > 0;
+  }
+
+  /**
+   * Get health status for reporting to bootstrap server
+   */
+  getHealthStatus() {
+    const connectedPeers = this.dht?.getConnectedPeers()?.length || 0;
+    const routingNodes = this.dht?.routingTable?.getAllNodes()?.length || 0;
+    
+    return {
+      isHealthy: this.isHealthy(),
+      hasBootstrapped: this.hasBootstrapped,
+      connectedPeers,
+      routingNodes,
+      peakPeerCount: this.peakPeerCount,
+      uptime: Date.now() - this.startTime
+    };
   }
 
   getNodeType() {
@@ -320,6 +360,9 @@ export class PassiveBridgeNode extends NodeDHTClient {
     // Start periodic network fingerprint updates
     this.startFingerprintMonitoring();
 
+    // Start zero-peer recovery monitoring
+    this.startZeroPeerRecovery();
+
     this.isStarted = true;
     console.log(`🌉 Passive bridge node started on ${this.options.bridgeHost}:${this.options.bridgePort}`);
     console.log(`📡 DHT Node ID: ${this.dht.localNodeId.toString()}`);
@@ -437,6 +480,21 @@ export class PassiveBridgeNode extends NodeDHTClient {
 
     console.log(`✅ Added DHT peer ${peerId.substring(0, 8)}... to connectedPeers (now ${this.connectedPeers.size} total peers)`);
 
+    // Track bootstrapping status - we've successfully connected to at least one peer
+    if (!this.hasBootstrapped) {
+      this.hasBootstrapped = true;
+      console.log(`🎉 Bridge node has bootstrapped - connected to first DHT peer`);
+    }
+    
+    // Track peak peer count for health monitoring
+    const currentPeerCount = this.connectedPeers.size;
+    if (currentPeerCount > this.peakPeerCount) {
+      this.peakPeerCount = currentPeerCount;
+    }
+    
+    // Report health to bootstrap server periodically
+    this.reportHealthToBootstrap();
+
     // OPEN NETWORK MODE: Auto-grant membership tokens to connecting DHT nodes
     if (this.isOpenNetwork) {
       try {
@@ -477,6 +535,38 @@ export class PassiveBridgeNode extends NodeDHTClient {
   }
 
   /**
+   * Report health status to bootstrap server
+   * Called when peer count changes significantly
+   */
+  async reportHealthToBootstrap() {
+    // Throttle health reports to once per 30 seconds
+    const now = Date.now();
+    if (now - this.lastHealthReport < 30000) {
+      return;
+    }
+    this.lastHealthReport = now;
+    
+    try {
+      if (!this.bootstrapClient?.ws || this.bootstrapClient.ws.readyState !== 1) {
+        return; // Bootstrap not connected
+      }
+      
+      const healthStatus = this.getHealthStatus();
+      
+      this.bootstrapClient.sendMessage({
+        type: 'bridge_health_update',
+        bridgeNodeId: this.dht?.localNodeId?.toString(),
+        bridgeHealth: healthStatus,
+        timestamp: now
+      });
+      
+      console.log(`📊 Reported health to bootstrap: healthy=${healthStatus.isHealthy}, peers=${healthStatus.connectedPeers}`);
+    } catch (error) {
+      console.warn(`⚠️ Failed to report health to bootstrap: ${error.message}`);
+    }
+  }
+
+  /**
    * Handle peer disconnection in passive mode
    */
   handlePeerDisconnected(peerId) {
@@ -485,6 +575,9 @@ export class PassiveBridgeNode extends NodeDHTClient {
     if (this.connectedPeers.has(peerId)) {
       this.connectedPeers.get(peerId).isActive = false;
     }
+    
+    // Report health change to bootstrap when peers disconnect
+    this.reportHealthToBootstrap();
 
     this.peerAnnouncements.delete(peerId);
     this.scheduleNetworkFingerprintUpdate();
@@ -633,6 +726,174 @@ export class PassiveBridgeNode extends NodeDHTClient {
         console.error('Error updating network fingerprint:', error);
       }
     }, 5 * 60 * 1000); // Update every 5 minutes
+  }
+
+  /**
+   * Start zero-peer recovery monitoring
+   * When bridge node has 0 peers for extended period, request peers from bootstrap
+   * as a "reconnecting" node to get DHT node addresses and connect directly
+   */
+  startZeroPeerRecovery() {
+    this.zeroPeerCount = 0;
+    this.lastZeroPeerRecoveryAttempt = 0;
+
+    // Check every 10 seconds for zero peers
+    this.zeroPeerRecoveryInterval = setInterval(async () => {
+      try {
+        const connectedPeers = this.dht?.getConnectedPeers()?.length || 0;
+        const routingNodes = this.dht?.routingTable?.getAllNodes()?.length || 0;
+
+        if (connectedPeers === 0 && routingNodes === 0) {
+          this.zeroPeerCount++;
+          console.log(`🆘 Bridge has 0 peers (count: ${this.zeroPeerCount})`);
+
+          // After 3 consecutive checks (30 seconds) with 0 peers, attempt recovery
+          // But don't attempt more than once per 60 seconds
+          const timeSinceLastAttempt = Date.now() - this.lastZeroPeerRecoveryAttempt;
+          if (this.zeroPeerCount >= 3 && timeSinceLastAttempt > 60000) {
+            console.log(`🔄 Bridge zero-peer recovery: requesting peers from bootstrap`);
+            this.lastZeroPeerRecoveryAttempt = Date.now();
+            await this.attemptZeroPeerRecovery();
+          }
+        } else {
+          // Reset counter when we have peers
+          if (this.zeroPeerCount > 0) {
+            console.log(`✅ Bridge recovered: ${connectedPeers} connected, ${routingNodes} routing`);
+          }
+          this.zeroPeerCount = 0;
+        }
+      } catch (error) {
+        console.error('Error in zero-peer recovery check:', error);
+      }
+    }, 10000); // Check every 10 seconds
+  }
+
+  /**
+   * Attempt to recover from zero-peer state by requesting peers from bootstrap
+   * Request as a "reconnecting" node to bypass bridge-specific handling
+   */
+  async attemptZeroPeerRecovery() {
+    try {
+      if (!this.bootstrapClient || !this.bootstrapClient.isBootstrapConnected()) {
+        console.log(`🔄 Reconnecting to bootstrap for zero-peer recovery...`);
+        await this.bootstrapClient.connect(this.dht.localNodeId.toString(), {
+          ...this.dht.bootstrapMetadata,
+          // CRITICAL: Request as reconnecting node to get peer list
+          emergencyRecovery: true,
+          needsPeers: true
+        });
+      }
+
+      // Request peers with emergency flag - bootstrap should return DHT nodes
+      console.log(`📋 Requesting emergency peer list from bootstrap...`);
+      const result = await this.bootstrapClient.requestPeersOrGenesis({
+        emergencyRecovery: true,
+        bridgeNeedsPeers: true
+      });
+
+      if (result.peers && result.peers.length > 0) {
+        console.log(`✅ Received ${result.peers.length} peers for recovery`);
+        
+        // Connect to each peer
+        for (const peer of result.peers) {
+          if (peer.nodeId && peer.nodeId !== this.dht.localNodeId.toString()) {
+            try {
+              // Skip other bridge nodes
+              if (peer.metadata?.isBridgeNode || peer.metadata?.nodeType === 'bridge') {
+                console.log(`⏭️ Skipping bridge node ${peer.nodeId.substring(0, 8)}...`);
+                continue;
+              }
+
+              console.log(`🔗 Connecting to peer ${peer.nodeId.substring(0, 8)}... for recovery`);
+              await this.dht.connectToPeer(peer.nodeId);
+            } catch (error) {
+              console.warn(`⚠️ Failed to connect to ${peer.nodeId.substring(0, 8)}...: ${error.message}`);
+            }
+          }
+        }
+      } else {
+        console.log(`📭 No peers available from bootstrap for recovery`);
+        
+        // Fallback: Try to get connected clients list directly
+        await this.requestConnectedClientsFromBootstrap();
+      }
+    } catch (error) {
+      console.error(`❌ Zero-peer recovery failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Request list of connected clients from bootstrap server
+   * This is a fallback when normal peer request returns empty
+   */
+  async requestConnectedClientsFromBootstrap() {
+    try {
+      if (!this.bootstrapClient?.ws || this.bootstrapClient.ws.readyState !== 1) {
+        console.log(`⚠️ Bootstrap not connected for client list request`);
+        return;
+      }
+
+      const requestId = `bridge_recovery_${Date.now()}`;
+      
+      // Send direct request for connected clients
+      this.bootstrapClient.sendMessage({
+        type: 'get_connected_clients',
+        requestId,
+        bridgeNodeId: this.dht.localNodeId.toString(),
+        reason: 'zero_peer_recovery'
+      });
+
+      console.log(`📋 Requested connected clients list from bootstrap`);
+    } catch (error) {
+      console.error(`❌ Failed to request connected clients: ${error.message}`);
+    }
+  }
+
+  /**
+   * Handle response with connected clients list from bootstrap
+   * Used for emergency recovery when bridge has 0 peers
+   */
+  async handleConnectedClientsResponse(message) {
+    const { clients, success } = message;
+    
+    if (!success || !clients || clients.length === 0) {
+      console.log(`📭 No connected clients available for recovery`);
+      return;
+    }
+    
+    console.log(`📋 Processing ${clients.length} connected clients for recovery`);
+    
+    for (const client of clients) {
+      if (!client.nodeId || client.nodeId === this.dht?.localNodeId?.toString()) {
+        continue;
+      }
+      
+      try {
+        const isBridgeNode = client.metadata?.isBridgeNode || client.metadata?.nodeType === 'bridge';
+        
+        // For bridge nodes, check if they're healthy before connecting
+        if (isBridgeNode) {
+          const bridgeHealth = client.metadata?.bridgeHealth;
+          const isHealthy = bridgeHealth?.isHealthy !== false;
+          const hasBootstrapped = bridgeHealth?.hasBootstrapped === true;
+          
+          // Skip unhealthy bridge nodes (0 peers after bootstrapping)
+          if (hasBootstrapped && !isHealthy) {
+            console.log(`⏭️ Skipping unhealthy bridge ${client.nodeId.substring(0, 8)}...`);
+            continue;
+          }
+          
+          // Connect to healthy bridge node - they may have DHT peers we can discover
+          console.log(`🔗 Connecting to healthy bridge ${client.nodeId.substring(0, 8)}... for recovery`);
+        } else {
+          console.log(`🔗 Connecting to DHT node ${client.nodeId.substring(0, 8)}... for recovery`);
+        }
+        
+        await this.dht.connectToPeer(client.nodeId);
+      } catch (error) {
+        console.warn(`⚠️ Failed to connect to ${client.nodeId.substring(0, 8)}...: ${error.message}`);
+      }
+    }
   }
 
   /**
