@@ -2206,9 +2206,16 @@ export class KademliaDHT extends EventEmitter {
         console.log(`🚀 Browser-to-browser connection to ${peerId.substring(0, 8)}... - using WebRTC (both can initiate)`);
         console.log(`🔍 DEBUG WebRTC: local=${localNodeType}, peer=${peerNodeType}, canAccept=${peerNode.metadata.canAcceptConnections}`);
         // Continue with connection - WebRTC will handle signaling
+      } else if (localNodeType === 'nodejs' && peerNodeType === 'browser') {
+        // Node.js → Browser: Use reverse connection pattern
+        // WebSocketConnectionManager.createConnection will call requestBrowserConnection
+        // which sends a connection_request via DHT, and browser connects back
+        console.log(`🔄 Node.js → Browser connection to ${peerId.substring(0, 8)}... - will use reverse connection pattern`);
+        console.log(`🔍 DEBUG: local=${localNodeType}, peer=${peerNodeType}, canAccept=${peerNode.metadata.canAcceptConnections}`);
+        // Continue with connection - WebSocketConnectionManager will handle reverse signaling
       } else {
-        // Node.js → Browser: Cannot initiate WebSocket - browser must connect to us
-        console.log(`🚫 Peer ${peerId.substring(0, 8)}... cannot accept WebSocket connections - waiting for them to connect to us`);
+        // Unknown combination - log and skip
+        console.log(`🚫 Peer ${peerId.substring(0, 8)}... cannot accept connections and no reverse pattern available`);
         console.log(`🔍 DEBUG: local=${localNodeType}, peer=${peerNodeType}, canAccept=${peerNode.metadata.canAcceptConnections}`);
         return false;
       }
@@ -6171,7 +6178,7 @@ export class KademliaDHT extends EventEmitter {
           // DEBUG: Log browser peers for WebRTC debugging
           const browserPeers = unconnectedNodes.filter(node => node.metadata?.nodeType === 'browser');
           if (browserPeers.length > 0) {
-            console.log(`🔍 DEBUG: Found ${browserPeers.length} unconnected browser peers for potential WebRTC:`);
+            console.log(`🔍 DEBUG: Found ${browserPeers.length} unconnected browser peers for potential connection:`);
             browserPeers.forEach(node => {
               const peerId = node.id.toString();
               console.log(`   - ${peerId.substring(0, 8)}... nodeType=${node.metadata?.nodeType}, canAccept=${node.metadata?.canAcceptConnections}`);
