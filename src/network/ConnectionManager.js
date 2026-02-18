@@ -207,7 +207,7 @@ export class ConnectionManager extends EventEmitter {
         case 'connection_answer':
         case 'connection_candidate':
         case 'create_invitation_for_peer':
-        case 'forward_invitation':
+        case 'forward_invitation': {
           // DIAGNOSTIC LOGGING: Task 1.3 - Log number of listeners when dhtMessage event is emitted
           const listenerCount = this.listenerCount('dhtMessage');
           console.log(`🔔 DHT_MESSAGE EVENT:`);
@@ -232,6 +232,7 @@ export class ConnectionManager extends EventEmitter {
           // Emit to DHT for handling - TASK 2.1: Include manager reference for response routing
           this.emit('dhtMessage', { peerId, message, sourceManager: this });
           break;
+        }
         case 'connect_genesis_peer':
         case 'validate_reconnection':
         case 'invitation_for_bridge':

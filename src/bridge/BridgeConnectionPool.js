@@ -588,19 +588,19 @@ export class BridgeConnectionPool extends EventEmitter {
       if (disconnectedConnections.length > 0) {
         // Try to connect to the first disconnected bridge with a timeout
         const connectionPromises = disconnectedConnections.map(conn => {
-          return new Promise(async (resolve) => {
+          return (async () => {
             try {
               // Reset connect attempts for idle connections
               if (conn.state === ConnectionState.IDLE) {
                 conn.connectAttempts = 0;
               }
               await conn.connect();
-              resolve(conn);
+              return conn;
             } catch (error) {
               console.warn(`⚠️ Failed to reconnect to ${conn.bridgeAddr}: ${error.message}`);
-              resolve(null);
+              return null;
             }
-          });
+          })();
         });
         
         // Wait for any connection to succeed (with 15s timeout)
