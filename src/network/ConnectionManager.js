@@ -201,6 +201,8 @@ export class ConnectionManager extends EventEmitter {
         case 'store_response':
         case 'peer_discovery_request':
         case 'peer_discovery_response':
+        case 'connection_request':
+        case 'connection_response':
         case 'connection_offer':
         case 'connection_answer':
         case 'connection_candidate':
