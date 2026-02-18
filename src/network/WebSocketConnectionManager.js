@@ -720,10 +720,15 @@ export class WebSocketConnectionManager extends ConnectionManager {
    */
   async sendRawMessage(peerId, message) {
     // NOTE: In single-connection architecture, manager handles one peer
-    // If trying to send to different peer, skip (routing table should use correct manager)
+    // If trying to send to different peer, this is a routing error
     if (this.peerId && this.peerId !== peerId) {
-      // Skip silently - caller should use correct manager for the peer
-      return; // Wrong manager for this peer
+      // CRITICAL FIX: Log and throw error instead of silently dropping message
+      console.error(`❌ SEND_RAW_MESSAGE PEER MISMATCH:`);
+      console.error(`   Manager PeerId: ${this.peerId.substring(0, 8)}...`);
+      console.error(`   Target PeerId: ${peerId.substring(0, 8)}...`);
+      console.error(`   Message Type: ${message.type}`);
+      console.error(`   This message will NOT be delivered!`);
+      throw new Error(`Manager peerId mismatch: manager=${this.peerId.substring(0, 8)}, target=${peerId.substring(0, 8)}`);
     }
 
     const ws = this.connection;
