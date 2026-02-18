@@ -519,12 +519,15 @@ export class RoutingTable {
       return;
     }
 
+    console.log(`🔍 DEBUG setupConnectionManagerHandlers: peerId=${peerId.substring(0, 8)}, managerType=${connectionManager.constructor.name}, hasSignalHandler=${!!this.webrtcSignalHandler}`);
+
     // CRITICAL FIX: Attach WebRTC signal routing handler for WebRTC connections
     // This must be attached BEFORE any signals are emitted (timing critical!)
     if (connectionManager.constructor.name === 'WebRTCConnectionManager' && this.webrtcSignalHandler) {
       console.log(`🔗 RoutingTable: Attaching WebRTC signal handler to ${connectionManager.constructor.name} for ${peerId.substring(0, 8)}...`);
       connectionManager.on('signal', this.webrtcSignalHandler);
       connectionManager._webrtcSignalHandlerAttached = true;
+      console.log(`✅ DEBUG: WebRTC signal handler attached for ${peerId.substring(0, 8)}`);
     } else if (connectionManager.constructor.name === 'WebRTCConnectionManager') {
       console.warn(`⚠️ WebRTC signal handler not available for ${peerId.substring(0, 8)} - signals will not be routed`);
     }

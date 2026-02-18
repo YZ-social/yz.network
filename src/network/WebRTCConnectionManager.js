@@ -156,6 +156,10 @@ export class WebRTCConnectionManager extends ConnectionManager {
     }
 
     console.log(`🚀 Creating ${initiator ? 'outgoing' : 'incoming'} WebRTC connection to ${peerId.substring(0, 8)}...`);
+    console.log(`🔍 DEBUG WebRTC createConnection: peerId=${peerId.substring(0, 8)}, initiator=${initiator}, hasMetadata=${!!metadata}`);
+    if (metadata) {
+      console.log(`🔍 DEBUG WebRTC metadata: nodeType=${metadata.nodeType}, canAccept=${metadata.canAcceptConnections}`);
+    }
 
     // Store the peer ID
     this.peerId = peerId;
@@ -463,12 +467,14 @@ export class WebRTCConnectionManager extends ConnectionManager {
       // This fixes the issue where WebRTC answers weren't using DHT routing
 
       console.log(`🔄 Sending WebRTC signal (${signal.type}) to ${peerId.substring(0, 8)}... via DHT event (target: ${isTargetBrowser ? 'browser' : 'node'}, bridge: ${isBridgeNode})`);
+      console.log(`🔍 DEBUG sendSignal: localBrowser=${isLocalBrowser}, targetBrowser=${isTargetBrowser}, signalType=${signal.type}`);
 
       // Fall back to event emission for DHT-based signaling or other connection types
       this.emit('signal', {
         peerId,
         signal
       });
+      console.log(`✅ DEBUG: Signal event emitted for ${peerId.substring(0, 8)}...`);
 
     } catch (error) {
       console.error(`❌ Failed to send WebRTC signal to ${peerId}:`, error);

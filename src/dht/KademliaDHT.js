@@ -2204,10 +2204,12 @@ export class KademliaDHT extends EventEmitter {
       if (localNodeType === 'browser' && peerNodeType === 'browser') {
         // Browser-to-browser: Use WebRTC - both sides CAN initiate!
         console.log(`🚀 Browser-to-browser connection to ${peerId.substring(0, 8)}... - using WebRTC (both can initiate)`);
+        console.log(`🔍 DEBUG WebRTC: local=${localNodeType}, peer=${peerNodeType}, canAccept=${peerNode.metadata.canAcceptConnections}`);
         // Continue with connection - WebRTC will handle signaling
       } else {
         // Node.js → Browser: Cannot initiate WebSocket - browser must connect to us
         console.log(`🚫 Peer ${peerId.substring(0, 8)}... cannot accept WebSocket connections - waiting for them to connect to us`);
+        console.log(`🔍 DEBUG: local=${localNodeType}, peer=${peerNodeType}, canAccept=${peerNode.metadata.canAcceptConnections}`);
         return false;
       }
     }
@@ -6166,6 +6168,16 @@ export class KademliaDHT extends EventEmitter {
             return !connectedPeers.includes(peerId);
           });
 
+          // DEBUG: Log browser peers for WebRTC debugging
+          const browserPeers = unconnectedNodes.filter(node => node.metadata?.nodeType === 'browser');
+          if (browserPeers.length > 0) {
+            console.log(`🔍 DEBUG: Found ${browserPeers.length} unconnected browser peers for potential WebRTC:`);
+            browserPeers.forEach(node => {
+              const peerId = node.id.toString();
+              console.log(`   - ${peerId.substring(0, 8)}... nodeType=${node.metadata?.nodeType}, canAccept=${node.metadata?.canAcceptConnections}`);
+            });
+          }
+
           const toConnect = unconnectedNodes.slice(0, desiredConnections - connectedPeers.length);
 
           if (toConnect.length > 0) {
@@ -6174,6 +6186,8 @@ export class KademliaDHT extends EventEmitter {
             // Connect in parallel for speed
             const connectionPromises = toConnect.map(node => {
               const peerId = node.id.toString();
+              const nodeType = node.metadata?.nodeType || 'unknown';
+              console.log(`🔗 DEBUG: Attempting connection to ${peerId.substring(0, 8)}... (nodeType=${nodeType})`);
               return this.connectToPeer(peerId).catch(err => {
                 console.warn(`Failed immediate connection to ${peerId.substring(0, 8)}:`, err.message);
               });

@@ -619,6 +619,8 @@ export class OverlayNetwork extends EventEmitter {
     // Check if this peer is currently being invited
     const isInvitationFlow = signal.invitationFlow || this.dht.pendingInvitations.has(peerId);
 
+    console.log(`🔍 DEBUG handleOutgoingSignal: peerId=${peerId.substring(0, 8)}, signalType=${signal.type}, isDHTMember=${isDHTMember}, isInvitation=${isInvitationFlow}`);
+
     // Priority: DHT members always use DHT signaling (browser-to-browser WebRTC)
     // Only use bootstrap for invitations or non-DHT members
     if (isInvitationFlow || !isDHTMember) {
