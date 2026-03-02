@@ -128,10 +128,41 @@ test.describe('WebRTC Two-Browser Connection', () => {
       console.log(`📊 Browser A: ${discoveryStatus[0].connectedPeers} connected, ${discoveryStatus[0].routingTableSize} routing, ${discoveryStatus[0].browserPeers} browser peers`);
       console.log(`📊 Browser B: ${discoveryStatus[1].connectedPeers} connected, ${discoveryStatus[1].routingTableSize} routing, ${discoveryStatus[1].browserPeers} browser peers`);
       
-      // Step 4: Check for WebRTC connection
-      console.log(`⏳ Checking for WebRTC connection...`);
+      // Step 4: Manually trigger connection attempt from Browser A to Browser B
+      console.log(`🔧 Step 4: Manually triggering WebRTC connection from A to B...`);
+      
+      // First, let's see what Browser A knows about Browser B
+      const browserADebug = await pageA.evaluate((bNodeId) => {
+        const dht = window.YZSocialC.dht;
+        const routingNode = dht?.routingTable?.getNode(bNodeId);
+        return {
+          hasInRouting: !!routingNode,
+          metadata: routingNode?.metadata || null,
+          nodeType: routingNode?.metadata?.nodeType,
+          canAccept: routingNode?.metadata?.canAcceptConnections,
+          connectedPeers: dht?.getConnectedPeers() || [],
+          isConnected: dht?.isPeerConnected(bNodeId)
+        };
+      }, browserBNodeId);
+      
+      console.log(`📊 Browser A's view of Browser B:`, JSON.stringify(browserADebug, null, 2));
+      
+      // Manually trigger connection from A to B
+      if (browserADebug.hasInRouting && !browserADebug.isConnected) {
+        console.log(`🚀 Triggering connectToPeer from Browser A to Browser B...`);
+        const connectResult = await pageA.evaluate(async (bNodeId) => {
+          try {
+            const result = await window.YZSocialC.dht.connectToPeer(bNodeId);
+            return { success: result, error: null };
+          } catch (err) {
+            return { success: false, error: err.message };
+          }
+        }, browserBNodeId);
+        console.log(`📊 Connect result: ${JSON.stringify(connectResult)}`);
+      }
       
       // Wait for WebRTC connection to form
+      console.log(`⏳ Waiting ${WEBRTC_FORMATION_TIME/1000}s for WebRTC connection...`);
       const webrtcStart = Date.now();
       let webrtcConnected = false;
       
@@ -153,6 +184,23 @@ test.describe('WebRTC Two-Browser Connection', () => {
           console.log(`   A→B: ${aConnectedToB}, B→A: ${bConnectedToA}`);
           webrtcConnected = true;
           break;
+        }
+        
+        // Log progress every 5 seconds
+        if ((Date.now() - webrtcStart) % 5000 < 2000) {
+          const debugA = await pageA.evaluate((bNodeId) => {
+            const dht = window.YZSocialC.dht;
+            const peerNode = dht?.peerNodes?.get(bNodeId);
+            const routingNode = dht?.routingTable?.getNode(bNodeId);
+            return {
+              hasPeerNode: !!peerNode,
+              hasRoutingNode: !!routingNode,
+              hasConnectionManager: !!peerNode?.connectionManager || !!routingNode?.connectionManager,
+              connectionManagerType: peerNode?.connectionManager?.constructor?.name || routingNode?.connectionManager?.constructor?.name,
+              connectionState: peerNode?.connectionManager?.connectionState || routingNode?.connectionManager?.connectionState
+            };
+          }, browserBNodeId);
+          console.log(`🔍 Browser A WebRTC state for B: ${JSON.stringify(debugA)}`);
         }
         
         await pageA.waitForTimeout(2000);
