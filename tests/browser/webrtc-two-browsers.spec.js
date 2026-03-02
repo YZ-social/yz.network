@@ -153,10 +153,15 @@ test.describe('WebRTC Two-Browser Connection', () => {
         console.log(`🔍 Browser A doesn't have Browser B - triggering DHT findNode lookup...`);
         const lookupResult = await pageA.evaluate(async (bNodeId) => {
           try {
+            // Access the underlying KademliaDHT via dht.dht
+            const kademliaDHT = window.YZSocialC.dht?.dht;
+            if (!kademliaDHT) {
+              return { success: false, error: 'KademliaDHT not available' };
+            }
             // Trigger a findNode to discover Browser B
-            const nodes = await window.YZSocialC.dht.findNode(bNodeId);
+            const nodes = await kademliaDHT.findNode(bNodeId);
             const foundB = nodes.some(n => n.id?.toString() === bNodeId || n === bNodeId);
-            const routingNode = window.YZSocialC.dht?.routingTable?.getNode(bNodeId);
+            const routingNode = kademliaDHT.routingTable?.getNode(bNodeId);
             return { 
               success: true, 
               nodesFound: nodes.length,
@@ -194,7 +199,12 @@ test.describe('WebRTC Two-Browser Connection', () => {
         console.log(`🚀 Triggering connectToPeer from Browser A to Browser B...`);
         const connectResult = await pageA.evaluate(async (bNodeId) => {
           try {
-            const result = await window.YZSocialC.dht.connectToPeer(bNodeId);
+            // Access the underlying KademliaDHT
+            const kademliaDHT = window.YZSocialC.dht?.dht;
+            if (!kademliaDHT) {
+              return { success: false, error: 'KademliaDHT not available' };
+            }
+            const result = await kademliaDHT.connectToPeer(bNodeId);
             return { success: result, error: null };
           } catch (err) {
             return { success: false, error: err.message };
