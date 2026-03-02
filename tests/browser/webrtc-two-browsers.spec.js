@@ -230,21 +230,51 @@ test.describe('WebRTC Two-Browser Connection', () => {
           break;
         }
         
-        // Log progress every 5 seconds
+        // Log progress every 5 seconds with detailed WebRTC state
         if ((Date.now() - webrtcStart) % 5000 < 2000) {
           const debugA = await pageA.evaluate((bNodeId) => {
             const dht = window.YZSocialC.dht;
             const peerNode = dht?.peerNodes?.get(bNodeId);
             const routingNode = dht?.routingTable?.getNode(bNodeId);
+            const manager = peerNode?.connectionManager || routingNode?.connectionManager;
+            const pc = manager?.connection;
             return {
               hasPeerNode: !!peerNode,
               hasRoutingNode: !!routingNode,
-              hasConnectionManager: !!peerNode?.connectionManager || !!routingNode?.connectionManager,
-              connectionManagerType: peerNode?.connectionManager?.constructor?.name || routingNode?.connectionManager?.constructor?.name,
-              connectionState: peerNode?.connectionManager?.connectionState || routingNode?.connectionManager?.connectionState
+              hasConnectionManager: !!manager,
+              connectionManagerType: manager?.constructor?.name,
+              connectionState: manager?.connectionState,
+              // WebRTC peer connection states
+              pcConnectionState: pc?.connectionState,
+              pcIceConnectionState: pc?.iceConnectionState,
+              pcIceGatheringState: pc?.iceGatheringState,
+              pcSignalingState: pc?.signalingState,
+              // Check if data channel exists
+              hasDataChannel: !!manager?.dataChannel,
+              dataChannelState: manager?.dataChannel?.readyState
             };
           }, browserBNodeId);
           console.log(`🔍 Browser A WebRTC state for B: ${JSON.stringify(debugA)}`);
+          
+          // Also check Browser B's state for A
+          const debugB = await pageB.evaluate((aNodeId) => {
+            const dht = window.YZSocialC.dht;
+            const peerNode = dht?.peerNodes?.get(aNodeId);
+            const routingNode = dht?.routingTable?.getNode(aNodeId);
+            const manager = peerNode?.connectionManager || routingNode?.connectionManager;
+            const pc = manager?.connection;
+            return {
+              hasPeerNode: !!peerNode,
+              hasRoutingNode: !!routingNode,
+              hasConnectionManager: !!manager,
+              connectionManagerType: manager?.constructor?.name,
+              connectionState: manager?.connectionState,
+              pcConnectionState: pc?.connectionState,
+              pcIceConnectionState: pc?.iceConnectionState,
+              pcSignalingState: pc?.signalingState
+            };
+          }, browserANodeId);
+          console.log(`🔍 Browser B WebRTC state for A: ${JSON.stringify(debugB)}`);
         }
         
         await pageA.waitForTimeout(2000);
