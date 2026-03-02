@@ -135,13 +135,14 @@ test.describe('WebRTC Two-Browser Connection', () => {
       const browserADebug = await pageA.evaluate((bNodeId) => {
         const dht = window.YZSocialC.dht;
         const routingNode = dht?.routingTable?.getNode(bNodeId);
+        const connectedPeers = dht?.getConnectedPeers() || [];
         return {
           hasInRouting: !!routingNode,
           metadata: routingNode?.metadata || null,
           nodeType: routingNode?.metadata?.nodeType,
           canAccept: routingNode?.metadata?.canAcceptConnections,
-          connectedPeers: dht?.getConnectedPeers() || [],
-          isConnected: dht?.isPeerConnected(bNodeId)
+          connectedPeers: connectedPeers,
+          isConnected: connectedPeers.includes(bNodeId)
         };
       }, browserBNodeId);
       
