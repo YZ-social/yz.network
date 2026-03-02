@@ -148,8 +148,49 @@ test.describe('WebRTC Two-Browser Connection', () => {
       
       console.log(`📊 Browser A's view of Browser B:`, JSON.stringify(browserADebug, null, 2));
       
+      // If Browser A doesn't have Browser B in routing table, do a DHT lookup
+      if (!browserADebug.hasInRouting) {
+        console.log(`🔍 Browser A doesn't have Browser B - triggering DHT findNode lookup...`);
+        const lookupResult = await pageA.evaluate(async (bNodeId) => {
+          try {
+            // Trigger a findNode to discover Browser B
+            const nodes = await window.YZSocialC.dht.findNode(bNodeId);
+            const foundB = nodes.some(n => n.id?.toString() === bNodeId || n === bNodeId);
+            const routingNode = window.YZSocialC.dht?.routingTable?.getNode(bNodeId);
+            return { 
+              success: true, 
+              nodesFound: nodes.length,
+              foundB: foundB,
+              nowInRouting: !!routingNode,
+              error: null 
+            };
+          } catch (err) {
+            return { success: false, error: err.message };
+          }
+        }, browserBNodeId);
+        console.log(`📊 DHT lookup result: ${JSON.stringify(lookupResult)}`);
+        
+        // Wait a bit for routing table to update
+        await pageA.waitForTimeout(2000);
+        
+        // Check again
+        const browserADebug2 = await pageA.evaluate((bNodeId) => {
+          const dht = window.YZSocialC.dht;
+          const routingNode = dht?.routingTable?.getNode(bNodeId);
+          return {
+            hasInRouting: !!routingNode,
+            metadata: routingNode?.metadata || null
+          };
+        }, browserBNodeId);
+        console.log(`📊 Browser A's view of Browser B after lookup:`, JSON.stringify(browserADebug2, null, 2));
+      }
+      
       // Manually trigger connection from A to B
-      if (browserADebug.hasInRouting && !browserADebug.isConnected) {
+      const browserAHasB = await pageA.evaluate((bNodeId) => {
+        return !!window.YZSocialC.dht?.routingTable?.getNode(bNodeId);
+      }, browserBNodeId);
+      
+      if (browserAHasB) {
         console.log(`🚀 Triggering connectToPeer from Browser A to Browser B...`);
         const connectResult = await pageA.evaluate(async (bNodeId) => {
           try {
@@ -160,6 +201,8 @@ test.describe('WebRTC Two-Browser Connection', () => {
           }
         }, browserBNodeId);
         console.log(`📊 Connect result: ${JSON.stringify(connectResult)}`);
+      } else {
+        console.log(`❌ Browser A still doesn't have Browser B in routing table - cannot connect`);
       }
       
       // Wait for WebRTC connection to form
