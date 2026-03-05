@@ -170,6 +170,149 @@
       padding: 10px;
     }
 
+    /* Server Stats Styles */
+    .server-section {
+      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+      margin-bottom: 30px;
+    }
+
+    .server-stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 20px;
+      margin-bottom: 20px;
+    }
+
+    .server-stat {
+      background: #0f172a;
+      padding: 20px;
+      border-radius: 8px;
+      border: 1px solid #334155;
+    }
+
+    .server-stat-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .server-stat-icon {
+      font-size: 1.2em;
+    }
+
+    .server-stat-label {
+      color: #94a3b8;
+      font-size: 0.9em;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .server-stat-value {
+      font-size: 2em;
+      font-weight: bold;
+      color: #60a5fa;
+      margin-bottom: 5px;
+    }
+
+    .server-stat-detail {
+      color: #64748b;
+      font-size: 0.85em;
+      margin-bottom: 10px;
+    }
+
+    .progress-bar {
+      height: 8px;
+      background: #1e293b;
+      border-radius: 4px;
+      overflow: hidden;
+      margin-bottom: 8px;
+    }
+
+    .progress-fill {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.5s ease, background-color 0.3s ease;
+    }
+
+    .memory-fill {
+      background: linear-gradient(90deg, #34d399, #60a5fa);
+    }
+
+    .memory-fill.warning {
+      background: linear-gradient(90deg, #fbbf24, #f97316);
+    }
+
+    .memory-fill.critical {
+      background: linear-gradient(90deg, #f87171, #ef4444);
+    }
+
+    .cpu-fill {
+      background: linear-gradient(90deg, #818cf8, #a78bfa);
+    }
+
+    .disk-fill {
+      background: linear-gradient(90deg, #2dd4bf, #14b8a6);
+    }
+
+    .disk-fill.warning {
+      background: linear-gradient(90deg, #fbbf24, #f97316);
+    }
+
+    .disk-fill.critical {
+      background: linear-gradient(90deg, #f87171, #ef4444);
+    }
+
+    .trend-indicator {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 0.85em;
+    }
+
+    .trend-arrow {
+      font-size: 1.2em;
+    }
+
+    .trend-indicator.rising {
+      color: #f87171;
+    }
+
+    .trend-indicator.rising .trend-arrow {
+      transform: rotate(-45deg);
+    }
+
+    .trend-indicator.falling {
+      color: #34d399;
+    }
+
+    .trend-indicator.falling .trend-arrow {
+      transform: rotate(45deg);
+    }
+
+    .trend-indicator.stable {
+      color: #94a3b8;
+    }
+
+    .memory-chart-container {
+      background: #0f172a;
+      padding: 20px;
+      border-radius: 8px;
+      margin-top: 20px;
+    }
+
+    .memory-chart-container h3 {
+      color: #94a3b8;
+      font-size: 0.95em;
+      margin-bottom: 15px;
+      font-weight: normal;
+    }
+
+    #memory-chart {
+      width: 100%;
+      height: 150px;
+    }
+
     .chart-container {
       height: 200px;
       background: #0f172a;
@@ -211,6 +354,67 @@
   <div class="header">
     <h1>🌐 YZ Network Dashboard</h1>
     <p class="subtitle">Distributed Hash Table Monitoring & Analytics</p>
+  </div>
+
+  <!-- Server Stats Section -->
+  <div class="section server-section">
+    <h2>🖥️ Server Resources</h2>
+    <div class="server-stats-grid">
+      <div class="server-stat">
+        <div class="server-stat-header">
+          <span class="server-stat-icon">💾</span>
+          <span class="server-stat-label">Memory</span>
+        </div>
+        <div class="server-stat-value" id="memory-percent">--%</div>
+        <div class="server-stat-detail" id="memory-detail">-- / -- GB</div>
+        <div class="progress-bar">
+          <div class="progress-fill memory-fill" id="memory-bar" style="width: 0%"></div>
+        </div>
+        <div class="trend-indicator" id="memory-trend">
+          <span class="trend-arrow">→</span>
+          <span class="trend-text">Stable</span>
+        </div>
+      </div>
+      
+      <div class="server-stat">
+        <div class="server-stat-header">
+          <span class="server-stat-icon">⚡</span>
+          <span class="server-stat-label">CPU</span>
+        </div>
+        <div class="server-stat-value" id="cpu-percent">--%</div>
+        <div class="server-stat-detail" id="cpu-detail">-- cores</div>
+        <div class="progress-bar">
+          <div class="progress-fill cpu-fill" id="cpu-bar" style="width: 0%"></div>
+        </div>
+      </div>
+      
+      <div class="server-stat">
+        <div class="server-stat-header">
+          <span class="server-stat-icon">💿</span>
+          <span class="server-stat-label">Disk</span>
+        </div>
+        <div class="server-stat-value" id="disk-percent">--%</div>
+        <div class="server-stat-detail" id="disk-detail">-- / -- GB</div>
+        <div class="progress-bar">
+          <div class="progress-fill disk-fill" id="disk-bar" style="width: 0%"></div>
+        </div>
+      </div>
+      
+      <div class="server-stat">
+        <div class="server-stat-header">
+          <span class="server-stat-icon">⏱️</span>
+          <span class="server-stat-label">Uptime</span>
+        </div>
+        <div class="server-stat-value" id="server-uptime">--</div>
+        <div class="server-stat-detail">System uptime</div>
+      </div>
+    </div>
+    
+    <!-- Memory Trend Chart -->
+    <div class="memory-chart-container">
+      <h3>📈 Memory Usage Trend (Last 10 minutes)</h3>
+      <canvas id="memory-chart" width="800" height="150"></canvas>
+    </div>
   </div>
 
   <div id="stats" class="stats-grid">
@@ -300,6 +504,231 @@
     // Update interval
     const UPDATE_INTERVAL = 5000; // 5 seconds
 
+    // Memory chart data
+    let memoryChartData = [];
+    let memoryChartCtx = null;
+
+    // Initialize memory chart
+    function initMemoryChart() {
+      const canvas = document.getElementById('memory-chart');
+      if (!canvas) return;
+      memoryChartCtx = canvas.getContext('2d');
+    }
+
+    // Draw memory chart
+    function drawMemoryChart(history) {
+      if (!memoryChartCtx || !history || history.length === 0) return;
+
+      const canvas = memoryChartCtx.canvas;
+      const width = canvas.width;
+      const height = canvas.height;
+      const padding = { top: 20, right: 60, bottom: 30, left: 50 };
+      const chartWidth = width - padding.left - padding.right;
+      const chartHeight = height - padding.top - padding.bottom;
+
+      // Clear canvas
+      memoryChartCtx.clearRect(0, 0, width, height);
+
+      // Get data range
+      const maxMem = Math.max(...history.map(d => d.memoryUsedPercent), 100);
+      const minMem = Math.min(...history.map(d => d.memoryUsedPercent), 0);
+
+      // Draw grid lines
+      memoryChartCtx.strokeStyle = '#334155';
+      memoryChartCtx.lineWidth = 1;
+      
+      for (let i = 0; i <= 4; i++) {
+        const y = padding.top + (chartHeight * i / 4);
+        memoryChartCtx.beginPath();
+        memoryChartCtx.moveTo(padding.left, y);
+        memoryChartCtx.lineTo(width - padding.right, y);
+        memoryChartCtx.stroke();
+        
+        // Y-axis labels
+        const value = Math.round(100 - (i * 25));
+        memoryChartCtx.fillStyle = '#64748b';
+        memoryChartCtx.font = '11px sans-serif';
+        memoryChartCtx.textAlign = 'right';
+        memoryChartCtx.fillText(value + '%', padding.left - 8, y + 4);
+      }
+
+      // Draw warning threshold line (80%)
+      const warningY = padding.top + chartHeight * (1 - 0.8);
+      memoryChartCtx.strokeStyle = '#fbbf24';
+      memoryChartCtx.setLineDash([5, 5]);
+      memoryChartCtx.beginPath();
+      memoryChartCtx.moveTo(padding.left, warningY);
+      memoryChartCtx.lineTo(width - padding.right, warningY);
+      memoryChartCtx.stroke();
+      memoryChartCtx.setLineDash([]);
+
+      // Draw critical threshold line (90%)
+      const criticalY = padding.top + chartHeight * (1 - 0.9);
+      memoryChartCtx.strokeStyle = '#f87171';
+      memoryChartCtx.setLineDash([5, 5]);
+      memoryChartCtx.beginPath();
+      memoryChartCtx.moveTo(padding.left, criticalY);
+      memoryChartCtx.lineTo(width - padding.right, criticalY);
+      memoryChartCtx.stroke();
+      memoryChartCtx.setLineDash([]);
+
+      // Draw memory line
+      if (history.length > 1) {
+        memoryChartCtx.strokeStyle = '#60a5fa';
+        memoryChartCtx.lineWidth = 2;
+        memoryChartCtx.beginPath();
+
+        history.forEach((point, i) => {
+          const x = padding.left + (chartWidth * i / (history.length - 1));
+          const y = padding.top + chartHeight * (1 - point.memoryUsedPercent / 100);
+          
+          if (i === 0) {
+            memoryChartCtx.moveTo(x, y);
+          } else {
+            memoryChartCtx.lineTo(x, y);
+          }
+        });
+
+        memoryChartCtx.stroke();
+
+        // Fill area under line
+        memoryChartCtx.lineTo(padding.left + chartWidth, padding.top + chartHeight);
+        memoryChartCtx.lineTo(padding.left, padding.top + chartHeight);
+        memoryChartCtx.closePath();
+        
+        const gradient = memoryChartCtx.createLinearGradient(0, padding.top, 0, padding.top + chartHeight);
+        gradient.addColorStop(0, 'rgba(96, 165, 250, 0.3)');
+        gradient.addColorStop(1, 'rgba(96, 165, 250, 0.05)');
+        memoryChartCtx.fillStyle = gradient;
+        memoryChartCtx.fill();
+      }
+
+      // Draw current value label
+      if (history.length > 0) {
+        const lastPoint = history[history.length - 1];
+        const lastX = width - padding.right;
+        const lastY = padding.top + chartHeight * (1 - lastPoint.memoryUsedPercent / 100);
+        
+        memoryChartCtx.fillStyle = '#60a5fa';
+        memoryChartCtx.font = 'bold 12px sans-serif';
+        memoryChartCtx.textAlign = 'left';
+        memoryChartCtx.fillText(lastPoint.memoryUsedPercent.toFixed(1) + '%', lastX + 5, lastY + 4);
+        
+        // Draw MB value below
+        memoryChartCtx.fillStyle = '#94a3b8';
+        memoryChartCtx.font = '10px sans-serif';
+        memoryChartCtx.fillText(lastPoint.memoryUsedMB + ' MB', lastX + 5, lastY + 18);
+      }
+
+      // Time labels
+      if (history.length > 0) {
+        memoryChartCtx.fillStyle = '#64748b';
+        memoryChartCtx.font = '10px sans-serif';
+        memoryChartCtx.textAlign = 'center';
+        
+        const firstTime = new Date(history[0].timestamp);
+        const lastTime = new Date(history[history.length - 1].timestamp);
+        
+        memoryChartCtx.fillText(firstTime.toLocaleTimeString(), padding.left, height - 5);
+        memoryChartCtx.fillText(lastTime.toLocaleTimeString(), width - padding.right, height - 5);
+      }
+    }
+
+    // Update server stats
+    async function updateServerStats() {
+      try {
+        const res = await fetch(`${API_BASE}/api/server`);
+        const data = await res.json();
+        
+        if (!data.server) return;
+        
+        const { cpu, memory, disk, uptime } = data.server;
+        
+        // Update memory
+        const memPercent = memory.usedPercent || 0;
+        document.getElementById('memory-percent').textContent = memPercent.toFixed(1) + '%';
+        document.getElementById('memory-detail').textContent = 
+          `${formatBytesGB(memory.used)} / ${formatBytesGB(memory.total)} GB`;
+        
+        const memBar = document.getElementById('memory-bar');
+        memBar.style.width = memPercent + '%';
+        memBar.className = 'progress-fill memory-fill';
+        if (memPercent >= 90) memBar.classList.add('critical');
+        else if (memPercent >= 80) memBar.classList.add('warning');
+        
+        // Calculate memory trend
+        if (data.history && data.history.length >= 2) {
+          const recent = data.history.slice(-6); // Last minute
+          const older = data.history.slice(0, 6); // First minute
+          
+          if (recent.length > 0 && older.length > 0) {
+            const recentAvg = recent.reduce((s, d) => s + d.memoryUsedPercent, 0) / recent.length;
+            const olderAvg = older.reduce((s, d) => s + d.memoryUsedPercent, 0) / older.length;
+            const diff = recentAvg - olderAvg;
+            
+            const trendEl = document.getElementById('memory-trend');
+            if (diff > 2) {
+              trendEl.className = 'trend-indicator rising';
+              trendEl.innerHTML = '<span class="trend-arrow">↗</span><span class="trend-text">Rising (+' + diff.toFixed(1) + '%)</span>';
+            } else if (diff < -2) {
+              trendEl.className = 'trend-indicator falling';
+              trendEl.innerHTML = '<span class="trend-arrow">↘</span><span class="trend-text">Falling (' + diff.toFixed(1) + '%)</span>';
+            } else {
+              trendEl.className = 'trend-indicator stable';
+              trendEl.innerHTML = '<span class="trend-arrow">→</span><span class="trend-text">Stable</span>';
+            }
+          }
+        }
+        
+        // Update CPU
+        document.getElementById('cpu-percent').textContent = (cpu.usage || 0).toFixed(1) + '%';
+        document.getElementById('cpu-detail').textContent = `${cpu.cores || 1} cores`;
+        document.getElementById('cpu-bar').style.width = (cpu.usage || 0) + '%';
+        
+        // Update Disk
+        const diskPercent = disk.usedPercent || 0;
+        document.getElementById('disk-percent').textContent = diskPercent.toFixed(1) + '%';
+        document.getElementById('disk-detail').textContent = 
+          `${formatBytesGB(disk.used)} / ${formatBytesGB(disk.total)} GB`;
+        
+        const diskBar = document.getElementById('disk-bar');
+        diskBar.style.width = diskPercent + '%';
+        diskBar.className = 'progress-fill disk-fill';
+        if (diskPercent >= 90) diskBar.classList.add('critical');
+        else if (diskPercent >= 80) diskBar.classList.add('warning');
+        
+        // Update uptime
+        document.getElementById('server-uptime').textContent = formatUptimeLong(uptime);
+        
+        // Draw memory chart
+        if (data.history) {
+          drawMemoryChart(data.history);
+        }
+        
+      } catch (error) {
+        console.error('Failed to fetch server stats:', error);
+      }
+    }
+
+    // Format bytes to GB
+    function formatBytesGB(bytes) {
+      if (!bytes) return '0';
+      return (bytes / (1024 * 1024 * 1024)).toFixed(1);
+    }
+
+    // Format uptime in long format
+    function formatUptimeLong(seconds) {
+      if (!seconds) return '--';
+      
+      const days = Math.floor(seconds / 86400);
+      const hours = Math.floor((seconds % 86400) / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      
+      if (days > 0) return `${days}d ${hours}h ${minutes}m`;
+      if (hours > 0) return `${hours}h ${minutes}m`;
+      return `${minutes}m`;
+    }
+
     // Fetch and update metrics
     async function updateMetrics() {
       try {
@@ -382,8 +811,11 @@
     }
 
     // Start updating
+    initMemoryChart();
     updateMetrics();
+    updateServerStats();
     setInterval(updateMetrics, UPDATE_INTERVAL);
+    setInterval(updateServerStats, UPDATE_INTERVAL);
 
     console.log('🌐 YZ Network Dashboard initialized');
     console.log(`🔄 Updating every ${UPDATE_INTERVAL}ms`);

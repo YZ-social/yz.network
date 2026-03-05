@@ -41,9 +41,169 @@ const metrics = {
     avgLatencyP99: 0,
     opsPerSecond: 0
   },
+  server: {
+    cpu: { usage: 0, cores: 0 },
+    memory: { total: 0, used: 0, free: 0, usedPercent: 0 },
+    disk: { total: 0, used: 0, free: 0, usedPercent: 0 },
+    uptime: 0
+  },
+  serverHistory: [],  // Time-series for server stats (memory trend)
   lastUpdate: null,
   history: []  // Time-series data for charts
 };
+
+/**
+ * Collect server stats (CPU, Memory, Disk)
+ * Uses Docker host stats when running in container
+ */
+async function collectServerStats() {
+  try {
+    // Get CPU info
+    const cpuStats = await getCPUStats();
+    
+    // Get memory info from /proc/meminfo (works in Docker with host access)
+    const memStats = await getMemoryStats();
+    
+    // Get disk info
+    const diskStats = await getDiskStats();
+    
+    // Get uptime
+    const uptime = await getUptime();
+    
+    metrics.server = {
+      cpu: cpuStats,
+      memory: memStats,
+      disk: diskStats,
+      uptime: uptime
+    };
+    
+    // Add to server history (keep last 60 data points = 10 minutes at 10s interval)
+    metrics.serverHistory.push({
+      timestamp: Date.now(),
+      memoryUsedPercent: memStats.usedPercent,
+      memoryUsedMB: Math.round(memStats.used / (1024 * 1024)),
+      cpuUsage: cpuStats.usage,
+      diskUsedPercent: diskStats.usedPercent
+    });
+    
+    if (metrics.serverHistory.length > 60) {
+      metrics.serverHistory.shift();
+    }
+    
+    console.log(`📈 Server stats: CPU ${cpuStats.usage.toFixed(1)}%, Memory ${memStats.usedPercent.toFixed(1)}%, Disk ${diskStats.usedPercent.toFixed(1)}%`);
+  } catch (error) {
+    console.error('Error collecting server stats:', error.message);
+  }
+}
+
+/**
+ * Get CPU usage stats
+ */
+async function getCPUStats() {
+  try {
+    // Get CPU info from /proc/stat
+    const { stdout: statOutput } = await execAsync('cat /proc/stat | head -1');
+    const cpuLine = statOutput.trim().split(/\s+/);
+    
+    // cpu user nice system idle iowait irq softirq steal guest guest_nice
+    const user = parseInt(cpuLine[1]) || 0;
+    const nice = parseInt(cpuLine[2]) || 0;
+    const system = parseInt(cpuLine[3]) || 0;
+    const idle = parseInt(cpuLine[4]) || 0;
+    const iowait = parseInt(cpuLine[5]) || 0;
+    
+    const total = user + nice + system + idle + iowait;
+    const used = user + nice + system + iowait;
+    const usage = total > 0 ? (used / total) * 100 : 0;
+    
+    // Get number of CPU cores
+    const { stdout: cpuInfo } = await execAsync('nproc 2>/dev/null || echo 1');
+    const cores = parseInt(cpuInfo.trim()) || 1;
+    
+    return { usage, cores };
+  } catch (error) {
+    console.warn('Failed to get CPU stats:', error.message);
+    return { usage: 0, cores: 1 };
+  }
+}
+
+/**
+ * Get memory stats
+ */
+async function getMemoryStats() {
+  try {
+    const { stdout } = await execAsync('cat /proc/meminfo');
+    const lines = stdout.split('\n');
+    
+    let total = 0, free = 0, available = 0, buffers = 0, cached = 0;
+    
+    for (const line of lines) {
+      const parts = line.split(':');
+      if (parts.length < 2) continue;
+      
+      const key = parts[0].trim();
+      const value = parseInt(parts[1].trim()) * 1024; // Convert from KB to bytes
+      
+      switch (key) {
+        case 'MemTotal': total = value; break;
+        case 'MemFree': free = value; break;
+        case 'MemAvailable': available = value; break;
+        case 'Buffers': buffers = value; break;
+        case 'Cached': cached = value; break;
+      }
+    }
+    
+    // Calculate used memory (excluding buffers/cache for more accurate "real" usage)
+    const used = total - available;
+    const usedPercent = total > 0 ? (used / total) * 100 : 0;
+    
+    return {
+      total,
+      used,
+      free: available,
+      usedPercent,
+      buffers,
+      cached
+    };
+  } catch (error) {
+    console.warn('Failed to get memory stats:', error.message);
+    return { total: 0, used: 0, free: 0, usedPercent: 0 };
+  }
+}
+
+/**
+ * Get disk stats
+ */
+async function getDiskStats() {
+  try {
+    // Get disk usage for root filesystem
+    const { stdout } = await execAsync("df -B1 / | tail -1");
+    const parts = stdout.trim().split(/\s+/);
+    
+    // Format: Filesystem 1B-blocks Used Available Use% Mounted
+    const total = parseInt(parts[1]) || 0;
+    const used = parseInt(parts[2]) || 0;
+    const free = parseInt(parts[3]) || 0;
+    const usedPercent = parseFloat(parts[4]) || 0;
+    
+    return { total, used, free, usedPercent };
+  } catch (error) {
+    console.warn('Failed to get disk stats:', error.message);
+    return { total: 0, used: 0, free: 0, usedPercent: 0 };
+  }
+}
+
+/**
+ * Get system uptime
+ */
+async function getUptime() {
+  try {
+    const { stdout } = await execAsync('cat /proc/uptime');
+    return parseFloat(stdout.split(' ')[0]) || 0;
+  } catch (error) {
+    return 0;
+  }
+}
 
 /**
  * Discover all DHT node containers
@@ -189,6 +349,9 @@ async function scrapeAllMetrics() {
 
   // Calculate aggregate statistics
   calculateAggregates();
+  
+  // Collect server stats
+  await collectServerStats();
 
   metrics.lastUpdate = Date.now();
 
@@ -297,6 +460,16 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200);
     res.end(JSON.stringify({
       history: metrics.history
+    }));
+    return;
+  }
+
+  if (req.url === '/api/server') {
+    res.setHeader('Content-Type', 'application/json');
+    res.writeHead(200);
+    res.end(JSON.stringify({
+      server: metrics.server,
+      history: metrics.serverHistory
     }));
     return;
   }
