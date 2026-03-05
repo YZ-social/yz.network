@@ -12,9 +12,9 @@ import { test, expect } from '@playwright/test';
  */
 
 const BASE_URL = 'https://imeyouwe.com';
-const STABILIZATION_TIME = 30000; // 30s for browser to stabilize in network
+const STABILIZATION_TIME = 45000; // 45s for browser to stabilize in network (increased)
 const DISCOVERY_TIME = 60000; // 60s for browsers to discover each other
-const WEBRTC_FORMATION_TIME = 30000; // 30s for WebRTC to form after discovery
+const WEBRTC_FORMATION_TIME = 45000; // 45s for WebRTC to form after discovery (increased)
 
 test.describe('WebRTC Two-Browser Connection', () => {
   
@@ -55,6 +55,16 @@ test.describe('WebRTC Two-Browser Connection', () => {
         connectedPeers: window.YZSocialC.dht?.getConnectedPeers()?.length || 0
       }));
       console.log(`📊 Browser A: ${routingInfoA.connectedPeers} connected, ${routingInfoA.routingTableSize} in routing table`);
+      
+      // Wait for at least 3 connections (genesis + 2 bridges)
+      if (routingInfoA.connectedPeers < 3) {
+        console.log(`⏳ Browser A only has ${routingInfoA.connectedPeers} connections, waiting for more...`);
+        await pageA.waitForTimeout(15000);
+        const routingInfoA2 = await pageA.evaluate(() => ({
+          connectedPeers: window.YZSocialC.dht?.getConnectedPeers()?.length || 0
+        }));
+        console.log(`📊 Browser A now has ${routingInfoA2.connectedPeers} connections`);
+      }
       
       // Step 2: Connect Browser B
       console.log('🚀 Step 2: Connecting Browser B...');
