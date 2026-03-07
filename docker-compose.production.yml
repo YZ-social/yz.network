@@ -24,6 +24,11 @@ services:
     networks:
       - yz-network
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       resources:
         limits:
@@ -57,6 +62,11 @@ services:
     networks:
       - yz-network
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
       bootstrap:
         condition: service_healthy
@@ -93,6 +103,11 @@ services:
     networks:
       - yz-network
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
       bootstrap:
         condition: service_healthy
@@ -126,6 +141,11 @@ services:
     networks:
       - yz-network
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
       bootstrap:
         condition: service_healthy
@@ -164,6 +184,11 @@ services:
     networks:
       - yz-network
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
     depends_on:
       - bootstrap
       - bridge-node-1
@@ -193,6 +218,11 @@ services:
           - imeyouwe.com
           - www.imeyouwe.com
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
       - bootstrap
     # Increase file descriptor limits to prevent "No file descriptors available" errors

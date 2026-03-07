@@ -7,6 +7,13 @@
 # IMPORTANT: All nodes mount bundle-hash.json for version synchronization
 # This ensures nodes use the same BUILD_ID as the bootstrap server
 
+# Common logging configuration - limits log size to prevent disk fill
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "5m"
+    max-file: "2"
+
 services:
   # DHT Node 1
   dht-node-1:
@@ -30,6 +37,7 @@ services:
     networks:
       - yz-network
     restart: unless-stopped
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -62,11 +70,11 @@ services:
       - NODE_NAME=dht-node-2
       - OPEN_NETWORK=true
     volumes:
-      # Mount bundle-hash.json for version checking synchronization
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -99,11 +107,11 @@ services:
       - NODE_NAME=dht-node-3
       - OPEN_NETWORK=true
     volumes:
-      # Mount bundle-hash.json for version checking synchronization
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -136,11 +144,11 @@ services:
       - NODE_NAME=dht-node-4
       - OPEN_NETWORK=true
     volumes:
-      # Mount bundle-hash.json for version checking synchronization
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -173,11 +181,11 @@ services:
       - NODE_NAME=dht-node-5
       - OPEN_NETWORK=true
     volumes:
-      # Mount bundle-hash.json for version checking synchronization
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -210,11 +218,11 @@ services:
       - NODE_NAME=dht-node-6
       - OPEN_NETWORK=true
     volumes:
-      # Mount bundle-hash.json for version checking synchronization
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -247,11 +255,11 @@ services:
       - NODE_NAME=dht-node-7
       - OPEN_NETWORK=true
     volumes:
-      # Mount bundle-hash.json for version checking synchronization
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -284,11 +292,11 @@ services:
       - NODE_NAME=dht-node-8
       - OPEN_NETWORK=true
     volumes:
-      # Mount bundle-hash.json for version checking synchronization
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -321,11 +329,11 @@ services:
       - NODE_NAME=dht-node-9
       - OPEN_NETWORK=true
     volumes:
-      # Mount bundle-hash.json for version checking synchronization
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -358,11 +366,11 @@ services:
       - NODE_NAME=dht-node-10
       - OPEN_NETWORK=true
     volumes:
-      # Mount bundle-hash.json for version checking synchronization
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -395,11 +403,11 @@ services:
       - NODE_NAME=dht-node-11
       - OPEN_NETWORK=true
     volumes:
-      # Mount bundle-hash.json for version checking synchronization
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -432,11 +440,11 @@ services:
       - NODE_NAME=dht-node-12
       - OPEN_NETWORK=true
     volumes:
-      # Mount bundle-hash.json for version checking synchronization
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -469,11 +477,11 @@ services:
       - NODE_NAME=dht-node-13
       - OPEN_NETWORK=true
     volumes:
-      # Mount bundle-hash.json for version checking synchronization
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -506,11 +514,11 @@ services:
       - NODE_NAME=dht-node-14
       - OPEN_NETWORK=true
     volumes:
-      # Mount bundle-hash.json for version checking synchronization
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -543,11 +551,11 @@ services:
       - NODE_NAME=dht-node-15
       - OPEN_NETWORK=true
     volumes:
-      # Mount bundle-hash.json for version checking synchronization
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
+    logging: *default-logging
     deploy:
       resources:
         limits:
