@@ -376,6 +376,18 @@ function calculateAggregates() {
       ? healthyNodes.reduce((sum, n) => sum + (n.dht_connected_peers || 0), 0) / healthyNodes.length
       : 0,
 
+    // Connection stability statistics
+    totalConnectionsEstablished: healthyNodes.reduce((sum, n) => sum + (n.connections_established_total || 0), 0),
+    totalConnectionsLost: healthyNodes.reduce((sum, n) => sum + (n.connections_lost_total || 0), 0),
+    totalConnectionChurn: healthyNodes.reduce((sum, n) => sum + (n.connection_churn_per_minute || 0), 0),
+    avgChurnPerNode: healthyNodes.length > 0
+      ? healthyNodes.reduce((sum, n) => sum + (n.connection_churn_per_minute || 0), 0) / healthyNodes.length
+      : 0,
+    peakConnections: Math.max(...healthyNodes.map(n => n.peak_connections || 0), 0),
+    avgStabilityRatio: healthyNodes.length > 0
+      ? healthyNodes.reduce((sum, n) => sum + (parseFloat(n.connection_stability_ratio) || 100), 0) / healthyNodes.length
+      : 100,
+
     // DHT operation statistics
     totalDHTOps: healthyNodes.reduce((sum, n) =>
       sum + (n.dht_store_operations_total || 0) + (n.dht_get_operations_total || 0) + (n.dht_findnode_operations_total || 0), 0),

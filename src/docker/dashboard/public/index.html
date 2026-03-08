@@ -503,6 +503,18 @@
       <div class="value" id="data-out">-</div>
       <div class="subtext">Bytes per second</div>
     </div>
+
+    <div class="stat-card">
+      <div class="label">Conn Churn</div>
+      <div class="value" id="conn-churn">-</div>
+      <div class="subtext">Changes per minute</div>
+    </div>
+
+    <div class="stat-card health-good">
+      <div class="label">Stability</div>
+      <div class="value" id="stability-ratio">-</div>
+      <div class="subtext">Connection retention %</div>
+    </div>
   </div>
 
   <div class="section">
@@ -956,6 +968,22 @@
         document.getElementById('throughput').textContent = metricsData.aggregate.opsPerSecond.toFixed(1);
         document.getElementById('data-in').textContent = formatBytes(metricsData.aggregate.avgBytesReceivedPerSecond || 0);
         document.getElementById('data-out').textContent = formatBytes(metricsData.aggregate.avgBytesSentPerSecond || 0);
+        
+        // Update stability metrics
+        document.getElementById('conn-churn').textContent = (metricsData.aggregate.avgChurnPerNode || 0).toFixed(1);
+        const stabilityRatio = metricsData.aggregate.avgStabilityRatio || 100;
+        document.getElementById('stability-ratio').textContent = stabilityRatio.toFixed(1) + '%';
+        
+        // Color the stability card based on value
+        const stabilityCard = document.getElementById('stability-ratio').closest('.stat-card');
+        if (stabilityCard) {
+          stabilityCard.classList.remove('health-good', 'health-bad');
+          if (stabilityRatio >= 90) {
+            stabilityCard.classList.add('health-good');
+          } else if (stabilityRatio < 70) {
+            stabilityCard.classList.add('health-bad');
+          }
+        }
 
         // Update last update time
         if (metricsData.lastUpdate) {
