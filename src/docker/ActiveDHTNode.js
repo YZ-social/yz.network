@@ -182,6 +182,15 @@ export class ActiveDHTNode extends NodeDHTClient {
   setupConnectionStabilityTracking() {
     if (!this.dht) return;
     
+    // Count already-connected peers (connections established before listener was added)
+    const existingPeers = this.dht.getConnectedPeers();
+    if (existingPeers.length > 0) {
+      console.log(`📊 Stability tracking: Found ${existingPeers.length} existing connections`);
+      this.metrics.connectionsEstablished = existingPeers.length;
+      this.metrics.currentConnections = existingPeers.length;
+      this.metrics.peakConnections = existingPeers.length;
+    }
+    
     // Track new connections
     this.dht.on('peerConnected', (peerId) => {
       this.metrics.connectionsEstablished++;
