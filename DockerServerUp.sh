@@ -11,8 +11,9 @@ echo "📦 Building browser bundle..."
 npm run build
 
 echo ""
-echo "🐳 Rebuilding Docker image with latest code..."
+echo "🐳 Rebuilding Docker images with latest code..."
 docker build -t itsmeront/yz-dht-node:latest .
+docker build -t itsmeront/yz-dashboard:latest -f Dockerfile.dashboard .
 
 echo ""
 echo "🚀 Starting YZ Network production services..."
