@@ -83,7 +83,7 @@ describe('KBucket', () => {
       expect(bucket.size()).toBe(20);
     });
 
-    test('should reject new nodes when full', () => {
+    test('should add overflow nodes to replacement cache when full', () => {
       // Fill bucket to capacity
       for (let i = 0; i < 20; i++) {
         const node = new DHTNode(new DHTNodeId(), `address-${i}`);
@@ -94,8 +94,10 @@ describe('KBucket', () => {
       const extraNode = new DHTNode(new DHTNodeId(), 'extra-address');
       const added = bucket.addNode(extraNode);
       
-      expect(added).toBe(false);
-      expect(bucket.size()).toBe(20);
+      expect(added).toBe(true); // Now returns true (added to replacement cache)
+      expect(bucket.size()).toBe(20); // Main bucket still has 20
+      expect(bucket.replacementCacheSize()).toBe(1); // Node is in cache
+      expect(bucket.getReplacementCache()[0].id.equals(extraNode.id)).toBe(true);
     });
 
     test('should get least recently seen node', async () => {

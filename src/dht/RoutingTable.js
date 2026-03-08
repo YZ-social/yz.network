@@ -7,11 +7,15 @@ import { ConnectionManagerFactory } from '../network/ConnectionManagerFactory.js
  * Kademlia routing table implementation
  */
 export class RoutingTable {
-  constructor(localNodeId, k = 20) {
+  constructor(localNodeId, k = 20, options = {}) {
     this.localNodeId = localNodeId instanceof DHTNodeId ? localNodeId : DHTNodeId.fromString(localNodeId);
     this.k = k;
     this.buckets = [new KBucket(k, 0, 0)]; // Start with single bucket
     this.totalNodes = 0;
+
+    // Proximity Neighbor Selection (PNS) configuration
+    this.pnsEnabled = options.pnsEnabled || false;
+    this.pnsProbeInterval = options.pnsProbeInterval || 60000; // 1 minute default
 
     // Event handling for connection managers
     this.onNodeAdded = null; // Callback to notify DHT when nodes are added via connections
@@ -70,6 +74,10 @@ export class RoutingTable {
       if (!wasAlreadyPresent) {
         this.totalNodes++;
       }
+      // Re-rank bucket by RTT when PNS is enabled
+      if (this.pnsEnabled) {
+        this.rankBucketByRTT(bucketIndex);
+      }
       return true;
     }
 
@@ -79,18 +87,51 @@ export class RoutingTable {
       return this.addNode(node); // Retry after split
     }
 
-    // Can't split, try to replace least recently seen node
+    // Can't split - implement liveness priority for replacement
+    // Requirements 6.1, 6.4: Liveness over proximity enforcement
+    
+    // Step 1: Find a node that can be replaced using liveness rules
     const leastRecent = bucket.getLeastRecentlySeenNode();
-    if (leastRecent && (leastRecent.isStale() || !leastRecent.isAlive)) {
+    
+    if (leastRecent && this.shouldReplaceNode(leastRecent, node)) {
+      // Found a replaceable node - remove it
       bucket.removeNode(leastRecent.id);
       this.totalNodes--;
+      
+      // Step 2: Promote from replacement cache BEFORE accepting new node
+      // Requirement 6.4: Cache promotion priority over new nodes
+      if (bucket.replacementCacheSize() > 0) {
+        const promoted = bucket.promoteFromReplacementCache();
+        if (promoted) {
+          this.totalNodes++;
+          console.log(`📋 Promoted ${promoted.id.toString().substring(0, 8)}... from replacement cache (liveness priority)`);
+          
+          // Add the new node to replacement cache instead
+          bucket.addToReplacementCache(node);
+          
+          // Re-rank bucket by RTT when PNS is enabled
+          if (this.pnsEnabled) {
+            this.rankBucketByRTT(bucketIndex);
+          }
+          return true;
+        }
+      }
+      
+      // No replacement cache - add the new node directly
       if (bucket.addNode(node)) {
         this.totalNodes++;
+        // Re-rank bucket by RTT when PNS is enabled
+        if (this.pnsEnabled) {
+          this.rankBucketByRTT(bucketIndex);
+        }
         return true;
       }
     }
-
-    return false; // Could not add node
+    
+    // All bucket nodes are live - add to replacement cache
+    // Requirement 6.1: Never evict live nodes
+    bucket.addToReplacementCache(node);
+    return false; // Node added to cache, not main bucket
   }
 
   /**
@@ -114,6 +155,51 @@ export class RoutingTable {
     }
     return false;
   }
+
+  /**
+   * Handle node failure with replacement cache promotion
+   *
+   * This method should be called when a node fails liveness checks (e.g., ping timeout,
+   * connection failure). It removes the failed node and promotes from the replacement
+   * cache if available.
+   *
+   * Requirements: 1.3, 6.4
+   *
+   * @param {DHTNodeId|string} nodeId - ID of the failed node
+   * @returns {boolean} - True if node was found and removed
+   */
+  handleNodeFailure(nodeId) {
+    const id = nodeId instanceof DHTNodeId ? nodeId : DHTNodeId.fromHex(nodeId);
+    const bucketIndex = this.getBucketIndex(id);
+
+    // SAFETY CHECK: Ensure buckets array and target bucket exist
+    if (!this.buckets || bucketIndex >= this.buckets.length || !this.buckets[bucketIndex]) {
+      console.error(`❌ RoutingTable.handleNodeFailure: Invalid bucket access - buckets=${!!this.buckets}, bucketIndex=${bucketIndex}, bucketsLength=${this.buckets?.length}`);
+      return false;
+    }
+
+    const bucket = this.buckets[bucketIndex];
+    const hadNode = bucket.hasNode(id);
+
+    // Use KBucket's handleNodeFailure which handles replacement cache promotion
+    const result = bucket.handleNodeFailure(id);
+
+    if (result && hadNode) {
+      // Node was removed - check if promotion happened
+      // If bucket size stayed the same, a node was promoted
+      // If bucket size decreased, no promotion occurred
+      const promoted = bucket.size() === this.k || bucket.size() > 0;
+      if (promoted) {
+        console.log(`📋 RoutingTable: Node failure handled with replacement cache promotion`);
+      } else {
+        this.totalNodes--;
+      }
+    }
+
+    return result;
+  }
+
+
 
   /**
    * Get a node by ID
@@ -412,6 +498,125 @@ export class RoutingTable {
     return this.buckets.reduce((oldest, current) =>
       current.lastUpdated < oldest.lastUpdated ? current : oldest
     );
+  }
+
+  /**
+   * Rank bucket entries by RTT when PNS is enabled
+   * Preserves liveness priority (live nodes before dead nodes)
+   * @param {number} bucketIndex - Index of the bucket to rank
+   */
+  rankBucketByRTT(bucketIndex) {
+    if (!this.pnsEnabled) return;
+
+    if (bucketIndex < 0 || bucketIndex >= this.buckets.length) {
+      return;
+    }
+
+    const bucket = this.buckets[bucketIndex];
+    if (!bucket || bucket.nodes.length < 2) return;
+
+    // Sort nodes by RTT (lower is better), preserving liveness priority
+    bucket.nodes.sort((a, b) => {
+      // Liveness always wins - live nodes come before dead nodes
+      const aLive = a.isAlive === true;
+      const bLive = b.isAlive === true;
+      
+      if (aLive && !bLive) return -1;
+      if (!aLive && bLive) return 1;
+
+      // Among nodes with same liveness status, sort by RTT
+      const rttA = a.rtt > 0 ? a.rtt : Infinity;
+      const rttB = b.rtt > 0 ? b.rtt : Infinity;
+      return rttA - rttB;
+    });
+  }
+  /**
+   * Check if a node is considered live
+   * A node is live if:
+   * 1. isAlive flag is true, AND
+   * 2. Has responded within the last ping interval (5 minutes)
+   *
+   * @param {DHTNode} node - The node to check
+   * @returns {boolean} - True if node is considered live
+   *
+   * Requirements: 6.1, 6.2, 6.3
+   */
+  isNodeLive(node) {
+    if (!node) return false;
+
+    const pingInterval = 5 * 60 * 1000; // 5 minutes
+    const isRecentlySeen = (Date.now() - node.lastSeen) < pingInterval;
+
+    return node.isAlive === true && isRecentlySeen;
+  }
+
+  /**
+   * Determine if an existing node should be replaced by a candidate node
+   * Implements liveness priority over proximity metrics
+   *
+   * Rules:
+   * 1. Never replace a live node with unknown-liveness candidate
+   * 2. Never replace a recently-seen node regardless of RTT
+   * 3. Only replace if existing node failed liveness (failureCount >= 3)
+   *
+   * @param {DHTNode} existingNode - The node currently in the bucket
+   * @param {DHTNode} candidateNode - The node attempting to replace
+   * @returns {boolean} - True if replacement should occur
+   *
+   * Requirements: 6.1, 6.2, 6.3
+   */
+  shouldReplaceNode(existingNode, candidateNode) {
+    if (!existingNode || !candidateNode) return false;
+
+    // Rule 1: Never replace a live node with unknown liveness
+    if (this.isNodeLive(existingNode) && candidateNode.isAlive !== true) {
+      return false;
+    }
+
+    // Rule 2: Never replace recently-seen node regardless of RTT
+    const pingInterval = 5 * 60 * 1000; // 5 minutes
+    if ((Date.now() - existingNode.lastSeen) < pingInterval) {
+      return false;
+    }
+
+    // Rule 3: Only replace if existing node has failed liveness checks
+    // (failureCount >= 3 indicates repeated failures)
+    return !existingNode.isAlive || existingNode.failureCount >= 3;
+  }
+
+
+
+  /**
+   * Perform limited RTT probes for Proximity Neighbor Selection
+   * Probes nodes without recent RTT data (limited to 3 per bucket)
+   * @param {Function} pingCallback - Async function to ping a node by ID, returns RTT
+   */
+  async performPNSProbes(pingCallback) {
+    if (!this.pnsEnabled) return;
+    if (!pingCallback || typeof pingCallback !== 'function') return;
+
+    for (let i = 0; i < this.buckets.length; i++) {
+      const bucket = this.buckets[i];
+
+      // Only probe nodes without recent RTT data
+      const nodesToProbe = bucket.nodes.filter(n =>
+        n.isAlive && (n.rtt === 0 || Date.now() - (n.lastPing || 0) > this.pnsProbeInterval)
+      );
+
+      // Limit probes per bucket to avoid flooding (max 3 per bucket)
+      const limitedProbes = nodesToProbe.slice(0, 3);
+
+      for (const node of limitedProbes) {
+        try {
+          await pingCallback(node.id.toString());
+        } catch (error) {
+          // Probe failed - don't update RTT
+        }
+      }
+
+      // Re-rank bucket after probes complete
+      this.rankBucketByRTT(i);
+    }
   }
 
   /**

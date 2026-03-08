@@ -9,6 +9,7 @@ export class KBucket {
     this.prefix = prefix; // Binary prefix for this bucket
     this.depth = depth; // Depth in the binary tree
     this.nodes = []; // Array of DHTNode objects
+    this.replacementCache = []; // Secondary storage for overflow nodes
     this.lastUpdated = Date.now();
   }
 
@@ -35,8 +36,92 @@ export class KBucket {
       return true;
     }
 
-    // Bucket is full
-    return false;
+    // Bucket is full - add to replacement cache
+    return this.addToReplacementCache(node);
+  }
+
+  /**
+   * Add a node to the replacement cache (LRU eviction when full)
+   * @param {DHTNode} node - Node to add to cache
+   * @returns {boolean} - Always returns true (node is cached)
+   */
+  addToReplacementCache(node) {
+    const existingIndex = this.replacementCache.findIndex(n => n.id.equals(node.id));
+
+    if (existingIndex !== -1) {
+      // Move to end (most recently seen) - LRU ordering
+      const existing = this.replacementCache.splice(existingIndex, 1)[0];
+      existing.lastSeen = Date.now();
+      this.replacementCache.push(existing);
+      return true;
+    }
+
+    if (this.replacementCache.length < this.k) {
+      node.lastSeen = Date.now();
+      this.replacementCache.push(node);
+      return true;
+    }
+
+    // Cache full - evict oldest (LRU eviction)
+    this.replacementCache.shift();
+    node.lastSeen = Date.now();
+    this.replacementCache.push(node);
+    return true;
+  }
+
+  /**
+   * Get a copy of the replacement cache
+   * @returns {DHTNode[]} - Copy of replacement cache array
+   */
+  getReplacementCache() {
+    return [...this.replacementCache];
+  }
+
+  /**
+   * Get the size of the replacement cache
+   * @returns {number} - Number of nodes in replacement cache
+   */
+  replacementCacheSize() {
+    return this.replacementCache.length;
+  }
+
+  /**
+   * Promote the most recently seen node from replacement cache to main bucket
+   * @returns {DHTNode|null} - The promoted node, or null if cache is empty
+   */
+  promoteFromReplacementCache() {
+    if (this.replacementCache.length === 0) {
+      return null;
+    }
+
+    // Promote most recently seen node (last in array due to LRU ordering)
+    const promoted = this.replacementCache.pop();
+    promoted.lastSeen = Date.now();
+    this.nodes.push(promoted);
+    this.lastUpdated = Date.now();
+    return promoted;
+  }
+
+  /**
+   * Handle node failure by removing it and promoting from replacement cache
+   * @param {DHTNodeId} nodeId - ID of the failed node
+   * @returns {boolean} - True if node was found and removed
+   */
+  handleNodeFailure(nodeId) {
+    const index = this.nodes.findIndex(n => n.id.equals(nodeId));
+    if (index === -1) {
+      return false;
+    }
+
+    this.nodes.splice(index, 1);
+    const promoted = this.promoteFromReplacementCache();
+
+    if (promoted) {
+      console.log(`📋 Promoted ${promoted.id.toString().substring(0, 8)}... from replacement cache`);
+    }
+
+    this.lastUpdated = Date.now();
+    return true;
   }
 
   /**

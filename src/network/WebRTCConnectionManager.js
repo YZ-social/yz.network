@@ -1,5 +1,6 @@
 import { ConnectionManager } from './ConnectionManager.js';
 import { ConnectionManagerFactory } from './ConnectionManagerFactory.js';
+import { ConnectionStates, ConnectionTracker } from './ConnectionTracker.js';
 
 /**
  * WebRTC-based connection manager for browser peers
@@ -54,11 +55,296 @@ export class WebRTCConnectionManager extends ConnectionManager {
     // NOTE: Metadata now passed directly in peerConnected/metadataUpdated events
     // No intermediate storage needed - clean architecture!
 
+    // Event listener tracking for proper cleanup (prevents memory leaks)
+    this.trackedListeners = [];
+
+    // State-aware cleanup properties
+    this.cleanupInProgress = false;
+    this.cleanupTimeout = 5000; // ms - timeout for waiting for stable state
+
     // Initialize Page Visibility API if available
     if (typeof document !== 'undefined') {
       this.setupVisibilityHandling();
     }
   }
+
+  /**
+   * Register an event listener with automatic tracking for cleanup
+   * @param {EventTarget} target - RTCPeerConnection or RTCDataChannel
+   * @param {string} event - Event name
+   * @param {Function} handler - Event handler function
+   */
+  registerListener(target, event, handler) {
+    if (!target || typeof target.addEventListener !== 'function') {
+      console.warn('registerListener: Invalid target provided');
+      return;
+    }
+    target.addEventListener(event, handler);
+    this.trackedListeners.push({ target, event, handler });
+  }
+
+  /**
+   * Remove all tracked event listeners
+   */
+  removeAllListeners() {
+    for (const { target, event, handler } of this.trackedListeners) {
+      try {
+        target.removeEventListener(event, handler);
+      } catch (error) {
+        console.warn(`Failed to remove listener for ${event}:`, error);
+        // Continue with remaining listeners
+      }
+    }
+    this.trackedListeners = [];
+  }
+
+  /**
+   * Stop all media tracks on the peer connection.
+   * Stops tracks from both senders (outgoing) and receivers (incoming).
+   * Requirements: 2.1
+   */
+  stopAllTracks() {
+    if (!this.connection) {
+      return;
+    }
+
+    const peerId = this.peerId ? this.peerId.substring(0, 8) : 'unknown';
+
+    // Stop tracks from senders (outgoing tracks)
+    try {
+      const senders = this.connection.getSenders();
+      for (const sender of senders) {
+        if (sender.track) {
+          try {
+            sender.track.stop();
+          } catch (error) {
+            console.warn(`Failed to stop sender track for ${peerId}:`, error);
+          }
+        }
+      }
+    } catch (error) {
+      console.warn(`Failed to get senders for ${peerId}:`, error);
+    }
+
+    // Stop tracks from receivers (incoming tracks)
+    try {
+      const receivers = this.connection.getReceivers();
+      for (const receiver of receivers) {
+        if (receiver.track) {
+          try {
+            receiver.track.stop();
+          } catch (error) {
+            console.warn(`Failed to stop receiver track for ${peerId}:`, error);
+          }
+        }
+      }
+    } catch (error) {
+      console.warn(`Failed to get receivers for ${peerId}:`, error);
+    }
+  }
+
+  /**
+   * Wait for connection to reach a stable state before cleanup.
+   * If already stable, returns immediately. If transitional, waits for
+   * connectionstatechange event or timeout.
+   * 
+   * Requirements: 1.1, 1.2, 1.3
+   * 
+   * @param {number} timeout - Maximum wait time in ms (default: this.cleanupTimeout)
+   * @returns {Promise<string>} Final connection state
+   */
+  async waitForStableState(timeout = this.cleanupTimeout) {
+    const peerId = this.peerId ? this.peerId.substring(0, 8) : 'unknown';
+
+    // If no connection, return 'closed' as stable state
+    if (!this.connection) {
+      return 'closed';
+    }
+
+    const currentState = this.connection.connectionState;
+
+    // If already stable, return immediately (Requirement 1.2)
+    if (ConnectionStates.isStable(currentState)) {
+      return currentState;
+    }
+
+    // If transitional, wait for stable state or timeout (Requirement 1.1, 1.3)
+    console.log(`⏳ Waiting for stable state for ${peerId}... (current: ${currentState})`);
+
+    return new Promise((resolve) => {
+      const startTime = Date.now();
+      let resolved = false;
+
+      const cleanup = () => {
+        if (this.connection) {
+          this.connection.removeEventListener('connectionstatechange', onStateChange);
+        }
+        clearTimeout(timeoutId);
+      };
+
+      const onStateChange = () => {
+        if (resolved) return;
+
+        const newState = this.connection ? this.connection.connectionState : 'closed';
+        
+        if (ConnectionStates.isStable(newState)) {
+          resolved = true;
+          cleanup();
+          console.log(`✅ Connection reached stable state for ${peerId}: ${newState}`);
+          resolve(newState);
+        }
+      };
+
+      // Set timeout for waiting
+      const timeoutId = setTimeout(() => {
+        if (resolved) return;
+        resolved = true;
+        cleanup();
+
+        const finalState = this.connection ? this.connection.connectionState : 'closed';
+        console.warn(`⚠️ Cleanup timeout for ${peerId}, forcing cleanup from state: ${finalState}`);
+        resolve(finalState);
+      }, timeout);
+
+      // Listen for state changes
+      if (this.connection) {
+        this.connection.addEventListener('connectionstatechange', onStateChange);
+      }
+
+      // Check immediately in case state changed
+      onStateChange();
+    });
+  }
+
+  /**
+   * Execute cleanup in the correct order.
+   * Order: tracks → listeners → channel → connection → refs
+   * Each step is wrapped in try/catch to continue on errors.
+   * 
+   * Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 6.1
+   * 
+   * @param {string} reason - Reason for cleanup
+   */
+  performCleanup(reason) {
+    const peerId = this.peerId;
+    const peerIdShort = peerId ? peerId.substring(0, 8) : 'unknown';
+    let cleanupSuccess = true;
+    let cleanupError = null;
+
+    console.log(`🧹 Performing cleanup for ${peerIdShort}... (reason: ${reason})`);
+
+    // Step 1: Stop all media tracks (Requirement 2.1)
+    try {
+      this.stopAllTracks();
+    } catch (error) {
+      console.error(`Failed to stop tracks for ${peerIdShort}:`, error);
+      cleanupSuccess = false;
+      cleanupError = error.message;
+    }
+
+    // Step 2: Remove all event listeners (Requirement 2.2)
+    try {
+      this.removeAllListeners();
+    } catch (error) {
+      console.error(`Failed to remove listeners for ${peerIdShort}:`, error);
+      cleanupSuccess = false;
+      cleanupError = cleanupError || error.message;
+    }
+
+    // Step 3: Close data channel (Requirement 2.3)
+    try {
+      if (this.dataChannel) {
+        this.dataChannel.close();
+      }
+    } catch (error) {
+      console.error(`Failed to close data channel for ${peerIdShort}:`, error);
+      cleanupSuccess = false;
+      cleanupError = cleanupError || error.message;
+    }
+
+    // Step 4: Close RTCPeerConnection (Requirement 2.4)
+    try {
+      if (this.connection && this.connection.connectionState !== 'closed') {
+        if (this.connection.timeout) {
+          clearTimeout(this.connection.timeout);
+        }
+        this.connection.close();
+      }
+    } catch (error) {
+      console.error(`Failed to close connection for ${peerIdShort}:`, error);
+      cleanupSuccess = false;
+      cleanupError = cleanupError || error.message;
+    }
+
+    // Step 5: Nullify references (Requirement 2.5)
+    const connectionState = this.connection ? this.connection.connectionState : 'unknown';
+    const iceConnectionState = this.connection ? this.connection.iceConnectionState : 'unknown';
+
+    this.connection = null;
+    this.dataChannel = null;
+    this.connectionState = 'disconnected';
+    this.pendingConnectionInfo = null;
+    this.signalQueue = [];
+    this.remoteDescriptionSet = false;
+    this.offerCollision = null;
+    this.handshakeCompleted = false;
+    this.handshakeRecvCompleted = false;
+    this.processingSignal = false;
+    this.candidateTypes = { host: 0, srflx: 0, relay: 0 };
+
+    // Log to ConnectionTracker
+    ConnectionTracker.trackConnectionClosed(cleanupSuccess, reason, {
+      peerId: peerId || 'unknown',
+      connectionState,
+      iceConnectionState,
+      error: cleanupError
+    });
+
+    console.log(`✅ Cleanup completed for ${peerIdShort} (success: ${cleanupSuccess})`);
+
+    // Emit peerDisconnected event (Requirement 6.1)
+    if (peerId) {
+      this.emit('peerDisconnected', { peerId, reason });
+    }
+  }
+
+  /**
+   * State-aware cleanup entry point.
+   * Waits for stable state before performing cleanup.
+   * Prevents concurrent cleanup attempts.
+   * 
+   * Requirements: 5.1, 5.2, 5.3
+   * 
+   * @param {string} reason - Reason for cleanup
+   * @returns {Promise<void>}
+   */
+  async safeCleanup(reason) {
+    const peerIdShort = this.peerId ? this.peerId.substring(0, 8) : 'unknown';
+
+    // Check if cleanup is already in progress (Requirement 5.1)
+    if (this.cleanupInProgress) {
+      console.log(`⚠️ Cleanup already in progress for ${peerIdShort}, ignoring`);
+      return;
+    }
+
+    // Set cleanup flag (Requirement 5.2)
+    this.cleanupInProgress = true;
+
+    try {
+      // Stop keep-alive first
+      this.stopKeepAlive();
+
+      // Wait for stable state before cleanup
+      await this.waitForStableState();
+
+      // Perform the actual cleanup
+      this.performCleanup(reason);
+    } finally {
+      // Clear cleanup flag in finally block (Requirement 5.3)
+      this.cleanupInProgress = false;
+    }
+  }
+
 
   /**
    * Setup Page Visibility API handling for keep-alive frequency adjustment
@@ -69,9 +355,7 @@ export class WebRTCConnectionManager extends ConnectionManager {
     // Set initial visibility state
     this.isTabVisible = !document.hidden;
 
-    console.log(`📱 Setting up visibility handling. Initial state: ${this.isTabVisible ? 'visible' : 'hidden'}`);
-
-    // Listen for visibility changes
+    console.log(`📱 Setting up visibility handling. Initial state: ${this.isTabVisible ? 'visible' : 'hidden'}`);    // Listen for visibility changes
     document.addEventListener('visibilitychange', () => {
       const wasVisible = this.isTabVisible;
       this.isTabVisible = !document.hidden;
@@ -230,6 +514,8 @@ export class WebRTCConnectionManager extends ConnectionManager {
       const checkConnection = () => {
         if (this.connectionState === 'connected') {
           clearTimeout(timeout);
+          // Track successful connection creation (Requirement 4.2)
+          ConnectionTracker.trackConnectionCreated();
           resolve(pc);
         } else if (this.connectionState === 'failed' || this.connectionState === 'disconnected') {
           clearTimeout(timeout);
@@ -263,191 +549,208 @@ export class WebRTCConnectionManager extends ConnectionManager {
    * Setup peer connection events
    */
   setupPeerConnectionEvents(pc, initiator) {
-    const peerId = this.peerId;
-    console.log(`🔧 Setting up events for peer: ${peerId.substring(0, 8)}... (initiator: ${initiator})`);
-    console.log(`🔍 WebRTC Peer Connection state: ${pc.connectionState}, ICE state: ${pc.iceConnectionState}, Signaling state: ${pc.signalingState}`);
+      const peerId = this.peerId;
+      console.log(`🔧 Setting up events for peer: ${peerId.substring(0, 8)}... (initiator: ${initiator})`);
+      console.log(`🔍 WebRTC Peer Connection state: ${pc.connectionState}, ICE state: ${pc.iceConnectionState}, Signaling state: ${pc.signalingState}`);
 
-    // ICE candidate gathering with enhanced debugging
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        console.log(`🧊 ICE candidate for ${peerId.substring(0, 8)}...: ${event.candidate.type} (${event.candidate.protocol}:${event.candidate.address}:${event.candidate.port})`);
-        console.log(`   📋 Full candidate string: ${event.candidate.candidate}`);
+      // ICE candidate gathering with enhanced debugging
+      const onIceCandidate = (event) => {
+        if (event.candidate) {
+          console.log(`🧊 ICE candidate for ${peerId.substring(0, 8)}...: ${event.candidate.type} (${event.candidate.protocol}:${event.candidate.address}:${event.candidate.port})`);
+          console.log(`   📋 Full candidate string: ${event.candidate.candidate}`);
 
-        // Track candidate types for diagnostics
-        if (event.candidate.type === 'host') this.candidateTypes.host++;
-        else if (event.candidate.type === 'srflx') this.candidateTypes.srflx++;
-        else if (event.candidate.type === 'relay') this.candidateTypes.relay++;
+          // Track candidate types for diagnostics
+          if (event.candidate.type === 'host') this.candidateTypes.host++;
+          else if (event.candidate.type === 'srflx') this.candidateTypes.srflx++;
+          else if (event.candidate.type === 'relay') this.candidateTypes.relay++;
 
-        // Send ICE candidate through appropriate signaling channel
-        this.sendSignal(peerId, {
-          type: 'candidate',
-          candidate: event.candidate.candidate,
-          sdpMLineIndex: event.candidate.sdpMLineIndex,
-          sdpMid: event.candidate.sdpMid
-        }).catch(error => {
-          console.warn(`Failed to send ICE candidate for ${peerId}:`, error);
-        });
-      } else {
-        console.log(`🏁 ICE gathering complete for ${peerId.substring(0, 8)}... - Generated: ${this.candidateTypes.host} host, ${this.candidateTypes.srflx} srflx, ${this.candidateTypes.relay} relay candidates`);
+          // Send ICE candidate through appropriate signaling channel
+          this.sendSignal(peerId, {
+            type: 'candidate',
+            candidate: event.candidate.candidate,
+            sdpMLineIndex: event.candidate.sdpMLineIndex,
+            sdpMid: event.candidate.sdpMid
+          }).catch(error => {
+            console.warn(`Failed to send ICE candidate for ${peerId}:`, error);
+          });
+        } else {
+          console.log(`🏁 ICE gathering complete for ${peerId.substring(0, 8)}... - Generated: ${this.candidateTypes.host} host, ${this.candidateTypes.srflx} srflx, ${this.candidateTypes.relay} relay candidates`);
 
-        // CRITICAL DIAGNOSTIC: Warn if no host candidates generated
-        if (this.candidateTypes.host === 0) {
-          console.warn(`⚠️ WARNING: No host candidates generated for ${peerId.substring(0, 8)}!`);
-          console.warn(`   This may cause connection failures for same-network peers.`);
-          console.warn(`   Possible causes: browser privacy settings, mDNS disabled, or network configuration.`);
+          // CRITICAL DIAGNOSTIC: Warn if no host candidates generated
+          if (this.candidateTypes.host === 0) {
+            console.warn(`⚠️ WARNING: No host candidates generated for ${peerId.substring(0, 8)}!`);
+            console.warn(`   This may cause connection failures for same-network peers.`);
+            console.warn(`   Possible causes: browser privacy settings, mDNS disabled, or network configuration.`);
+          }
         }
-      }
-    };
-
-    // Connection state changes
-    pc.onconnectionstatechange = () => {
-      console.log(`🔗 Connection state for ${peerId.substring(0, 8)}...: ${pc.connectionState}`);
-
-      if (pc.connectionState === 'connected') {
-        clearTimeout(pc.timeout);
-        this.connectionState = 'connected';
-
-        // CRITICAL FIX: Get initiator flag before clearing pending connection
-        const initiator = this.pendingConnectionInfo ? this.pendingConnectionInfo.initiator : false;
-        this.pendingConnectionInfo = null;
-
-        console.log(`✅ WebRTC Connected to ${peerId.substring(0, 8)}... - EMITTING peerConnected EVENT (initiator: ${initiator})`);
-        // CRITICAL FIX: Include manager reference so RoutingTable can store the correct manager on the DHTNode
-        this.emit('peerConnected', { peerId, connection: pc, manager: this, initiator });
-
-        // Start keep-alive for this connection
-        this.startKeepAlive();
-
-      } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-        console.log(`❌ Connection failed/disconnected for ${peerId.substring(0, 8)}...: ${pc.connectionState}`);
-        this.connectionState = pc.connectionState;
-        this.stopKeepAlive();
-        this.cleanupConnection();
-        this.emit('peerDisconnected', { peerId, reason: pc.connectionState });
-      } else {
-        console.log(`🔄 WebRTC connection state transition for ${peerId.substring(0, 8)}...: ${pc.connectionState} (waiting for 'connected')`);
-        this.connectionState = pc.connectionState;
-      }
-    };
-
-    // ICE connection state changes with enhanced debugging
-    pc.oniceconnectionstatechange = () => {
-      console.log(`🧊 ICE connection state for ${peerId.substring(0, 8)}...: ${pc.iceConnectionState}`);
-
-      if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
-        console.log(`✅ ICE connection established for ${peerId.substring(0, 8)}...: ${pc.iceConnectionState}`);
-      } else if (pc.iceConnectionState === 'failed') {
-        console.error(`❌ ICE connection failed for ${peerId.substring(0, 8)}...`);
-        this.destroyConnection(peerId, 'ice_failed');
-      } else if (pc.iceConnectionState === 'checking') {
-        console.log(`🔍 ICE connectivity checks started for ${peerId.substring(0, 8)}...`);
-      } else if (pc.iceConnectionState === 'disconnected') {
-        console.warn(`⚠️ ICE connection disconnected for ${peerId.substring(0, 8)}...`);
-      } else {
-        console.log(`🧊 ICE state transition for ${peerId.substring(0, 8)}...: ${pc.iceConnectionState}`);
-      }
-    };
-
-    // Data channel handling for incoming connections
-    if (!initiator) {
-      pc.ondatachannel = (event) => {
-        console.log(`📥 Received data channel from ${peerId.substring(0, 8)}...`);
-        const dataChannel = event.channel;
-        this.setupDataChannelEvents(dataChannel);
-        this.dataChannel = dataChannel;
       };
+      this.registerListener(pc, 'icecandidate', onIceCandidate);
+
+      // Connection state changes with unexpected disconnect handling
+      const onConnectionStateChange = () => {
+        console.log(`🔗 Connection state for ${peerId.substring(0, 8)}...: ${pc.connectionState}`);
+
+        if (pc.connectionState === 'connected') {
+          clearTimeout(pc.timeout);
+          this.connectionState = 'connected';
+
+          // CRITICAL FIX: Get initiator flag before clearing pending connection
+          const initiator = this.pendingConnectionInfo ? this.pendingConnectionInfo.initiator : false;
+          this.pendingConnectionInfo = null;
+
+          console.log(`✅ WebRTC Connected to ${peerId.substring(0, 8)}... - EMITTING peerConnected EVENT (initiator: ${initiator})`);
+          // CRITICAL FIX: Include manager reference so RoutingTable can store the correct manager on the DHTNode
+          this.emit('peerConnected', { peerId, connection: pc, manager: this, initiator });
+
+          // Start keep-alive for this connection
+          this.startKeepAlive();
+
+        } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+          // Requirement 9.1, 9.2, 9.3: Detect unexpected disconnects and perform cleanup
+          console.log(`❌ Connection failed/disconnected for ${peerId.substring(0, 8)}...: ${pc.connectionState}`);
+          
+          // Log to ConnectionTracker with peer ID and state (Requirement 9.3)
+          console.log(`📊 Logging unexpected disconnect to ConnectionTracker: peerId=${peerId.substring(0, 8)}, state=${pc.connectionState}`);
+          
+          this.connectionState = pc.connectionState;
+          this.stopKeepAlive();
+          
+          // Use safeCleanup for proper state-aware, ordered cleanup (Requirement 9.2)
+          this.safeCleanup('unexpected_disconnect').catch(error => {
+            console.error(`Failed to cleanup after unexpected disconnect for ${peerId.substring(0, 8)}:`, error);
+          });
+        } else {
+          console.log(`🔄 WebRTC connection state transition for ${peerId.substring(0, 8)}...: ${pc.connectionState} (waiting for 'connected')`);
+          this.connectionState = pc.connectionState;
+        }
+      };
+      this.registerListener(pc, 'connectionstatechange', onConnectionStateChange);
+
+      // ICE connection state changes with enhanced debugging
+      const onIceConnectionStateChange = () => {
+        console.log(`🧊 ICE connection state for ${peerId.substring(0, 8)}...: ${pc.iceConnectionState}`);
+
+        if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+          console.log(`✅ ICE connection established for ${peerId.substring(0, 8)}...: ${pc.iceConnectionState}`);
+        } else if (pc.iceConnectionState === 'failed') {
+          console.error(`❌ ICE connection failed for ${peerId.substring(0, 8)}...`);
+          this.destroyConnection(peerId, 'ice_failed');
+        } else if (pc.iceConnectionState === 'checking') {
+          console.log(`🔍 ICE connectivity checks started for ${peerId.substring(0, 8)}...`);
+        } else if (pc.iceConnectionState === 'disconnected') {
+          console.warn(`⚠️ ICE connection disconnected for ${peerId.substring(0, 8)}...`);
+        } else {
+          console.log(`🧊 ICE state transition for ${peerId.substring(0, 8)}...: ${pc.iceConnectionState}`);
+        }
+      };
+      this.registerListener(pc, 'iceconnectionstatechange', onIceConnectionStateChange);
+
+      // Data channel handling for incoming connections
+      if (!initiator) {
+        const onDataChannel = (event) => {
+          console.log(`📥 Received data channel from ${peerId.substring(0, 8)}...`);
+          const dataChannel = event.channel;
+          this.setupDataChannelEvents(dataChannel);
+          this.dataChannel = dataChannel;
+        };
+        this.registerListener(pc, 'datachannel', onDataChannel);
+      }
+
+      // ICE gathering state monitoring - CRITICAL for debugging
+      const onIceGatheringStateChange = () => {
+        console.log(`🧊 ICE gathering state for ${peerId.substring(0, 8)}...: ${pc.iceGatheringState}`);
+
+        if (pc.iceGatheringState === 'gathering') {
+          console.log(`✅ ICE gathering started for ${peerId.substring(0, 8)}...`);
+        } else if (pc.iceGatheringState === 'complete') {
+          console.log(`🏁 ICE gathering completed for ${peerId.substring(0, 8)}...`);
+        }
+      };
+      this.registerListener(pc, 'icegatheringstatechange', onIceGatheringStateChange);
+
+      // DEBUG: Add periodic status monitoring to track connection progress
+      const statusMonitor = setInterval(() => {
+        if (pc.connectionState === 'connected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+          clearInterval(statusMonitor);
+          return;
+        }
+        console.log(`🔍 WebRTC Status Monitor for ${peerId.substring(0, 8)}...: connection=${pc.connectionState}, ice=${pc.iceConnectionState}, iceGathering=${pc.iceGatheringState}, signaling=${pc.signalingState}`);
+      }, 2000); // Check every 2 seconds
     }
-
-    // ICE gathering state monitoring - CRITICAL for debugging
-    pc.onicegatheringstatechange = () => {
-      console.log(`🧊 ICE gathering state for ${peerId.substring(0, 8)}...: ${pc.iceGatheringState}`);
-
-      if (pc.iceGatheringState === 'gathering') {
-        console.log(`✅ ICE gathering started for ${peerId.substring(0, 8)}...`);
-      } else if (pc.iceGatheringState === 'complete') {
-        console.log(`🏁 ICE gathering completed for ${peerId.substring(0, 8)}...`);
-      }
-    };
-
-    // DEBUG: Add periodic status monitoring to track connection progress
-    const statusMonitor = setInterval(() => {
-      if (pc.connectionState === 'connected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
-        clearInterval(statusMonitor);
-        return;
-      }
-      console.log(`🔍 WebRTC Status Monitor for ${peerId.substring(0, 8)}...: connection=${pc.connectionState}, ice=${pc.iceConnectionState}, iceGathering=${pc.iceGatheringState}, signaling=${pc.signalingState}`);
-    }, 2000); // Check every 2 seconds
-  }
 
   /**
    * Setup data channel events
    */
   setupDataChannelEvents(dataChannel) {
-    const peerId = this.peerId;
+      const peerId = this.peerId;
 
-    dataChannel.onopen = () => {
-      console.log(`📡 Data channel opened for ${peerId.substring(0, 8)}... - WebRTC communication ready!`);
+      const onOpen = () => {
+        console.log(`📡 Data channel opened for ${peerId.substring(0, 8)}... - WebRTC communication ready!`);
 
-      // Send initial metadata handshake (only once per peer)
-      if (!this.handshakeCompleted) {
-        const myMetadata = ConnectionManagerFactory.getPeerMetadata(this.localNodeId);
-        if (myMetadata) {
-          const handshakeMessage = {
-            type: 'handshake',
-            peerId: this.localNodeId,
-            metadata: myMetadata,
-            timestamp: Date.now()
-          };
-          dataChannel.send(JSON.stringify(handshakeMessage));
-          console.log(`📤 Sent WebRTC handshake with metadata to ${peerId.substring(0, 8)}`);
-          this.handshakeCompleted = true;
-        }
-      } else {
-        console.log(`📤 Skipping duplicate handshake for ${peerId.substring(0, 8)} (already sent)`);
-      }
-    };
-
-    dataChannel.onclose = () => {
-      console.log(`📡 Data channel closed for ${peerId.substring(0, 8)}...`);
-    };
-
-    dataChannel.onmessage = (event) => {
-      try {
-        const message = JSON.parse(event.data);
-
-        // Handle keep-alive messages
-        if (message.type === 'keep_alive_ping') {
-          this.handleKeepAlivePing(message);
-          return;
-        } else if (message.type === 'keep_alive_pong') {
-          this.handleKeepAlivePong(message);
-          return;
-        } else if (message.type === 'handshake') {
-          // Handle handshake with peer metadata (prevent duplicate processing)
-          if (message.metadata && !this.handshakeRecvCompleted) {
-            console.log(`📋 Received WebRTC handshake metadata from ${peerId.substring(0, 8)}:`, message.metadata);
-
-            // CRITICAL: Emit metadataUpdated event so RoutingTable can set metadata on DHTNode
-            // No intermediate storage needed - clean architecture!
-            this.emit('metadataUpdated', { peerId, metadata: message.metadata });
-            this.handshakeRecvCompleted = true;
-          } else if (message.metadata) {
-            console.log(`📋 Skipping duplicate handshake metadata from ${peerId.substring(0, 8)} (already processed)`);
+        // Send initial metadata handshake (only once per peer)
+        if (!this.handshakeCompleted) {
+          const myMetadata = ConnectionManagerFactory.getPeerMetadata(this.localNodeId);
+          if (myMetadata) {
+            const handshakeMessage = {
+              type: 'handshake',
+              peerId: this.localNodeId,
+              metadata: myMetadata,
+              timestamp: Date.now()
+            };
+            dataChannel.send(JSON.stringify(handshakeMessage));
+            console.log(`📤 Sent WebRTC handshake with metadata to ${peerId.substring(0, 8)}`);
+            this.handshakeCompleted = true;
           }
-          return;
+        } else {
+          console.log(`📤 Skipping duplicate handshake for ${peerId.substring(0, 8)} (already sent)`);
         }
+      };
+      this.registerListener(dataChannel, 'open', onOpen);
 
-        // Pass to base class for protocol handling
-        this.handleMessage(peerId, message);
-      } catch (error) {
-        console.warn(`Invalid JSON data from ${peerId}:`, error);
-      }
-    };
+      const onClose = () => {
+        console.log(`📡 Data channel closed for ${peerId.substring(0, 8)}...`);
+      };
+      this.registerListener(dataChannel, 'close', onClose);
 
-    dataChannel.onerror = (error) => {
-      console.error(`❌ Data channel error for ${peerId.substring(0, 8)}...:`, error);
-    };
-  }
+      const onMessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+
+          // Handle keep-alive messages
+          if (message.type === 'keep_alive_ping') {
+            this.handleKeepAlivePing(message);
+            return;
+          } else if (message.type === 'keep_alive_pong') {
+            this.handleKeepAlivePong(message);
+            return;
+          } else if (message.type === 'handshake') {
+            // Handle handshake with peer metadata (prevent duplicate processing)
+            if (message.metadata && !this.handshakeRecvCompleted) {
+              console.log(`📋 Received WebRTC handshake metadata from ${peerId.substring(0, 8)}:`, message.metadata);
+
+              // CRITICAL: Emit metadataUpdated event so RoutingTable can set metadata on DHTNode
+              // No intermediate storage needed - clean architecture!
+              this.emit('metadataUpdated', { peerId, metadata: message.metadata });
+              this.handshakeRecvCompleted = true;
+            } else if (message.metadata) {
+              console.log(`📋 Skipping duplicate handshake metadata from ${peerId.substring(0, 8)} (already processed)`);
+            }
+            return;
+          }
+
+          // Pass to base class for protocol handling
+          this.handleMessage(peerId, message);
+        } catch (error) {
+          console.warn(`Invalid JSON data from ${peerId}:`, error);
+        }
+      };
+      this.registerListener(dataChannel, 'message', onMessage);
+
+      const onError = (error) => {
+        console.error(`❌ Data channel error for ${peerId.substring(0, 8)}...:`, error);
+      };
+      this.registerListener(dataChannel, 'error', onError);
+    }
 
   /**
    * Send WebRTC signal through appropriate channel
@@ -808,43 +1111,31 @@ export class WebRTCConnectionManager extends ConnectionManager {
   }
 
   /**
-   * Destroy connection to peer
+   * Destroy connection with proper resource cleanup.
+   * Uses safeCleanup for state-aware, ordered cleanup.
+   * 
+   * Requirements: 2.1, 2.2, 2.3, 2.4, 2.5
+   * 
+   * @param {string} peerId - Peer ID to disconnect
+   * @param {string} reason - Reason for disconnection
+   * @returns {Promise<void>}
    */
-  destroyConnection(peerId, reason = 'manual') {
-    // Validate peerId matches expected peer
-    if (this.peerId && this.peerId !== peerId) {
-      console.warn(`⚠️ destroyConnection called with unexpected peer ${peerId}, expected ${this.peerId}`);
-      return;
-    }
-
-    console.log(`🔌 Destroying WebRTC connection to ${peerId.substring(0, 8)}... (${reason})`);
-
-    if (this.connection) {
-      clearTimeout(this.connection.timeout);
-      this.connection.close();
-    }
-
-    this.stopKeepAlive();
-    this.cleanupConnection();
-    this.emit('peerDisconnected', { peerId, reason });
+  async destroyConnection(peerId, reason = 'manual') {
+    // Delegate to safeCleanup for proper state-aware, ordered cleanup
+    await this.safeCleanup(reason);
   }
 
   /**
-   * Clean up connection data
+   * Clean up connection data using safeCleanup.
+   * This method is kept for backward compatibility but now delegates to safeCleanup.
+   * 
+   * Requirements: 2.1, 2.2, 2.3, 2.4, 2.5
+   * 
+   * @returns {Promise<void>}
    */
-  cleanupConnection() {
-    this.connection = null;
-    this.dataChannel = null;
-    this.connectionState = 'disconnected';
-    this.pendingConnectionInfo = null;
-    this.signalQueue = [];
-    this.remoteDescriptionSet = false;
-    this.offerCollision = null;
-    this.handshakeCompleted = false;
-    this.handshakeRecvCompleted = false;
-    this.processingSignal = false;
-    this.candidateTypes = { host: 0, srflx: 0, relay: 0 };
-    // Note: Don't clear this.peerId here - it identifies which peer this manager was for
+  async cleanupConnection() {
+    // Delegate to safeCleanup for proper state-aware, ordered cleanup
+    await this.safeCleanup('cleanup');
   }
 
   // ===========================================
@@ -1074,21 +1365,53 @@ export class WebRTCConnectionManager extends ConnectionManager {
   }
 
   /**
-   * Destroy connection and cleanup
+   * Destroy the WebRTCConnectionManager and clean up all resources.
+   * Uses safeCleanup for proper state-aware cleanup with Promise.allSettled
+   * to handle failures gracefully without throwing exceptions.
+   * 
+   * Requirements: 7.1, 7.2, 7.3, 7.4
+   * @returns {Promise<void>}
    */
-  destroy() {
+  async destroy() {
     if (this.isDestroyed) return;
 
     console.log('🚀 Destroying WebRTCConnectionManager');
 
-    // Clean up all keep-alive timers
+    // Clean up all keep-alive timers first
     this.cleanupAllKeepAlives();
 
-    // Destroy peer connection
+    // Collect all cleanup promises for active connections
+    const cleanupPromises = [];
+
+    // Clean up the main connection if it exists
     if (this.connection) {
       if (this.connection.timeout) clearTimeout(this.connection.timeout);
-      this.connection.close();
+      cleanupPromises.push(this.safeCleanup('shutdown'));
     }
+
+    // Wait for all cleanups to complete using Promise.allSettled
+    // This ensures we attempt cleanup on all connections even if some fail
+    if (cleanupPromises.length > 0) {
+      const results = await Promise.allSettled(cleanupPromises);
+
+      // Log any failures but don't throw
+      for (const result of results) {
+        if (result.status === 'rejected') {
+          console.error('⚠️ Cleanup failed during destroy:', result.reason);
+        }
+      }
+    }
+
+    // Verify all connections are cleaned up
+    const stats = ConnectionTracker.getResourceStats();
+    if (stats.activeConnections > 0) {
+      console.warn(`⚠️ ${stats.activeConnections} active connections remain after destroy`);
+    }
+
+    // Clear peerId before calling super.destroy() to prevent it from calling destroyConnection
+    // (which would fail since we already cleaned up the connection)
+    this.peerId = null;
+    this.connection = null;
 
     // Call parent destroy
     super.destroy();

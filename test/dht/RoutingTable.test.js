@@ -254,4 +254,148 @@ describe('RoutingTable', () => {
       expect(connectedNodes.length).toBeLessThanOrEqual(3); // Requested max 3
     });
   });
+
+  describe('Proximity Neighbor Selection (PNS) configuration', () => {
+    test('pnsEnabled defaults to false', () => {
+      const localId = new DHTNodeId();
+      const rt = new RoutingTable(localId, 20);
+      
+      expect(rt.pnsEnabled).toBe(false);
+    });
+
+    test('pnsEnabled can be set to true via options', () => {
+      const localId = new DHTNodeId();
+      const rt = new RoutingTable(localId, 20, { pnsEnabled: true });
+      
+      expect(rt.pnsEnabled).toBe(true);
+    });
+
+    test('pnsProbeInterval defaults to 60000ms', () => {
+      const localId = new DHTNodeId();
+      const rt = new RoutingTable(localId, 20);
+      
+      expect(rt.pnsProbeInterval).toBe(60000);
+    });
+
+    test('pnsProbeInterval can be configured via options', () => {
+      const localId = new DHTNodeId();
+      const rt = new RoutingTable(localId, 20, { pnsProbeInterval: 30000 });
+      
+      expect(rt.pnsProbeInterval).toBe(30000);
+    });
+
+    test('rankBucketByRTT does nothing when PNS disabled', () => {
+      const localId = new DHTNodeId();
+      const rt = new RoutingTable(localId, 20, { pnsEnabled: false });
+      
+      // Add nodes with different RTTs
+      const node1 = new DHTNode(new DHTNodeId(), 'endpoint-1');
+      node1.rtt = 500;
+      node1.isAlive = true;
+      rt.addNode(node1);
+      
+      const node2 = new DHTNode(new DHTNodeId(), 'endpoint-2');
+      node2.rtt = 100;
+      node2.isAlive = true;
+      rt.addNode(node2);
+      
+      // Get bucket and record order
+      const bucket = rt.buckets[0];
+      const orderBefore = bucket.nodes.map(n => n.id.toString());
+      
+      // Call rankBucketByRTT (should do nothing)
+      rt.rankBucketByRTT(0);
+      
+      const orderAfter = bucket.nodes.map(n => n.id.toString());
+      
+      // Order should be unchanged
+      expect(orderAfter).toEqual(orderBefore);
+    });
+
+    test('rankBucketByRTT sorts by RTT when PNS enabled', () => {
+      const localId = new DHTNodeId();
+      const rt = new RoutingTable(localId, 20, { pnsEnabled: true });
+      
+      // Add nodes with different RTTs (all alive)
+      const nodes = [];
+      for (let i = 0; i < 5; i++) {
+        const node = new DHTNode(new DHTNodeId(), `endpoint-${i}`);
+        node.rtt = (5 - i) * 100; // 500, 400, 300, 200, 100
+        node.isAlive = true;
+        nodes.push(node);
+        rt.addNode(node);
+      }
+      
+      // After adding with PNS enabled, nodes should be sorted by RTT
+      const bucket = rt.buckets[0];
+      const liveNodes = bucket.nodes.filter(n => n.isAlive);
+      
+      // Verify RTT ordering (ascending)
+      for (let i = 0; i < liveNodes.length - 1; i++) {
+        const rttA = liveNodes[i].rtt > 0 ? liveNodes[i].rtt : Infinity;
+        const rttB = liveNodes[i + 1].rtt > 0 ? liveNodes[i + 1].rtt : Infinity;
+        expect(rttA).toBeLessThanOrEqual(rttB);
+      }
+    });
+
+    test('performPNSProbes limits probes to 3 per bucket', async () => {
+      const localId = new DHTNodeId();
+      const rt = new RoutingTable(localId, 20, { pnsEnabled: true, pnsProbeInterval: 0 });
+      
+      // Add 10 nodes that need probing
+      for (let i = 0; i < 10; i++) {
+        const node = new DHTNode(new DHTNodeId(), `endpoint-${i}`);
+        node.rtt = 0; // No RTT data
+        node.isAlive = true;
+        node.lastPing = 0; // Never pinged
+        rt.addNode(node);
+      }
+      
+      // Track how many probes are made
+      let probeCount = 0;
+      const pingCallback = async (nodeId) => {
+        probeCount++;
+        return 100; // Return RTT
+      };
+      
+      await rt.performPNSProbes(pingCallback);
+      
+      // Should be limited to 3 probes per bucket
+      // With all nodes in one bucket, max 3 probes
+      expect(probeCount).toBeLessThanOrEqual(3);
+    });
+
+    test('performPNSProbes does nothing when PNS disabled', async () => {
+      const localId = new DHTNodeId();
+      const rt = new RoutingTable(localId, 20, { pnsEnabled: false });
+      
+      // Add nodes
+      for (let i = 0; i < 5; i++) {
+        const node = new DHTNode(new DHTNodeId(), `endpoint-${i}`);
+        node.rtt = 0;
+        node.isAlive = true;
+        rt.addNode(node);
+      }
+      
+      let probeCount = 0;
+      const pingCallback = async () => {
+        probeCount++;
+        return 100;
+      };
+      
+      await rt.performPNSProbes(pingCallback);
+      
+      // No probes should be made when PNS is disabled
+      expect(probeCount).toBe(0);
+    });
+
+    test('performPNSProbes handles null callback gracefully', async () => {
+      const localId = new DHTNodeId();
+      const rt = new RoutingTable(localId, 20, { pnsEnabled: true });
+      
+      // Should not throw
+      await rt.performPNSProbes(null);
+      await rt.performPNSProbes(undefined);
+    });
+  });
 });

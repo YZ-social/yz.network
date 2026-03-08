@@ -2,6 +2,11 @@
 
 # DockerServerUp.sh - Start YZ Network services
 
+echo "🧹 Cleaning up unused Docker resources..."
+docker system prune -f 2>/dev/null || true
+docker image prune -f 2>/dev/null || true
+
+echo ""
 echo "📦 Building browser bundle..."
 npm run build
 

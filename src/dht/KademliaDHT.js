@@ -164,6 +164,19 @@ export class KademliaDHT extends EventEmitter {
     this._membershipToken = null; // Proves this node is part of DHT (private)
     this._isGenesisPeer = false; // Will be set by bootstrap server for first node (private)
 
+    // Self-Lookup on Node Join (Kademlia best practice)
+    // Performs findNode(localNodeId) after bootstrap to populate nearby buckets
+    this.selfLookupComplete = false;
+    this.selfLookupRetries = 0;
+    this.maxSelfLookupRetries = 3;
+
+    // Recursive Routing Mode (Kademlia enhancement)
+    // Supports 'recursive' (default) or 'iterative' routing modes
+    // Recursive: intermediate nodes forward queries autonomously
+    // Iterative: querying node controls each hop
+    this.routingMode = options.routingMode || 'recursive';
+    this.maxRecursiveHops = 20; // Maximum hops for recursive queries (Requirement 4.5)
+
     // Data Transfer Metrics Configuration (Requirement 5: Metrics Safety)
     // Metrics tracking is completely optional and fail-safe
     this.metricsEnabled = options.metricsEnabled !== false; // Default: enabled
@@ -497,6 +510,28 @@ export class KademliaDHT extends EventEmitter {
         console.log(`📝 Removed ${peerId.substring(0, 8)}... from pending invitations (connection established)`);
       }
 
+      // Listen for peerDisconnected events from connection manager (Requirements 6.2, 9.4)
+      // This ensures routing table is updated when WebRTCConnectionManager performs cleanup
+      if (manager && !manager._dhtPeerDisconnectedHandlerAttached) {
+        manager.on('peerDisconnected', ({ peerId: disconnectedPeerId, reason }) => {
+          console.log(`🔌 DHT received peerDisconnected from ${manager.constructor.name}: ${disconnectedPeerId?.substring(0, 8)}... (reason: ${reason})`);
+          
+          // Remove peer from routing table when disconnect event received
+          if (disconnectedPeerId && this.routingTable) {
+            const existingNode = this.routingTable.getNode(disconnectedPeerId);
+            if (existingNode) {
+              console.log(`📋 Removing ${disconnectedPeerId.substring(0, 8)}... from routing table due to peerDisconnected event`);
+              this.routingTable.removeNode(disconnectedPeerId);
+              
+              // Trigger DHT's handlePeerDisconnected for additional cleanup (bootstrap reconnect, etc.)
+              this.handlePeerDisconnected(disconnectedPeerId);
+            }
+          }
+        });
+        manager._dhtPeerDisconnectedHandlerAttached = true;
+        console.log(`✅ Attached peerDisconnected handler to ${manager.constructor.name} for ${peerId.substring(0, 8)}...`);
+      }
+
       // Delegate to routing table to create and manage the node
       this.routingTable.handlePeerConnected(peerId, connection, manager, initiator);
 
@@ -771,6 +806,73 @@ export class KademliaDHT extends EventEmitter {
   }
 
   /**
+   * Perform self-lookup to populate nearby buckets (Kademlia best practice)
+   * 
+   * This method performs a findNode lookup for the local node's own ID after
+   * bootstrap connection is established. This serves two purposes:
+   * 1. Populates the routing table with nodes close to our ID
+   * 2. Exposes our node to the network for faster convergence
+   * 
+   * Implements exponential backoff retry: 1s, 2s, 4s
+   * 
+   * @emits selfLookupComplete - When self-lookup finishes (success or failure)
+   */
+  async performSelfLookup() {
+    if (this.selfLookupComplete) {
+      console.log(`🔍 Self-lookup already completed, skipping`);
+      return;
+    }
+
+    console.log(`🔍 Performing self-lookup for ${this.localNodeId.toString().substring(0, 8)}...`);
+
+    try {
+      // Perform findNode for our own ID
+      const discoveredNodes = await this.findNode(this.localNodeId, {
+        timeout: 15000,
+        allowRouting: true
+      });
+
+      // Filter out ourselves and add all discovered nodes to routing table
+      let nodesAdded = 0;
+      for (const node of discoveredNodes) {
+        if (!node.id.equals(this.localNodeId)) {
+          const added = this.routingTable.addNode(node);
+          if (added) {
+            nodesAdded++;
+          }
+        }
+      }
+
+      console.log(`✅ Self-lookup discovered ${discoveredNodes.length} nodes, added ${nodesAdded} new nodes to routing table`);
+
+      this.selfLookupComplete = true;
+      this.emit('selfLookupComplete', { 
+        nodesDiscovered: discoveredNodes.length,
+        nodesAdded: nodesAdded 
+      });
+
+    } catch (error) {
+      console.warn(`⚠️ Self-lookup failed: ${error.message}`);
+      this.selfLookupRetries++;
+
+      if (this.selfLookupRetries < this.maxSelfLookupRetries) {
+        // Exponential backoff: 1s, 2s, 4s
+        const backoff = Math.pow(2, this.selfLookupRetries - 1) * 1000;
+        console.log(`🔄 Retrying self-lookup in ${backoff}ms (attempt ${this.selfLookupRetries + 1}/${this.maxSelfLookupRetries})`);
+        setTimeout(() => this.performSelfLookup(), backoff);
+      } else {
+        console.error(`❌ Self-lookup failed after ${this.maxSelfLookupRetries} retries`);
+        this.selfLookupComplete = true; // Mark as complete to prevent further retries
+        this.emit('selfLookupComplete', { 
+          nodesDiscovered: 0, 
+          nodesAdded: 0,
+          failed: true 
+        });
+      }
+    }
+  }
+
+  /**
    * Connect to initial peers from bootstrap
    */
   async connectToInitialPeers(peers) {
@@ -826,6 +928,10 @@ export class KademliaDHT extends EventEmitter {
         console.log('✅ Connected to initial peers');
         this.isBootstrapped = true;
 
+        // Perform self-lookup to populate nearby buckets (Kademlia best practice)
+        // This accelerates routing table convergence and exposes us to the network
+        setTimeout(() => this.performSelfLookup(), 1000);
+
         // Give connections more time to establish before considering DHT signaling
         setTimeout(() => {
           const actualConnections = this.getConnectedPeers().length;
@@ -852,6 +958,12 @@ export class KademliaDHT extends EventEmitter {
         await this.refreshStaleBuckets();
         // CRITICAL: Also connect to discovered peers (refreshStaleBuckets only does discovery)
         await this.connectToRecentlyDiscoveredPeers();
+        
+        // Perform self-lookup after initial connections are established
+        // This populates nearby buckets and exposes us to the network
+        if (this.getConnectedPeers().length > 0) {
+          this.performSelfLookup();
+        }
       }, 1000); // Short delay to let routing table settle
     } else {
       console.warn('No peers available for bootstrap');
@@ -1841,6 +1953,13 @@ export class KademliaDHT extends EventEmitter {
             });
           }, 500); // Small delay to ensure connection is fully established
         }
+
+        // Trigger self-lookup on first connection to populate nearby buckets
+        // This is a Kademlia best practice for faster routing table convergence
+        if (connectedPeers === 1 && !this.selfLookupComplete) {
+          console.log(`🔍 First peer connected - triggering self-lookup`);
+          setTimeout(() => this.performSelfLookup(), 2000);
+        }
       } else {
         // Even if adding failed, still check signaling mode
         this.considerDHTSignaling();
@@ -2116,6 +2235,29 @@ export class KademliaDHT extends EventEmitter {
         case 'routed_dht_response':
           // Handle routed DHT response (forwarded through OverlayNetwork)
           await this.handleRoutedDHTResponse(peerId, message);
+          break;
+        case 'recursive_find_node':
+          // Handle recursive find_node request (Requirement 4.1, 4.2)
+          await this.handleRecursiveFindNode(peerId, message, sourceManager);
+          break;
+        case 'recursive_find_node_response':
+          // Handle recursive find_node response (Requirement 4.6)
+          await this.handleRecursiveFindNodeResponse(peerId, message);
+          break;
+        case 'forward_recursive_response':
+          // Handle forwarded recursive response (for routing back to originator)
+          if (message.targetId && message.payload) {
+            if (message.targetId === this.localNodeId.toString()) {
+              // We are the originator - process the response
+              await this.handleRecursiveFindNodeResponse(peerId, message.payload);
+            } else if (this.isPeerConnected(message.targetId)) {
+              // Forward to the target
+              await this.sendMessage(message.targetId, message.payload);
+            } else if (this.overlayNetwork) {
+              // Use overlay routing
+              await this.overlayNetwork.sendViaRouting(message.targetId, message.payload);
+            }
+          }
           break;
         default:
           console.warn(`Unknown message type from ${peerId}: ${message.type}`);
@@ -2816,6 +2958,302 @@ export class KademliaDHT extends EventEmitter {
   }
 
   /**
+   * Select next hop using RTT as secondary criterion (Proximity Routing)
+   *
+   * This implements Kademlia proximity routing where:
+   * 1. Primary criterion: XOR distance reduction (MUST reduce distance to target)
+   * 2. Secondary criterion: RTT (lower is better among XOR-valid candidates)
+   *
+   * Requirements: 3.1, 3.2, 3.3, 3.4, 3.5
+   *
+   * @param {DHTNode[]} candidates - Array of candidate nodes to select from
+   * @param {DHTNodeId|string} targetId - Target node ID for the query
+   * @returns {DHTNode|null} - Best candidate or null if none valid
+   */
+  selectNextHopWithProximity(candidates, targetId) {
+    if (!candidates || candidates.length === 0) {
+      return null;
+    }
+
+    const target = targetId instanceof DHTNodeId ? targetId : DHTNodeId.fromString(targetId);
+    const localDistance = this.localNodeId.xorDistance(target);
+
+    // Requirement 3.1: Filter to candidates that reduce XOR distance to target
+    // Requirement 3.5: Never select a candidate that does not reduce XOR distance
+    const xorValidCandidates = candidates.filter(node => {
+      const candidateDistance = node.id.xorDistance(target);
+      return candidateDistance.compare(localDistance) < 0;
+    });
+
+    if (xorValidCandidates.length === 0) {
+      return null; // No valid candidates that reduce XOR distance
+    }
+
+    if (xorValidCandidates.length === 1) {
+      return xorValidCandidates[0];
+    }
+
+    // Requirement 3.4: Calculate average RTT for nodes without RTT data
+    // Use existing RTT data from DHTNode.rtt without generating additional probe traffic (Req 3.3)
+    const nodesWithRTT = xorValidCandidates.filter(n => n.rtt > 0);
+    const avgRTT = nodesWithRTT.length > 0
+      ? nodesWithRTT.reduce((sum, n) => sum + n.rtt, 0) / nodesWithRTT.length
+      : 100; // Default 100ms if no RTT data available
+
+    // Sort by XOR distance first (primary), then by RTT (secondary)
+    // Requirement 3.2: Prefer candidate with lowest RTT among XOR-valid candidates
+    xorValidCandidates.sort((a, b) => {
+      const distA = a.id.xorDistance(target);
+      const distB = b.id.xorDistance(target);
+      const distCompare = distA.compare(distB);
+
+      if (distCompare !== 0) {
+        return distCompare; // Primary: XOR distance
+      }
+
+      // Secondary: RTT (use avgRTT for nodes without data - Req 3.4)
+      const rttA = a.rtt > 0 ? a.rtt : avgRTT;
+      const rttB = b.rtt > 0 ? b.rtt : avgRTT;
+      return rttA - rttB;
+    });
+
+    return xorValidCandidates[0];
+  }
+
+
+  /**
+   * Handle recursive find_node request (Requirement 4.2)
+   * 
+   * Recursive routing: intermediate nodes forward queries autonomously.
+   * Each hop verifies XOR distance strictly decreases before forwarding.
+   * 
+   * @param {string} peerId - The peer that sent the request
+   * @param {object} message - The recursive find_node message
+   * @param {object} sourceManager - Optional source connection manager
+   */
+  async handleRecursiveFindNode(peerId, message, sourceManager = null) {
+    const { target, requestId, hopCount = 0, originatorId } = message;
+    
+    // Requirement 4.4: Hop counter presence - validate hopCount is present
+    if (typeof hopCount !== 'number' || hopCount < 0) {
+      console.warn(`⚠️ Invalid hopCount in recursive find_node: ${hopCount}`);
+      return;
+    }
+    
+    // CRITICAL: Use fromHex() not fromString() - target is already a hex string
+    // fromString() hashes the input, fromHex() parses it as hex
+    const targetId = DHTNodeId.fromHex(target);
+    const effectiveOriginatorId = originatorId || peerId;
+    
+    console.log(`🔄 Recursive find_node: hop ${hopCount}, target ${target.substring(0, 8)}..., originator ${effectiveOriginatorId.substring(0, 8)}...`);
+    
+    // Requirement 4.5: Maximum hop limit enforcement
+    if (hopCount >= this.maxRecursiveHops) {
+      console.warn(`⚠️ Recursive find_node exceeded max hops (${this.maxRecursiveHops})`);
+      const closestNodes = this.routingTable.findClosestNodes(targetId, this.options.k);
+      await this.sendRecursiveResponse(effectiveOriginatorId, requestId, closestNodes, peerId);
+      return;
+    }
+    
+    // Find closest nodes we know
+    const closestNodes = this.routingTable.findClosestNodes(targetId, this.options.k);
+    
+    // Calculate local distance to target
+    const localDistance = this.localNodeId.xorDistance(targetId);
+    
+    // Requirement 4.2: Find closer connected peers for forwarding
+    const closerPeers = closestNodes.filter(node => {
+      const nodeDistance = node.id.xorDistance(targetId);
+      // Requirement 4.3: Verify XOR distance strictly decreases
+      return nodeDistance.compare(localDistance) < 0 && this.isPeerConnected(node.id.toString());
+    });
+    
+    // Requirement 4.6: If no closer peers, return closest known nodes
+    if (closerPeers.length === 0) {
+      console.log(`📍 Recursive find_node: reached closest node, returning ${closestNodes.length} nodes`);
+      await this.sendRecursiveResponse(effectiveOriginatorId, requestId, closestNodes, peerId);
+      return;
+    }
+    
+    // Use proximity routing to select best next hop
+    const nextHop = this.selectNextHopWithProximity(closerPeers, targetId);
+    
+    if (!nextHop) {
+      console.log(`📍 Recursive find_node: no valid next hop, returning ${closestNodes.length} nodes`);
+      await this.sendRecursiveResponse(effectiveOriginatorId, requestId, closestNodes, peerId);
+      return;
+    }
+    
+    // Requirement 4.3: Double-check XOR distance strictly decreases before forwarding
+    const nextHopDistance = nextHop.id.xorDistance(targetId);
+    if (nextHopDistance.compare(localDistance) >= 0) {
+      console.warn(`⚠️ XOR distance not decreasing - stopping recursion`);
+      await this.sendRecursiveResponse(effectiveOriginatorId, requestId, closestNodes, peerId);
+      return;
+    }
+    
+    console.log(`🔀 Forwarding recursive find_node to ${nextHop.id.toString().substring(0, 8)}... (hop ${hopCount + 1})`);
+    
+    // Forward the request with incremented hop count
+    const forwardMessage = {
+      type: 'recursive_find_node',
+      requestId,
+      target,
+      originatorId: effectiveOriginatorId,
+      hopCount: hopCount + 1,
+      nodeId: this.localNodeId.toString()
+    };
+    
+    try {
+      await this.sendMessage(nextHop.id.toString(), forwardMessage);
+    } catch (error) {
+      console.warn(`⚠️ Failed to forward recursive find_node: ${error.message}`);
+      // Fall back to returning our closest nodes
+      await this.sendRecursiveResponse(effectiveOriginatorId, requestId, closestNodes, peerId);
+    }
+  }
+
+
+  /**
+   * Send recursive find_node response back to originator (Requirement 4.6)
+   * 
+   * Returns the closest known nodes to the originator of the recursive query.
+   * Uses overlay routing if originator is not directly connected.
+   * 
+   * @param {string} originatorId - The original requester's node ID
+   * @param {string} requestId - The request ID for correlation
+   * @param {Array} nodes - The closest nodes found
+   * @param {string} lastHopId - The node that forwarded to us (for routing back)
+   */
+  async sendRecursiveResponse(originatorId, requestId, nodes, lastHopId) {
+    const response = {
+      type: 'recursive_find_node_response',
+      requestId,
+      nodes: nodes.map(n => ({
+        id: n.id.toString(),
+        endpoint: n.endpoint,
+        rtt: n.rtt || 0,
+        isAlive: n.isAlive !== false,
+        metadata: n.metadata || {}
+      })),
+      lastHopId: this.localNodeId.toString()
+    };
+    
+    console.log(`📤 Sending recursive response to ${originatorId.substring(0, 8)}... with ${nodes.length} nodes`);
+    
+    // Try direct connection first
+    if (this.isPeerConnected(originatorId)) {
+      try {
+        await this.sendMessage(originatorId, response);
+        return;
+      } catch (error) {
+        console.warn(`⚠️ Direct send to originator failed: ${error.message}`);
+      }
+    }
+    
+    // Use overlay routing if originator not directly connected
+    if (this.overlayNetwork) {
+      try {
+        await this.overlayNetwork.sendViaRouting(originatorId, response);
+        return;
+      } catch (error) {
+        console.warn(`⚠️ Overlay routing to originator failed: ${error.message}`);
+      }
+    }
+    
+    // Last resort: try sending back through the last hop
+    if (lastHopId && this.isPeerConnected(lastHopId)) {
+      try {
+        // Wrap response for forwarding
+        const forwardedResponse = {
+          type: 'forward_recursive_response',
+          targetId: originatorId,
+          payload: response
+        };
+        await this.sendMessage(lastHopId, forwardedResponse);
+      } catch (error) {
+        console.warn(`⚠️ Failed to send response via last hop: ${error.message}`);
+      }
+    }
+  }
+
+
+  /**
+   * Handle recursive find_node response (Requirement 4.6)
+   * 
+   * Processes the response from a recursive query and adds discovered nodes
+   * to the routing table.
+   * 
+   * @param {string} peerId - The peer that sent the response
+   * @param {object} message - The recursive find_node response message
+   */
+  async handleRecursiveFindNodeResponse(peerId, message) {
+    const { requestId, nodes, lastHopId } = message;
+    
+    console.log(`📥 Received recursive find_node response from ${peerId.substring(0, 8)}... with ${nodes?.length || 0} nodes`);
+    
+    if (!nodes || !Array.isArray(nodes)) {
+      console.warn(`⚠️ Invalid recursive find_node response: missing nodes array`);
+      return;
+    }
+    
+    // Add discovered nodes to routing table
+    let nodesAdded = 0;
+    for (const nodeData of nodes) {
+      try {
+        // Skip self
+        if (nodeData.id === this.localNodeId.toString()) {
+          continue;
+        }
+        
+        // Create or update node in routing table
+        const nodeId = DHTNodeId.fromString(nodeData.id);
+        const node = this.getOrCreatePeerNode(nodeData.id, nodeData.metadata || {});
+        
+        // Update node properties
+        if (nodeData.endpoint) {
+          node.endpoint = nodeData.endpoint;
+        }
+        if (nodeData.rtt > 0) {
+          node.rtt = nodeData.rtt;
+        }
+        if (typeof nodeData.isAlive === 'boolean') {
+          node.isAlive = nodeData.isAlive;
+        }
+        
+        // Add to routing table
+        if (this.routingTable.addNode(node)) {
+          nodesAdded++;
+        }
+      } catch (error) {
+        console.warn(`⚠️ Failed to process node from recursive response: ${error.message}`);
+      }
+    }
+    
+    console.log(`✅ Added ${nodesAdded} nodes from recursive find_node response`);
+    
+    // Resolve any pending request waiting for this response
+    const pendingRequest = this.pendingRequests.get(requestId);
+    if (pendingRequest) {
+      clearTimeout(pendingRequest.timeout);
+      this.pendingRequests.delete(requestId);
+      
+      // Convert node data to DHTNode objects for the resolver
+      const dhtNodes = nodes
+        .filter(n => n.id !== this.localNodeId.toString())
+        .map(n => {
+          const node = this.getOrCreatePeerNode(n.id, n.metadata || {});
+          if (n.endpoint) node.endpoint = n.endpoint;
+          if (n.rtt > 0) node.rtt = n.rtt;
+          return node;
+        });
+      
+      pendingRequest.resolve(dhtNodes);
+    }
+  }
+
+
+  /**
    * Find node operation
    */
   async findNode(targetId, options = {}) {
@@ -2875,13 +3313,32 @@ export class KademliaDHT extends EventEmitter {
       iterationCount++;
       // CONNECTED-PEERS-FIRST STRATEGY: Prioritize active connections over routing table entries
       // Industry best practice (IPFS, BitTorrent, Ethereum): Query connected peers first for fast results
-      const allCandidates = Array.from(results)
+      // PROXIMITY ROUTING: Sort by XOR distance (primary), then RTT (secondary) - Requirements 3.1, 3.2
+      const localDistance = this.localNodeId.xorDistance(target);
+      
+      // Calculate average RTT for nodes without RTT data (Requirement 3.4)
+      const allResultNodes = Array.from(results);
+      const nodesWithRTT = allResultNodes.filter(n => n.rtt > 0);
+      const avgRTT = nodesWithRTT.length > 0
+        ? nodesWithRTT.reduce((sum, n) => sum + n.rtt, 0) / nodesWithRTT.length
+        : 100; // Default 100ms if no RTT data
+      
+      const allCandidates = allResultNodes
         .filter(node => !contacted.has(node.id.toString()))
         .filter(node => !node.id.equals(this.localNodeId)) // Don't try to connect to ourselves
         .sort((a, b) => {
           const distA = a.id.xorDistance(target);
           const distB = b.id.xorDistance(target);
-          return distA.compare(distB);
+          const distCompare = distA.compare(distB);
+          
+          if (distCompare !== 0) {
+            return distCompare; // Primary: XOR distance
+          }
+          
+          // Secondary: RTT (use avgRTT for nodes without data - Requirement 3.4)
+          const rttA = a.rtt > 0 ? a.rtt : avgRTT;
+          const rttB = b.rtt > 0 ? b.rtt : avgRTT;
+          return rttA - rttB;
         });
 
       // Split into connected and disconnected peers
@@ -3122,11 +3579,28 @@ export class KademliaDHT extends EventEmitter {
       await Promise.allSettled(queryPromises);
     }
 
-    return Array.from(results)
+    // Final sort with proximity routing: XOR distance (primary), RTT (secondary)
+    // Calculate average RTT for final sorting (Requirement 3.4)
+    const finalResults = Array.from(results);
+    const finalNodesWithRTT = finalResults.filter(n => n.rtt > 0);
+    const finalAvgRTT = finalNodesWithRTT.length > 0
+      ? finalNodesWithRTT.reduce((sum, n) => sum + n.rtt, 0) / finalNodesWithRTT.length
+      : 100;
+
+    return finalResults
       .sort((a, b) => {
         const distA = a.id.xorDistance(target);
         const distB = b.id.xorDistance(target);
-        return distA.compare(distB);
+        const distCompare = distA.compare(distB);
+        
+        if (distCompare !== 0) {
+          return distCompare; // Primary: XOR distance
+        }
+        
+        // Secondary: RTT (Requirement 3.2)
+        const rttA = a.rtt > 0 ? a.rtt : finalAvgRTT;
+        const rttB = b.rtt > 0 ? b.rtt : finalAvgRTT;
+        return rttA - rttB;
       })
       .slice(0, limit);
   }
@@ -3214,9 +3688,10 @@ export class KademliaDHT extends EventEmitter {
       } catch (pingError) {
         console.warn(`❌ Connection health check failed for ${peerId.substring(0, 8)}...:`, pingError.message);
         
-        // Mark connection as stale and remove from routing table
+        // Mark connection as stale and handle failure with replacement cache promotion
+        // Requirements 1.3, 6.4: Use handleNodeFailure for proper cache promotion
         node.recordFailure();
-        this.routingTable.removeNode(peerId);
+        this.routingTable.handleNodeFailure(peerId);
         
         // Close the stale connection
         const peerNode = this.routingTable.getNode(peerId) || this.peerNodes?.get(peerId);
@@ -5856,9 +6331,10 @@ export class KademliaDHT extends EventEmitter {
       } catch (error) {
         console.warn(`❌ Stale connection detected: ${peerId.substring(0, 8)}... - ${error.message}`);
         
-        // Connection is stale - clean it up
+        // Connection is stale - handle failure with replacement cache promotion
+        // Requirements 1.3, 6.4: Use handleNodeFailure for proper cache promotion
         node.recordFailure();
-        this.routingTable.removeNode(peerId);
+        this.routingTable.handleNodeFailure(peerId);
         
         // Close the connection
         const peerNode = this.peerNodes?.get(peerId);
