@@ -89,6 +89,14 @@ export class ActiveDHTNode extends NodeDHTClient {
       currentConnections: 0,
       maxConnections: 0,
       connectionFailures: 0,
+      
+      // Connection stability metrics
+      connectionsEstablished: 0,    // Total connections made since start
+      connectionsLost: 0,           // Total connections lost since start
+      reconnectionAttempts: 0,      // Total reconnection attempts
+      reconnectionSuccesses: 0,     // Successful reconnections
+      peakConnections: 0,           // Highest connection count seen
+      connectionChurn: [],          // Recent connection changes for rate calculation
 
       // Health
       lastHealthCheck: Date.now(),
@@ -140,6 +148,9 @@ export class ActiveDHTNode extends NodeDHTClient {
     // Pass metrics tracker to DHT for data transfer tracking
     if (this.dht) {
       this.dht.metricsTracker = this;
+      
+      // Set up connection stability tracking
+      this.setupConnectionStabilityTracking();
     }
 
     // Initialize PubSub
@@ -163,6 +174,71 @@ export class ActiveDHTNode extends NodeDHTClient {
       metricsPort: this.metricsPort,
       pubsubEnabled: true
     };
+  }
+  
+  /**
+   * Set up connection stability tracking via DHT events
+   */
+  setupConnectionStabilityTracking() {
+    if (!this.dht) return;
+    
+    // Track new connections
+    this.dht.on('peerConnected', (peerId) => {
+      this.metrics.connectionsEstablished++;
+      const currentCount = this.dht.getConnectedPeers().length;
+      this.metrics.currentConnections = currentCount;
+      if (currentCount > this.metrics.peakConnections) {
+        this.metrics.peakConnections = currentCount;
+      }
+      this.recordConnectionChurn('connect');
+    });
+    
+    // Track lost connections
+    this.dht.on('peerDisconnected', (peerId) => {
+      this.metrics.connectionsLost++;
+      this.metrics.currentConnections = this.dht.getConnectedPeers().length;
+      this.recordConnectionChurn('disconnect');
+    });
+    
+    // Track connection failures
+    this.dht.on('connectionFailed', (peerId, error) => {
+      this.metrics.connectionFailures++;
+    });
+    
+    // Track reconnection attempts (if we have this event)
+    this.dht.on('reconnectAttempt', (peerId) => {
+      this.metrics.reconnectionAttempts++;
+    });
+    
+    this.dht.on('reconnectSuccess', (peerId) => {
+      this.metrics.reconnectionSuccesses++;
+    });
+  }
+  
+  /**
+   * Record connection churn for rate calculation
+   */
+  recordConnectionChurn(type) {
+    const now = Date.now();
+    this.metrics.connectionChurn.push({ timestamp: now, type });
+    
+    // Keep only last 5 minutes of churn data
+    const fiveMinutesAgo = now - 5 * 60 * 1000;
+    this.metrics.connectionChurn = this.metrics.connectionChurn.filter(
+      c => c.timestamp > fiveMinutesAgo
+    );
+  }
+  
+  /**
+   * Calculate connection churn rate (changes per minute)
+   */
+  calculateConnectionChurnRate() {
+    const now = Date.now();
+    const oneMinuteAgo = now - 60 * 1000;
+    const recentChurn = this.metrics.connectionChurn.filter(
+      c => c.timestamp > oneMinuteAgo
+    );
+    return recentChurn.length;
   }
 
   /**
@@ -302,13 +378,14 @@ export class ActiveDHTNode extends NodeDHTClient {
    * Status endpoint (detailed node information)
    */
   handleStatus(req, res) {
+    const connectedPeers = this.dht ? this.dht.getConnectedPeers().length : 0;
     const status = {
       nodeId: this.nodeId.toString().substring(0, 16) + '...',
       nodeType: this.getNodeType(),
       capabilities: this.getCapabilities(),
       uptime: Date.now() - this.metrics.startTime,
       dht: this.dht ? {
-        connectedPeers: this.dht.getConnectedPeers().length,
+        connectedPeers: connectedPeers,
         routingTableSize: this.dht.routingTable.getAllNodes().length,
         active: true
       } : { active: false },
@@ -316,6 +393,19 @@ export class ActiveDHTNode extends NodeDHTClient {
         activeSubscriptions: this.pubsub.getSubscriptions().length,
         active: true
       } : { active: false },
+      // Connection stability summary
+      connectionStability: {
+        currentConnections: connectedPeers,
+        peakConnections: this.metrics.peakConnections,
+        connectionsEstablished: this.metrics.connectionsEstablished,
+        connectionsLost: this.metrics.connectionsLost,
+        connectionFailures: this.metrics.connectionFailures,
+        churnPerMinute: this.calculateConnectionChurnRate(),
+        stabilityRatio: this.metrics.connectionsEstablished > 0 
+          ? ((this.metrics.connectionsEstablished - this.metrics.connectionsLost) / this.metrics.connectionsEstablished * 100).toFixed(1) + '%'
+          : '100%',
+        netConnections: this.metrics.connectionsEstablished - this.metrics.connectionsLost
+      },
       metrics: this.metrics,
       health: {
         isHealthy: this.metrics.isHealthy,
@@ -378,7 +468,18 @@ export class ActiveDHTNode extends NodeDHTClient {
       ping_latency_p99: this.calculatePercentile(this.metrics.pingLatencies, 99),
 
       // Throughput
-      operations_per_second: this.calculateOpsPerSecond()
+      operations_per_second: this.calculateOpsPerSecond(),
+      
+      // Connection stability metrics
+      connections_established_total: this.metrics.connectionsEstablished,
+      connections_lost_total: this.metrics.connectionsLost,
+      connection_churn_per_minute: this.calculateConnectionChurnRate(),
+      reconnection_attempts_total: this.metrics.reconnectionAttempts,
+      reconnection_successes_total: this.metrics.reconnectionSuccesses,
+      peak_connections: this.metrics.peakConnections,
+      connection_stability_ratio: this.metrics.connectionsEstablished > 0 
+        ? ((this.metrics.connectionsEstablished - this.metrics.connectionsLost) / this.metrics.connectionsEstablished * 100).toFixed(1)
+        : 100
     };
   }
 
