@@ -5992,8 +5992,11 @@ export class KademliaDHT extends EventEmitter {
 
       console.log(`🔧 Routing table maintenance: ${connectedPeers.length} connected, ${allNodes.length} in table, ${unconnectedNodes.length} unconnected`);
 
+      // FULL MESH FIX: For small networks, try to connect to more nodes per cycle
+      const maxPerCycle = allNodes.length < 20 ? Math.min(10, unconnectedNodes.length) : 5;
+      
       // Try to connect to unconnected nodes
-      for (const node of unconnectedNodes.slice(0, 5)) { // Limit to 5 per cycle
+      for (const node of unconnectedNodes.slice(0, maxPerCycle)) {
         const peerId = node.id.toString();
 
         // Initialize failure tracking
@@ -6041,15 +6044,19 @@ export class KademliaDHT extends EventEmitter {
     const timeSinceLastAttempt = now - this.lastBackgroundConnectionAttempt;
 
     // Adaptive interval: smaller networks = faster connection attempts
-    // Small networks (<10 peers): 10 seconds - fast mesh formation
-    // Medium networks (10-50 peers): 30 seconds - balanced
+    // FULL MESH FIX: Much faster for small networks to achieve full mesh quickly
+    // Small networks (<20 peers): 3 seconds - aggressive mesh formation
+    // Medium networks (20-50 peers): 15 seconds - balanced
     // Large networks (>50 peers): 2 minutes - conservative to avoid overhead
     const routingTableSize = this.routingTable.getAllNodes().length;
+    const connectedPeers = this.getConnectedPeers();
+    const unconnectedCount = routingTableSize - connectedPeers.length;
+    
     let minInterval;
-    if (routingTableSize < 10) {
-      minInterval = 10 * 1000; // 10 seconds for small networks
+    if (routingTableSize < 20 && unconnectedCount > 0) {
+      minInterval = 3 * 1000; // 3 seconds for small networks with unconnected peers
     } else if (routingTableSize < 50) {
-      minInterval = 30 * 1000; // 30 seconds for medium networks
+      minInterval = 15 * 1000; // 15 seconds for medium networks
     } else {
       minInterval = 2 * 60 * 1000; // 2 minutes for large networks
     }
@@ -6062,7 +6069,6 @@ export class KademliaDHT extends EventEmitter {
     this.lastBackgroundConnectionAttempt = now;
 
     const allNodes = this.routingTable.getAllNodes();
-    const connectedPeers = this.getConnectedPeers();
     const unconnectedNodes = allNodes.filter(node => {
       const peerId = node.id.toString();
       return !this.isPeerConnected(peerId) &&
@@ -6077,14 +6083,17 @@ export class KademliaDHT extends EventEmitter {
 
     // Prioritize connection attempts:
     // 1. Nodes closest to us (for better routing table coverage)
-    // 2. Limit concurrent attempts to avoid overwhelming the network
+    // 2. Limit concurrent attempts based on network size
+    // FULL MESH FIX: For small networks, attempt more connections in parallel
+    const maxConcurrent = routingTableSize < 20 ? Math.min(10, unconnectedNodes.length) : 3;
+    
     const sortedNodes = unconnectedNodes
       .map(node => ({
         node,
         distance: node.id.xorDistance(this.localNodeId)
       }))
       .sort((a, b) => a.distance.compare(b.distance))
-      .slice(0, 3); // Limit to 3 concurrent attempts
+      .slice(0, maxConcurrent); // Dynamic limit based on network size
 
     const connectionPromises = sortedNodes.map(async ({ node }) => {
       const peerId = node.id.toString();
@@ -6642,7 +6651,20 @@ export class KademliaDHT extends EventEmitter {
         // OPTIMIZATION: Immediately connect to new routing table entries for fast pub-sub startup
         // Don't wait for 30s background maintenance - connect now!
         const connectedPeers = this.getConnectedPeers();
-        const desiredConnections = 5; // Target 5 peers for fast pub-sub (not 18)
+        const routingTableSize = this.routingTable.totalNodes;
+        
+        // FULL MESH FIX: For small networks, target full mesh connectivity
+        // Small networks (<20 nodes): connect to all peers (full mesh)
+        // Medium networks (20-50): target k connections
+        // Large networks (>50): target 5 for fast startup, let maintenance handle the rest
+        let desiredConnections;
+        if (routingTableSize < 20) {
+          desiredConnections = routingTableSize; // Full mesh for small networks
+        } else if (routingTableSize < 50) {
+          desiredConnections = this.options.k || 20; // k-bucket size
+        } else {
+          desiredConnections = 5; // Conservative for large networks
+        }
 
         if (connectedPeers.length < desiredConnections) {
           const allNodes = this.routingTable.getAllNodes();
