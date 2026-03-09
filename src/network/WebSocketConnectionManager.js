@@ -1,5 +1,6 @@
 import { ConnectionManager } from './ConnectionManager.js';
 import { ConnectionManagerFactory } from './ConnectionManagerFactory.js';
+import Logger from '../utils/Logger.js';
 
 /**
  * WebSocket-based connection manager for Node.js peers
@@ -828,11 +829,11 @@ export class WebSocketConnectionManager extends ConnectionManager {
     // CRITICAL FIX: Don't ping bootstrap server connections
     // Bootstrap servers use a different ping mechanism and don't respond to DHT pings
     if (this.peerId && this.peerId.startsWith('bootstrap_')) {
-      console.log(`⏭️ Skipping ping for bootstrap server connection ${this.peerId.substring(0, 16)}...`);
+      Logger.debug(`⏭️ Skipping ping for bootstrap server connection ${this.peerId.substring(0, 16)}...`);
       return;
     }
 
-    console.log(`🏓 Starting ping for ${this.peerId?.substring(0, 8)}... (interval: ${this.pingInterval}ms)`);
+    Logger.debug(`🏓 Starting ping for ${this.peerId?.substring(0, 8)}... (interval: ${this.pingInterval}ms)`);
 
     // Send initial ping immediately
     this.sendPingToConnectedPeer();
@@ -896,7 +897,7 @@ export class WebSocketConnectionManager extends ConnectionManager {
     this.currentRTT = rtt;
     this.lastPingTime = Date.now();
     
-    console.log(`🏓 Pong received from ${peerId.substring(0, 8)}... RTT: ${rtt}ms`);
+    Logger.trace(`🏓 Pong received from ${peerId.substring(0, 8)}... RTT: ${rtt}ms`);
     
     // Update routing table with RTT
     if (this.routingTable && peerId) {

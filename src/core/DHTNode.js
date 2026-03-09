@@ -1,4 +1,5 @@
 import { DHTNodeId } from './DHTNodeId.js';
+import Logger from '../utils/Logger.js';
 
 /**
  * Represents a node in the DHT network
@@ -142,7 +143,7 @@ export class DHTNode {
     this.messageHandler = (event) => {
       try {
         const data = typeof event.data === 'string' ? JSON.parse(event.data) : event;
-        console.log(`📨 Message received by node ${shortId}...:`, data.type);
+        Logger.trace(`📨 Message received by node ${shortId}...:`, data.type);
 
         // Update activity
         this.updateLastSeen();
@@ -157,7 +158,7 @@ export class DHTNode {
     };
 
     this.closeHandler = (event) => {
-      console.log(`🔌 Connection closed for node ${shortId}...`);
+      Logger.debug(`🔌 Connection closed for node ${shortId}...`);
       this.isAlive = false;
 
       // Clean up event handlers

@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events';
+import Logger from '../utils/Logger.js';
 
 /**
  * Abstract base class for connection management
@@ -258,15 +259,15 @@ export class ConnectionManager extends EventEmitter {
    */
   async handlePing(peerId, message) {
     try {
-      console.log(`🏓 Handling ping from ${peerId.substring(0, 8)}... (requestId: ${message.requestId})`);
-      console.log(`   Manager: ${this.constructor.name}, peerId: ${this.peerId?.substring(0, 8) || 'none'}, connected: ${this.isConnected()}`);
+      Logger.trace(`🏓 Handling ping from ${peerId.substring(0, 8)}... (requestId: ${message.requestId})`);
+      Logger.trace(`   Manager: ${this.constructor.name}, peerId: ${this.peerId?.substring(0, 8) || 'none'}, connected: ${this.isConnected()}`);
       await this.sendMessage(peerId, {
         type: 'pong',
         requestId: message.requestId,
         timestamp: Date.now(),
         originalTimestamp: message.timestamp
       });
-      console.log(`✅ Sent pong to ${peerId.substring(0, 8)}...`);
+      Logger.trace(`✅ Sent pong to ${peerId.substring(0, 8)}...`);
     } catch (error) {
       console.error(`❌ Failed to send pong to ${peerId.substring(0, 8)}...: ${error.message}`);
     }
@@ -277,7 +278,7 @@ export class ConnectionManager extends EventEmitter {
    */
   handlePong(peerId, message) {
     const rtt = Date.now() - (message.originalTimestamp || message.timestamp);
-    console.log(`📡 Received pong from ${peerId.substring(0, 8)}... (RTT: ${rtt}ms)`);
+    Logger.trace(`📡 Received pong from ${peerId.substring(0, 8)}... (RTT: ${rtt}ms)`);
     this.emit('pong', { peerId, rtt, message });
   }
 

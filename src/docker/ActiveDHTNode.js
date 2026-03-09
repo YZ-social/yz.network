@@ -13,6 +13,7 @@
 import { NodeDHTClient } from '../node/NodeDHTClient.js';
 import { PubSubClient } from '../pubsub/PubSubClient.js';
 import { InvitationToken } from '../core/InvitationToken.js';
+import Logger from '../utils/Logger.js';
 import crypto from 'crypto';
 import http from 'http';
 
@@ -513,10 +514,10 @@ export class ActiveDHTNode extends NodeDHTClient {
     const index = Math.ceil((percentile / 100) * sorted.length) - 1;
     const result = sorted[Math.max(0, index)];
     
-    // Debug logging for ping latencies
+    // Debug logging for ping latencies (only in trace mode)
     if (samples === this.metrics.pingLatencies && samples.length > 0) {
       const outlierCount = samples.length - filteredSamples.length;
-      console.log(`📊 Ping latency P${percentile}: ${result}ms (from ${filteredSamples.length} samples, ${outlierCount} outliers filtered: [${filteredSamples.slice(-5).join(', ')}])`);
+      Logger.trace(`📊 Ping latency P${percentile}: ${result}ms (from ${filteredSamples.length} samples, ${outlierCount} outliers filtered: [${filteredSamples.slice(-5).join(', ')}])`);
     }
     
     return result;
@@ -527,7 +528,7 @@ export class ActiveDHTNode extends NodeDHTClient {
    */
   calculateOpsPerSecond() {
     if (this.metrics.opsLastMinute.length === 0) {
-      console.log(`📊 No operations recorded in opsLastMinute array`);
+      Logger.trace(`📊 No operations recorded in opsLastMinute array`);
       return 0;
     }
 
@@ -538,7 +539,7 @@ export class ActiveDHTNode extends NodeDHTClient {
     const recentOps = this.metrics.opsLastMinute.filter(t => t > oneMinuteAgo);
     
     const opsPerSecond = recentOps.length / 60;
-    console.log(`📊 Throughput calculation: ${recentOps.length} operations in last minute = ${opsPerSecond.toFixed(2)} ops/sec`);
+    Logger.trace(`📊 Throughput calculation: ${recentOps.length} operations in last minute = ${opsPerSecond.toFixed(2)} ops/sec`);
 
     return opsPerSecond;
   }
@@ -574,7 +575,7 @@ export class ActiveDHTNode extends NodeDHTClient {
     }
 
     bucket.push(latencyMs);
-    console.log(`📊 Recorded ${type} operation: ${latencyMs}ms (bucket size: ${bucket.length})`);
+    Logger.trace(`📊 Recorded ${type} operation: ${latencyMs}ms (bucket size: ${bucket.length})`);
 
     // Keep only recent samples
     if (bucket.length > this.maxLatencySamples) {
@@ -583,14 +584,14 @@ export class ActiveDHTNode extends NodeDHTClient {
 
     // Record operation timestamp for throughput
     this.metrics.opsLastMinute.push(Date.now());
-    console.log(`📊 Recorded ${type} operation for throughput (total ops: ${this.metrics.opsLastMinute.length})`);
+    Logger.trace(`📊 Recorded ${type} operation for throughput (total ops: ${this.metrics.opsLastMinute.length})`);
 
     // Cleanup old operation timestamps
     const oneMinuteAgo = Date.now() - 60000;
     const oldLength = this.metrics.opsLastMinute.length;
     this.metrics.opsLastMinute = this.metrics.opsLastMinute.filter(t => t > oneMinuteAgo);
     if (oldLength !== this.metrics.opsLastMinute.length) {
-      console.log(`📊 Cleaned up old operations: ${oldLength} -> ${this.metrics.opsLastMinute.length}`);
+      Logger.trace(`📊 Cleaned up old operations: ${oldLength} -> ${this.metrics.opsLastMinute.length}`);
     }
   }
 
@@ -648,12 +649,12 @@ export class ActiveDHTNode extends NodeDHTClient {
     try {
       const result = await this.dht.store(key, value, ttl);
       this.metrics.dhtStores++;
-      console.log(`📦 DHT store operation completed: key=${key.substring(0, 16)}... (total stores: ${this.metrics.dhtStores})`);
+      Logger.debug(`📦 DHT store operation completed: key=${key.substring(0, 16)}... (total stores: ${this.metrics.dhtStores})`);
       this.recordLatency('store', Date.now() - startTime);
       return result;
     } catch (error) {
       this.metrics.dhtStoreFails++;
-      console.log(`❌ DHT store operation failed: key=${key.substring(0, 16)}... (total failures: ${this.metrics.dhtStoreFails})`);
+      console.error(`❌ DHT store operation failed: key=${key.substring(0, 16)}... (total failures: ${this.metrics.dhtStoreFails})`);
       throw error;
     }
   }
@@ -667,12 +668,12 @@ export class ActiveDHTNode extends NodeDHTClient {
     try {
       const result = await this.dht.get(key);
       this.metrics.dhtGets++;
-      console.log(`🔍 DHT get operation completed: key=${key.substring(0, 16)}... (total gets: ${this.metrics.dhtGets})`);
+      Logger.debug(`🔍 DHT get operation completed: key=${key.substring(0, 16)}... (total gets: ${this.metrics.dhtGets})`);
       this.recordLatency('get', Date.now() - startTime);
       return result;
     } catch (error) {
       this.metrics.dhtGetFails++;
-      console.log(`❌ DHT get operation failed: key=${key.substring(0, 16)}... (total failures: ${this.metrics.dhtGetFails})`);
+      console.error(`❌ DHT get operation failed: key=${key.substring(0, 16)}... (total failures: ${this.metrics.dhtGetFails})`);
       throw error;
     }
   }
@@ -684,7 +685,7 @@ export class ActiveDHTNode extends NodeDHTClient {
     const startTime = Date.now();
     const result = await this.dht.findNode(targetId);
     this.metrics.dhtFindNodes++;
-    console.log(`🔍 DHT findNode operation completed: target=${targetId.substring(0, 16)}... found ${result.length} nodes (total findNodes: ${this.metrics.dhtFindNodes})`);
+    Logger.debug(`🔍 DHT findNode operation completed: target=${targetId.substring(0, 16)}... found ${result.length} nodes (total findNodes: ${this.metrics.dhtFindNodes})`);
     this.recordLatency('findNode', Date.now() - startTime);
     return result;
   }
@@ -696,7 +697,7 @@ export class ActiveDHTNode extends NodeDHTClient {
     const result = await this.pubsub.publish(topic, data, options);
     this.metrics.pubsubPublishes++;
     this.metrics.messagesSent++;
-    console.log(`📤 PubSub publish completed: topic=${topic} (total publishes: ${this.metrics.pubsubPublishes}, messages sent: ${this.metrics.messagesSent})`);
+    Logger.debug(`📤 PubSub publish completed: topic=${topic} (total publishes: ${this.metrics.pubsubPublishes}, messages sent: ${this.metrics.messagesSent})`);
     return result;
   }
 
@@ -708,12 +709,12 @@ export class ActiveDHTNode extends NodeDHTClient {
 
     this.pubsub.on(topic, (message) => {
       this.metrics.messagesReceived++;
-      console.log(`📥 PubSub message received: topic=${topic} (total received: ${this.metrics.messagesReceived})`);
+      Logger.trace(`📥 PubSub message received: topic=${topic} (total received: ${this.metrics.messagesReceived})`);
       if (handler) handler(message);
     });
 
     this.metrics.pubsubSubscribes++;
-    console.log(`📬 PubSub subscribe completed: topic=${topic} (total subscriptions: ${this.metrics.pubsubSubscribes})`);
+    Logger.debug(`📬 PubSub subscribe completed: topic=${topic} (total subscriptions: ${this.metrics.pubsubSubscribes})`);
     return result;
   }
 
@@ -811,7 +812,7 @@ export class ActiveDHTNode extends NodeDHTClient {
     if (!this.dht) return;
 
     try {
-      console.log('📊 Performing throughput test operations...');
+      Logger.debug('📊 Performing throughput test operations...');
       
       // Perform a few findNode operations (these are common DHT maintenance operations)
       const randomNodeId = crypto.randomBytes(20).toString('hex');
@@ -827,7 +828,7 @@ export class ActiveDHTNode extends NodeDHTClient {
       
       // Perform PubSub test operations if PubSub is available
       if (this.pubsub) {
-        console.log('📊 Performing PubSub test operations...');
+        Logger.debug('📊 Performing PubSub test operations...');
         
         // Test publish operation
         const testTopic = `test_topic_${this.nodeId.toString().substring(0, 8)}`;
@@ -841,15 +842,15 @@ export class ActiveDHTNode extends NodeDHTClient {
         
         // Test subscribe operation (subscribe to our own test topic)
         await this.subscribe(`test_topic_global`, (message) => {
-          console.log(`📬 Received test message:`, message);
+          Logger.trace(`📬 Received test message:`, message);
         });
         
-        console.log('✅ PubSub test operations completed');
+        Logger.debug('✅ PubSub test operations completed');
       } else {
-        console.log('⚠️ PubSub not available for test operations');
+        Logger.debug('⚠️ PubSub not available for test operations');
       }
       
-      console.log('✅ All throughput test operations completed');
+      Logger.debug('✅ All throughput test operations completed');
     } catch (error) {
       console.warn('⚠️ Throughput test failed:', error.message);
     }
