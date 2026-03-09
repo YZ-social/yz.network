@@ -2064,6 +2064,23 @@ export class KademliaDHT extends EventEmitter {
     // Remove from routing table
     this.routingTable.removeNode(peerId);
 
+    // CRITICAL FIX: Clean up peerNodes Map and destroy connection manager to prevent resource leaks
+    // Without this, connection managers accumulate causing memory and file descriptor leaks
+    if (this.peerNodes && this.peerNodes.has(peerId)) {
+      const peerNode = this.peerNodes.get(peerId);
+      if (peerNode && peerNode.connectionManager) {
+        console.log(`🧹 Destroying connection manager for disconnected peer ${peerId.substring(0, 8)}...`);
+        try {
+          peerNode.connectionManager.destroy();
+        } catch (err) {
+          console.warn(`⚠️ Error destroying connection manager for ${peerId.substring(0, 8)}...:`, err.message);
+        }
+        peerNode.connectionManager = null;
+      }
+      this.peerNodes.delete(peerId);
+      console.log(`🧹 Removed ${peerId.substring(0, 8)}... from peerNodes Map (size: ${this.peerNodes.size})`);
+    }
+
     this.emit('peerDisconnected', peerId);
 
     // CRITICAL: If we've lost all connections, re-enable bootstrap auto-reconnect
@@ -6267,6 +6284,36 @@ export class KademliaDHT extends EventEmitter {
       }
     }
 
+    // CRITICAL FIX: Clean up orphaned peerNodes entries (connection manager leak prevention)
+    // This catches any entries that weren't cleaned up by handlePeerDisconnected
+    if (this.peerNodes) {
+      const routingTablePeers = new Set(this.routingTable.getAllNodes().map(n => n.id.toString()));
+      const connectedPeers = new Set(this.getConnectedPeers());
+      let orphanedCount = 0;
+      
+      for (const [peerId, peerNode] of this.peerNodes.entries()) {
+        // Keep if in routing table OR actively connected
+        if (!routingTablePeers.has(peerId) && !connectedPeers.has(peerId)) {
+          // This is an orphaned entry - clean it up
+          if (peerNode && peerNode.connectionManager) {
+            try {
+              peerNode.connectionManager.destroy();
+            } catch (err) {
+              // Ignore errors during cleanup
+            }
+            peerNode.connectionManager = null;
+          }
+          this.peerNodes.delete(peerId);
+          orphanedCount++;
+          cleaned++;
+        }
+      }
+      
+      if (orphanedCount > 0) {
+        console.log(`🧹 Cleaned up ${orphanedCount} orphaned peerNodes entries (remaining: ${this.peerNodes.size})`);
+      }
+    }
+
     if (cleaned > 0) {
       console.log(`🧹 Cleaned up ${cleaned} stale tracking entries`);
     }
@@ -6345,15 +6392,22 @@ export class KademliaDHT extends EventEmitter {
         node.recordFailure();
         this.routingTable.handleNodeFailure(peerId);
         
-        // Close the connection
+        // Close the connection and clean up peerNodes entry
         const peerNode = this.peerNodes?.get(peerId);
         if (peerNode?.connectionManager) {
           try {
-            peerNode.connectionManager.disconnect();
-            console.log(`🔌 Disconnected stale connection: ${peerId.substring(0, 8)}...`);
+            peerNode.connectionManager.destroy();
+            peerNode.connectionManager = null;
+            console.log(`🔌 Destroyed stale connection manager: ${peerId.substring(0, 8)}...`);
           } catch (disconnectError) {
-            console.warn(`Failed to disconnect ${peerId.substring(0, 8)}...:`, disconnectError.message);
+            console.warn(`Failed to destroy ${peerId.substring(0, 8)}...:`, disconnectError.message);
           }
+        }
+        
+        // CRITICAL: Remove from peerNodes to prevent memory leak
+        if (this.peerNodes?.has(peerId)) {
+          this.peerNodes.delete(peerId);
+          console.log(`🧹 Removed stale peer from peerNodes: ${peerId.substring(0, 8)}...`);
         }
         
         cleanedConnections++;
