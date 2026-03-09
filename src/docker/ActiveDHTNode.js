@@ -430,68 +430,125 @@ export class ActiveDHTNode extends NodeDHTClient {
   /**
    * Collect all metrics
    */
-  collectMetrics() {
-    const uptime = (Date.now() - this.metrics.startTime) / 1000;
-    const connectedPeers = this.dht ? this.dht.getConnectedPeers().length : 0;
-    const routingTableSize = this.dht ? this.dht.routingTable.getAllNodes().length : 0;
+  /**
+     * Collect all metrics
+     */
+    collectMetrics() {
+      const uptime = (Date.now() - this.metrics.startTime) / 1000;
+      const connectedPeers = this.dht ? this.dht.getConnectedPeers().length : 0;
+      const routingTableSize = this.dht ? this.dht.routingTable.getAllNodes().length : 0;
 
-    return {
-      // Node info
-      node_uptime_seconds: uptime,
-      node_healthy: this.metrics.isHealthy ? 1 : 0,
+      // Memory metrics
+      const memoryUsage = process.memoryUsage();
+      const memoryLimitBytes = this.getContainerMemoryLimit();
+      const memoryUsedBytes = memoryUsage.rss; // Resident Set Size - actual memory used
+      const memoryPercent = memoryLimitBytes > 0 ? (memoryUsedBytes / memoryLimitBytes) * 100 : 0;
 
-      // Connections
-      dht_connected_peers: connectedPeers,
-      dht_routing_table_size: routingTableSize,
-      dht_connection_failures_total: this.metrics.connectionFailures,
+      return {
+        // Node info
+        node_uptime_seconds: uptime,
+        node_healthy: this.metrics.isHealthy ? 1 : 0,
 
-      // DHT operations
-      dht_store_operations_total: this.metrics.dhtStores,
-      dht_get_operations_total: this.metrics.dhtGets,
-      dht_findnode_operations_total: this.metrics.dhtFindNodes,
-      dht_store_failures_total: this.metrics.dhtStoreFails,
-      dht_get_failures_total: this.metrics.dhtGetFails,
+        // Memory metrics
+        memory_used_bytes: memoryUsedBytes,
+        memory_limit_bytes: memoryLimitBytes,
+        memory_percent: Math.round(memoryPercent * 10) / 10, // Round to 1 decimal
+        memory_heap_used_bytes: memoryUsage.heapUsed,
+        memory_heap_total_bytes: memoryUsage.heapTotal,
+        memory_external_bytes: memoryUsage.external,
 
-      // PubSub operations
-      pubsub_publish_operations_total: this.metrics.pubsubPublishes,
-      pubsub_subscribe_operations_total: this.metrics.pubsubSubscribes,
-      pubsub_messages_received_total: this.metrics.messagesReceived,
-      pubsub_messages_sent_total: this.metrics.messagesSent,
+        // Connections
+        dht_connected_peers: connectedPeers,
+        dht_routing_table_size: routingTableSize,
+        dht_connection_failures_total: this.metrics.connectionFailures,
 
-      // Data transfer metrics (bytes)
-      data_bytes_received_total: this.metrics.bytesReceived,
-      data_bytes_sent_total: this.metrics.bytesSent,
-      data_bytes_received_per_second: this.calculateDataTransferRate('received'),
-      data_bytes_sent_per_second: this.calculateDataTransferRate('sent'),
+        // DHT operations
+        dht_store_operations_total: this.metrics.dhtStores,
+        dht_get_operations_total: this.metrics.dhtGets,
+        dht_findnode_operations_total: this.metrics.dhtFindNodes,
+        dht_store_failures_total: this.metrics.dhtStoreFails,
+        dht_get_failures_total: this.metrics.dhtGetFails,
 
-      // Latency (percentiles in milliseconds)
-      dht_store_latency_p50: this.calculatePercentile(this.metrics.storeLatencies, 50),
-      dht_store_latency_p95: this.calculatePercentile(this.metrics.storeLatencies, 95),
-      dht_store_latency_p99: this.calculatePercentile(this.metrics.storeLatencies, 99),
-      dht_get_latency_p50: this.calculatePercentile(this.metrics.getLatencies, 50),
-      dht_get_latency_p95: this.calculatePercentile(this.metrics.getLatencies, 95),
-      dht_get_latency_p99: this.calculatePercentile(this.metrics.getLatencies, 99),
-      
-      // Ping latency (peer-to-peer connection latency)
-      ping_latency_p50: this.calculatePercentile(this.metrics.pingLatencies, 50),
-      ping_latency_p95: this.calculatePercentile(this.metrics.pingLatencies, 95),
-      ping_latency_p99: this.calculatePercentile(this.metrics.pingLatencies, 99),
+        // PubSub operations
+        pubsub_publish_operations_total: this.metrics.pubsubPublishes,
+        pubsub_subscribe_operations_total: this.metrics.pubsubSubscribes,
+        pubsub_messages_received_total: this.metrics.messagesReceived,
+        pubsub_messages_sent_total: this.metrics.messagesSent,
 
-      // Throughput
-      operations_per_second: this.calculateOpsPerSecond(),
-      
-      // Connection stability metrics
-      connections_established_total: this.metrics.connectionsEstablished,
-      connections_lost_total: this.metrics.connectionsLost,
-      connection_churn_per_minute: this.calculateConnectionChurnRate(),
-      reconnection_attempts_total: this.metrics.reconnectionAttempts,
-      reconnection_successes_total: this.metrics.reconnectionSuccesses,
-      peak_connections: this.metrics.peakConnections,
-      connection_stability_ratio: this.metrics.connectionsEstablished > 0 
-        ? ((this.metrics.connectionsEstablished - this.metrics.connectionsLost) / this.metrics.connectionsEstablished * 100).toFixed(1)
-        : 100
-    };
-  }
+        // Data transfer metrics (bytes)
+        data_bytes_received_total: this.metrics.bytesReceived,
+        data_bytes_sent_total: this.metrics.bytesSent,
+        data_bytes_received_per_second: this.calculateDataTransferRate('received'),
+        data_bytes_sent_per_second: this.calculateDataTransferRate('sent'),
+
+        // Latency (percentiles in milliseconds)
+        dht_store_latency_p50: this.calculatePercentile(this.metrics.storeLatencies, 50),
+        dht_store_latency_p95: this.calculatePercentile(this.metrics.storeLatencies, 95),
+        dht_store_latency_p99: this.calculatePercentile(this.metrics.storeLatencies, 99),
+        dht_get_latency_p50: this.calculatePercentile(this.metrics.getLatencies, 50),
+        dht_get_latency_p95: this.calculatePercentile(this.metrics.getLatencies, 95),
+        dht_get_latency_p99: this.calculatePercentile(this.metrics.getLatencies, 99),
+
+        // Ping latency (peer-to-peer connection latency)
+        ping_latency_p50: this.calculatePercentile(this.metrics.pingLatencies, 50),
+        ping_latency_p95: this.calculatePercentile(this.metrics.pingLatencies, 95),
+        ping_latency_p99: this.calculatePercentile(this.metrics.pingLatencies, 99),
+
+        // Throughput
+        operations_per_second: this.calculateOpsPerSecond(),
+
+        // Connection stability metrics
+        connections_established_total: this.metrics.connectionsEstablished,
+        connections_lost_total: this.metrics.connectionsLost,
+        connection_churn_per_minute: this.calculateConnectionChurnRate(),
+        reconnection_attempts_total: this.metrics.reconnectionAttempts,
+        reconnection_successes_total: this.metrics.reconnectionSuccesses,
+        peak_connections: this.metrics.peakConnections,
+        connection_stability_ratio: this.metrics.connectionsEstablished > 0 
+          ? ((this.metrics.connectionsEstablished - this.metrics.connectionsLost) / this.metrics.connectionsEstablished * 100).toFixed(1)
+          : 100
+      };
+    }
+    /**
+     * Get container memory limit from cgroups (Docker)
+     * Returns the memory limit in bytes, or 0 if not in a container
+     */
+    getContainerMemoryLimit() {
+      try {
+        const fs = require('fs');
+
+        // Try cgroups v2 first (newer Docker versions)
+        const cgroupV2Path = '/sys/fs/cgroup/memory.max';
+        if (fs.existsSync(cgroupV2Path)) {
+          const content = fs.readFileSync(cgroupV2Path, 'utf8').trim();
+          if (content === 'max') {
+            // No limit set, return system memory
+            return require('os').totalmem();
+          }
+          return parseInt(content, 10);
+        }
+
+        // Try cgroups v1 (older Docker versions)
+        const cgroupV1Path = '/sys/fs/cgroup/memory/memory.limit_in_bytes';
+        if (fs.existsSync(cgroupV1Path)) {
+          const content = fs.readFileSync(cgroupV1Path, 'utf8').trim();
+          const limit = parseInt(content, 10);
+          // Very large values indicate no limit
+          if (limit > 1e15) {
+            return require('os').totalmem();
+          }
+          return limit;
+        }
+
+        // Not in a container or cgroups not available
+        return require('os').totalmem();
+      } catch (error) {
+        // Fallback to system memory
+        return require('os').totalmem();
+      }
+    }
+
+
 
   /**
    * Calculate percentile from latency samples

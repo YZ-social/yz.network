@@ -3379,7 +3379,7 @@ export class KademliaDHT extends EventEmitter {
       const filteredDisconnectedCandidates = filterInactiveTabs(disconnectedCandidates);
 
       if (iterationCount % 5 === 0 || iterationCount <= 3) {
-        console.log(`🔍 findNode iteration ${iterationCount}: ${allCandidates.length} candidates (${connectedCandidates.length} connected, ${disconnectedCandidates.length} disconnected), ${results.size} total results, ${contacted.size} contacted`);
+        Logger.debug(`🔍 findNode iteration ${iterationCount}: ${allCandidates.length} candidates (${connectedCandidates.length} connected, ${disconnectedCandidates.length} disconnected), ${results.size} total results, ${contacted.size} contacted`);
       }
 
       // Prioritize connected peers (fast path: <100ms response time)
@@ -3671,7 +3671,7 @@ export class KademliaDHT extends EventEmitter {
     // IMPROVEMENT: Check connection health for peers that haven't been contacted recently
     const node = this.routingTable.getNode(peerId);
     if (node && node.lastSeen && (Date.now() - node.lastSeen) > 30000) { // 30 seconds
-      console.log(`🏥 Connection health check for ${peerId.substring(0, 8)}... (last seen ${Math.round((Date.now() - node.lastSeen) / 1000)}s ago)`);
+      Logger.trace(`🏥 Connection health check for ${peerId.substring(0, 8)}... (last seen ${Math.round((Date.now() - node.lastSeen) / 1000)}s ago)`);
       
       try {
         // Quick ping to verify connection is still alive (3 second timeout)
@@ -3684,9 +3684,9 @@ export class KademliaDHT extends EventEmitter {
         
         // Update last seen time if ping succeeds
         node.lastSeen = Date.now();
-        console.log(`✅ Connection health check passed for ${peerId.substring(0, 8)}...`);
+        Logger.trace(`✅ Connection health check passed for ${peerId.substring(0, 8)}...`);
       } catch (pingError) {
-        console.warn(`❌ Connection health check failed for ${peerId.substring(0, 8)}...:`, pingError.message);
+        Logger.debug(`❌ Connection health check failed for ${peerId.substring(0, 8)}...: ${pingError.message}`);
         
         // Mark connection as stale and handle failure with replacement cache promotion
         // Requirements 1.3, 6.4: Use handleNodeFailure for proper cache promotion
@@ -3834,27 +3834,27 @@ export class KademliaDHT extends EventEmitter {
 
     // DIAGNOSTIC LOGGING: Task 1.1 - Log requestId, destination peer, and manager info when response is sent
     // TASK 2.3: Log that we're using source manager for response routing
-    console.log(`📤 FIND_NODE RESPONSE SENDING:`);
-    console.log(`   RequestId: ${message.requestId}`);
-    console.log(`   Destination Peer: ${peerId.substring(0, 8)}...`);
-    console.log(`   Node Count: ${response.nodes.length}`);
-    console.log(`   Using Source Manager: ${sourceManager ? 'YES (same manager that received request)' : 'NO (default resolution)'}`);
-    console.log(`   Response Manager Type: ${sourceManager ? sourceManagerInfo.type : managerInfo.type}`);
-    console.log(`   Response Manager PeerId: ${sourceManager ? sourceManagerInfo.managerPeerId : managerInfo.managerPeerId}`);
-    console.log(`   Response Manager Connected: ${sourceManager ? sourceManagerInfo.connected : managerInfo.connected}`);
-    console.log(`   Timestamp: ${new Date().toISOString()}`);
+    Logger.trace(`📤 FIND_NODE RESPONSE SENDING:`);
+    Logger.trace(`   RequestId: ${message.requestId}`);
+    Logger.trace(`   Destination Peer: ${peerId.substring(0, 8)}...`);
+    Logger.trace(`   Node Count: ${response.nodes.length}`);
+    Logger.trace(`   Using Source Manager: ${sourceManager ? 'YES (same manager that received request)' : 'NO (default resolution)'}`);
+    Logger.trace(`   Response Manager Type: ${sourceManager ? sourceManagerInfo.type : managerInfo.type}`);
+    Logger.trace(`   Response Manager PeerId: ${sourceManager ? sourceManagerInfo.managerPeerId : managerInfo.managerPeerId}`);
+    Logger.trace(`   Response Manager Connected: ${sourceManager ? sourceManagerInfo.connected : managerInfo.connected}`);
+    Logger.trace(`   Timestamp: ${new Date().toISOString()}`);
     
     try {
       // TASK 2.3: Pass sourceManager to sendMessage for response routing
       // This ensures the response goes via the same connection manager that received the request
       await this.sendMessage(peerId, response, sourceManager);
       // DIAGNOSTIC LOGGING: Task 1.1 - Log success of response delivery
-      console.log(`✅ FIND_NODE RESPONSE DELIVERED:`);
-      console.log(`   RequestId: ${message.requestId}`);
-      console.log(`   Destination Peer: ${peerId.substring(0, 8)}...`);
-      console.log(`   Status: SUCCESS`);
-      console.log(`   Used Source Manager: ${sourceManager ? 'YES' : 'NO'}`);
-      console.log(`   Timestamp: ${new Date().toISOString()}`);
+      Logger.trace(`✅ FIND_NODE RESPONSE DELIVERED:`);
+      Logger.trace(`   RequestId: ${message.requestId}`);
+      Logger.trace(`   Destination Peer: ${peerId.substring(0, 8)}...`);
+      Logger.trace(`   Status: SUCCESS`);
+      Logger.trace(`   Used Source Manager: ${sourceManager ? 'YES' : 'NO'}`);
+      Logger.trace(`   Timestamp: ${new Date().toISOString()}`);
     } catch (error) {
       // DIAGNOSTIC LOGGING: Task 1.1 - Log failure of response delivery
       console.error(`❌ FIND_NODE RESPONSE FAILED:`);
@@ -4359,8 +4359,8 @@ export class KademliaDHT extends EventEmitter {
         // Use the provided source manager (for response routing)
         connectionManager = sourceManager;
         managerSource = 'sourceManager (request origin)';
-        console.log(`📤 SEND_MESSAGE: Using SOURCE MANAGER for ${message.type} response`);
-        console.log(`   Reason: Response should go via same manager that received request`);
+        Logger.trace(`📤 SEND_MESSAGE: Using SOURCE MANAGER for ${message.type} response`);
+        Logger.trace(`   Reason: Response should go via same manager that received request`);
       } else {
         // Fall back to existing resolution via getOrCreatePeerNode
         const peerNode = this.getOrCreatePeerNode(peerId);
@@ -4368,7 +4368,7 @@ export class KademliaDHT extends EventEmitter {
         managerSource = 'getOrCreatePeerNode (default resolution)';
         
         if (sourceManager) {
-          console.log(`📤 SEND_MESSAGE: Source manager provided but not connected, falling back to default resolution`);
+          Logger.trace(`📤 SEND_MESSAGE: Source manager provided but not connected, falling back to default resolution`);
         }
       }
       
@@ -4377,11 +4377,11 @@ export class KademliaDHT extends EventEmitter {
       const managerPeerId = connectionManager?.peerId || 'none';
       const isConnected = connectionManager?.isConnected?.() || false;
       
-      console.log(`📤 SEND_MESSAGE: Using ${managerType} for ${message.type}`);
-      console.log(`   Target PeerId: ${peerId.substring(0, 8)}...`);
-      console.log(`   Manager PeerId: ${managerPeerId?.substring?.(0, 8) || managerPeerId}...`);
-      console.log(`   Manager Connected: ${isConnected}`);
-      console.log(`   Manager Source: ${managerSource}`);
+      Logger.trace(`📤 SEND_MESSAGE: Using ${managerType} for ${message.type}`);
+      Logger.trace(`   Target PeerId: ${peerId.substring(0, 8)}...`);
+      Logger.trace(`   Manager PeerId: ${managerPeerId?.substring?.(0, 8) || managerPeerId}...`);
+      Logger.trace(`   Manager Connected: ${isConnected}`);
+      Logger.trace(`   Manager Source: ${managerSource}`);
       
       // DIAGNOSTIC LOGGING: Task 1.2 - Log manager peerId vs target peerId comparison
       if (managerPeerId && managerPeerId !== 'none' && managerPeerId !== peerId) {
@@ -4995,18 +4995,18 @@ export class KademliaDHT extends EventEmitter {
     // We should NOT create a new manager - that would cause DHT message handlers to be attached
     // to the wrong manager (the new one instead of the dedicated one that receives messages)
     if (peerNode.connectionManager) {
-      console.log(`🔄 Using existing connection manager for ${peerId.substring(0, 8)}... (already set up by incoming connection)`);
+      Logger.trace(`🔄 Using existing connection manager for ${peerId.substring(0, 8)}... (already set up by incoming connection)`);
       
       // Still need to ensure DHT message handler is attached to the EXISTING manager
       if (!peerNode.connectionManager._dhtMessageHandlerAttached) {
-        console.log(`🔧 Attaching DHT message handler to EXISTING manager for ${peerId.substring(0, 8)}`);
+        Logger.debug(`🔧 Attaching DHT message handler to EXISTING manager for ${peerId.substring(0, 8)}`);
         peerNode.connectionManager.on('dhtMessage', ({ peerId: msgPeerId, message, sourceManager }) => {
-          console.log(`📥 DHT MESSAGE HANDLER CALLED: ${message.type} from ${msgPeerId.substring(0, 8)} (manager: ${peerNode.connectionManager.constructor.name})`);
+          Logger.trace(`📥 DHT MESSAGE HANDLER CALLED: ${message.type} from ${msgPeerId.substring(0, 8)} (manager: ${peerNode.connectionManager.constructor.name})`);
           // TASK 2.1: Pass sourceManager to handlePeerMessage for response routing
           this.handlePeerMessage(msgPeerId, message, sourceManager);
         });
         peerNode.connectionManager._dhtMessageHandlerAttached = true;
-        console.log(`📨 DHT message handler attached to existing manager for ${peerId.substring(0, 8)}`);
+        Logger.debug(`📨 DHT message handler attached to existing manager for ${peerId.substring(0, 8)}`);
       }
       
       // Still set up DHT signaling callback if needed
@@ -5118,16 +5118,16 @@ export class KademliaDHT extends EventEmitter {
     const peerNode = this.routingTable.getNode(peerId);
     if (peerNode?.metadata?.nodeType === 'browser') {
       const tabVisible = peerNode.metadata?.tabVisible;
-      console.log(`🔍 [DHT ${message.type}] Browser peer ${peerId.substring(0, 8)}... - tabVisible: ${tabVisible}`);
+      Logger.trace(`🔍 [DHT ${message.type}] Browser peer ${peerId.substring(0, 8)}... - tabVisible: ${tabVisible}`);
       
       if (tabVisible === false) {
-        console.log(`⏭️ [DHT ${message.type}] Skipping request to inactive browser tab ${peerId.substring(0, 8)}... (would cause high latency)`);
+        Logger.debug(`⏭️ [DHT ${message.type}] Skipping request to inactive browser tab ${peerId.substring(0, 8)}... (would cause high latency)`);
         throw new Error(`Inactive browser tab - skipped to prevent high latency`);
       }
     } else if (peerNode?.metadata) {
-      console.log(`🔍 [DHT ${message.type}] Non-browser peer ${peerId.substring(0, 8)}... - nodeType: ${peerNode.metadata.nodeType}`);
+      Logger.trace(`🔍 [DHT ${message.type}] Non-browser peer ${peerId.substring(0, 8)}... - nodeType: ${peerNode.metadata.nodeType}`);
     } else {
-      console.log(`🔍 [DHT ${message.type}] Peer ${peerId.substring(0, 8)}... - no metadata available`);
+      Logger.trace(`🔍 [DHT ${message.type}] Peer ${peerId.substring(0, 8)}... - no metadata available`);
     }
 
     // IMPROVEMENT: Check connection before creating timeout
