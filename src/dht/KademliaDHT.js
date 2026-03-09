@@ -5163,7 +5163,14 @@ export class KademliaDHT extends EventEmitter {
       if (timeSinceLastFailure < backoffTime) {
         const remainingBackoff = backoffTime - timeSinceLastFailure;
         console.log(`🚫 Peer ${peerId.substring(0, 8)}... in backoff (${failureCount} failures, ${Math.round(remainingBackoff/1000)}s remaining)`);
-        throw new Error(`Peer in failure backoff - ${Math.round(remainingBackoff/1000)}s remaining`);
+        // CRITICAL FIX: Don't increment failure count for backoff rejections
+        // This was causing a vicious cycle where connected peers got stuck in permanent backoff
+        throw new Error(`Peer in failure backoff - ${Math.round(remainingBackoff/1000)}s remaining (not counted as failure)`);
+      } else {
+        // Backoff period expired - reset failure tracking to give peer another chance
+        console.log(`✅ Backoff expired for ${peerId.substring(0, 8)}... - resetting failure count`);
+        this.failedPeerQueries.delete(peerId);
+        this.peerFailureBackoff.delete(peerId);
       }
     }
 
@@ -6685,6 +6692,14 @@ export class KademliaDHT extends EventEmitter {
               const added = this.routingTable.addNode(dhtNode);
               if (added) {
                 console.log(`✅ Added validated peer ${nodeInfo.id.substring(0, 8)}... to routing table`);
+                
+                // CRITICAL FIX: Reset failure tracking when peer is successfully added
+                // This prevents the vicious cycle where connected peers are stuck in backoff
+                if (this.failedPeerQueries.has(nodeInfo.id)) {
+                  console.log(`🔄 Resetting failure tracking for newly added peer ${nodeInfo.id.substring(0, 8)}...`);
+                  this.failedPeerQueries.delete(nodeInfo.id);
+                  this.peerFailureBackoff.delete(nodeInfo.id);
+                }
               }
             } else {
               // Update existing node metadata and refresh timestamp
@@ -6693,6 +6708,14 @@ export class KademliaDHT extends EventEmitter {
               }
               existingNode.updateLastSeen();
               console.log(`🔄 Updated existing peer ${nodeInfo.id.substring(0, 8)}... in routing table`);
+              
+              // CRITICAL FIX: Also reset failure tracking for updated peers that are connected
+              // If peer is in routing table and connected, they shouldn't be in backoff
+              if (isAlreadyConnected && this.failedPeerQueries.has(nodeInfo.id)) {
+                console.log(`🔄 Resetting failure tracking for connected peer ${nodeInfo.id.substring(0, 8)}...`);
+                this.failedPeerQueries.delete(nodeInfo.id);
+                this.peerFailureBackoff.delete(nodeInfo.id);
+              }
             }
 
           } catch (error) {
