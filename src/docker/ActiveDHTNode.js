@@ -16,6 +16,8 @@ import { InvitationToken } from '../core/InvitationToken.js';
 import Logger from '../utils/Logger.js';
 import crypto from 'crypto';
 import http from 'http';
+import fs from 'fs';
+import os from 'os';
 
 export class ActiveDHTNode extends NodeDHTClient {
   constructor(options = {}) {
@@ -514,39 +516,37 @@ export class ActiveDHTNode extends NodeDHTClient {
      * Returns the memory limit in bytes, or 0 if not in a container
      */
     getContainerMemoryLimit() {
-      try {
-        const fs = require('fs');
-
-        // Try cgroups v2 first (newer Docker versions)
-        const cgroupV2Path = '/sys/fs/cgroup/memory.max';
-        if (fs.existsSync(cgroupV2Path)) {
-          const content = fs.readFileSync(cgroupV2Path, 'utf8').trim();
-          if (content === 'max') {
-            // No limit set, return system memory
-            return require('os').totalmem();
-          }
-          return parseInt(content, 10);
+    try {
+      // Try cgroups v2 first (newer Docker versions)
+      const cgroupV2Path = '/sys/fs/cgroup/memory.max';
+      if (fs.existsSync(cgroupV2Path)) {
+        const content = fs.readFileSync(cgroupV2Path, 'utf8').trim();
+        if (content === 'max') {
+          // No limit set, return system memory
+          return os.totalmem();
         }
-
-        // Try cgroups v1 (older Docker versions)
-        const cgroupV1Path = '/sys/fs/cgroup/memory/memory.limit_in_bytes';
-        if (fs.existsSync(cgroupV1Path)) {
-          const content = fs.readFileSync(cgroupV1Path, 'utf8').trim();
-          const limit = parseInt(content, 10);
-          // Very large values indicate no limit
-          if (limit > 1e15) {
-            return require('os').totalmem();
-          }
-          return limit;
-        }
-
-        // Not in a container or cgroups not available
-        return require('os').totalmem();
-      } catch (error) {
-        // Fallback to system memory
-        return require('os').totalmem();
+        return parseInt(content, 10);
       }
+
+      // Try cgroups v1 (older Docker versions)
+      const cgroupV1Path = '/sys/fs/cgroup/memory/memory.limit_in_bytes';
+      if (fs.existsSync(cgroupV1Path)) {
+        const content = fs.readFileSync(cgroupV1Path, 'utf8').trim();
+        const limit = parseInt(content, 10);
+        // Very large values indicate no limit
+        if (limit > 1e15) {
+          return os.totalmem();
+        }
+        return limit;
+      }
+
+      // Not in a container or cgroups not available
+      return os.totalmem();
+    } catch (error) {
+      // Fallback to system memory
+      return os.totalmem();
     }
+  }
 
 
 
