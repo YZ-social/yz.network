@@ -6687,6 +6687,16 @@ export class KademliaDHT extends EventEmitter {
               if (nodeInfo.metadata) {
                 dhtNode.metadata = nodeInfo.metadata;
               }
+              
+              // CRITICAL FIX: If peer is already connected (in peerNodes), transfer the connection manager
+              // This ensures the routing table node can actually send messages
+              if (isAlreadyConnected && this.peerNodes && this.peerNodes.has(nodeInfo.id)) {
+                const connectedPeerNode = this.peerNodes.get(nodeInfo.id);
+                if (connectedPeerNode && connectedPeerNode.connectionManager) {
+                  dhtNode.connectionManager = connectedPeerNode.connectionManager;
+                  console.log(`🔗 Transferred connection manager to routing table node ${nodeInfo.id.substring(0, 8)}...`);
+                }
+              }
 
               // Add to routing table
               const added = this.routingTable.addNode(dhtNode);
@@ -6708,6 +6718,16 @@ export class KademliaDHT extends EventEmitter {
               }
               existingNode.updateLastSeen();
               console.log(`🔄 Updated existing peer ${nodeInfo.id.substring(0, 8)}... in routing table`);
+              
+              // CRITICAL FIX: Transfer connection manager if existing node doesn't have one
+              // This can happen if node was added before connection was established
+              if (!existingNode.connectionManager && isAlreadyConnected && this.peerNodes && this.peerNodes.has(nodeInfo.id)) {
+                const connectedPeerNode = this.peerNodes.get(nodeInfo.id);
+                if (connectedPeerNode && connectedPeerNode.connectionManager) {
+                  existingNode.connectionManager = connectedPeerNode.connectionManager;
+                  console.log(`🔗 Transferred connection manager to existing routing table node ${nodeInfo.id.substring(0, 8)}...`);
+                }
+              }
               
               // CRITICAL FIX: Also reset failure tracking for updated peers that are connected
               // If peer is in routing table and connected, they shouldn't be in backoff
