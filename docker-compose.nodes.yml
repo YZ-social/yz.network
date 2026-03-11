@@ -30,7 +30,8 @@ services:
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node1
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-1
-      - OPEN_NETWORK=true`n      - LOG_LEVEL=warn
+      - OPEN_NETWORK=true
+      - LOG_LEVEL=warn
     volumes:
       # Mount bundle-hash.json for version checking synchronization
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
@@ -68,7 +69,8 @@ services:
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node2
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-2
-      - OPEN_NETWORK=true`n      - LOG_LEVEL=warn
+      - OPEN_NETWORK=true
+      - LOG_LEVEL=warn
     volumes:
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
@@ -105,7 +107,8 @@ services:
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node3
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-3
-      - OPEN_NETWORK=true`n      - LOG_LEVEL=warn
+      - OPEN_NETWORK=true
+      - LOG_LEVEL=warn
     volumes:
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
@@ -142,7 +145,8 @@ services:
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node4
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-4
-      - OPEN_NETWORK=true`n      - LOG_LEVEL=warn
+      - OPEN_NETWORK=true
+      - LOG_LEVEL=warn
     volumes:
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
@@ -179,7 +183,8 @@ services:
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node5
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-5
-      - OPEN_NETWORK=true`n      - LOG_LEVEL=warn
+      - OPEN_NETWORK=true
+      - LOG_LEVEL=warn
     volumes:
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
@@ -216,7 +221,8 @@ services:
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node6
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-6
-      - OPEN_NETWORK=true`n      - LOG_LEVEL=warn
+      - OPEN_NETWORK=true
+      - LOG_LEVEL=warn
     volumes:
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
@@ -253,7 +259,8 @@ services:
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node7
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-7
-      - OPEN_NETWORK=true`n      - LOG_LEVEL=warn
+      - OPEN_NETWORK=true
+      - LOG_LEVEL=warn
     volumes:
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
@@ -290,7 +297,8 @@ services:
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node8
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-8
-      - OPEN_NETWORK=true`n      - LOG_LEVEL=warn
+      - OPEN_NETWORK=true
+      - LOG_LEVEL=warn
     volumes:
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
@@ -327,7 +335,8 @@ services:
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node9
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-9
-      - OPEN_NETWORK=true`n      - LOG_LEVEL=warn
+      - OPEN_NETWORK=true
+      - LOG_LEVEL=warn
     volumes:
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
@@ -364,7 +373,8 @@ services:
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node10
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-10
-      - OPEN_NETWORK=true`n      - LOG_LEVEL=warn
+      - OPEN_NETWORK=true
+      - LOG_LEVEL=warn
     volumes:
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
@@ -401,7 +411,8 @@ services:
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node11
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-11
-      - OPEN_NETWORK=true`n      - LOG_LEVEL=warn
+      - OPEN_NETWORK=true
+      - LOG_LEVEL=warn
     volumes:
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
@@ -438,7 +449,8 @@ services:
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node12
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-12
-      - OPEN_NETWORK=true`n      - LOG_LEVEL=warn
+      - OPEN_NETWORK=true
+      - LOG_LEVEL=warn
     volumes:
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
@@ -475,7 +487,8 @@ services:
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node13
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-13
-      - OPEN_NETWORK=true`n      - LOG_LEVEL=warn
+      - OPEN_NETWORK=true
+      - LOG_LEVEL=warn
     volumes:
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
@@ -512,7 +525,8 @@ services:
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node14
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-14
-      - OPEN_NETWORK=true`n      - LOG_LEVEL=warn
+      - OPEN_NETWORK=true
+      - LOG_LEVEL=warn
     volumes:
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
@@ -549,7 +563,8 @@ services:
       - EXTERNAL_ADDRESS=wss://imeyouwe.com/node15
       - METRICS_PORT=9090
       - NODE_NAME=dht-node-15
-      - OPEN_NETWORK=true`n      - LOG_LEVEL=warn
+      - OPEN_NETWORK=true
+      - LOG_LEVEL=warn
     volumes:
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
