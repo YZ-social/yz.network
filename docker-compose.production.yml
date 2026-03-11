@@ -18,6 +18,7 @@ services:
       - BRIDGE_NODE_1=ws://bridge-node-1:8083
       - BRIDGE_NODE_2=ws://bridge-node-2:8084
       - METRICS_PORT=9090
+      - LOG_LEVEL=warn
     volumes:
       # Mount bundle-hash.json for version checking synchronization
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
@@ -56,6 +57,7 @@ services:
       - NODE_NAME=bridge-node-1
       - METRICS_PORT=9090
       - BRIDGE_AUTH=${BRIDGE_AUTH:-default-bridge-auth-key}
+      - LOG_LEVEL=warn
     volumes:
       # Mount bundle-hash.json for version checking synchronization
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
@@ -97,6 +99,7 @@ services:
       - NODE_NAME=bridge-node-2
       - METRICS_PORT=9090
       - BRIDGE_AUTH=${BRIDGE_AUTH:-default-bridge-auth-key}
+      - LOG_LEVEL=warn
     volumes:
       # Mount bundle-hash.json for version checking synchronization
       - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
@@ -138,6 +141,7 @@ services:
       - METRICS_PORT=9090
       - NODE_NAME=genesis-node
       - OPEN_NETWORK=true
+      - LOG_LEVEL=warn
     networks:
       - yz-network
     restart: unless-stopped
