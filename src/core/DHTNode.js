@@ -119,6 +119,24 @@ export class DHTNode {
    * Set up connection and connection manager for this node
    */
   setupConnection(connectionManager, connection) {
+    // CRITICAL FIX: Destroy old connection manager before setting up new one
+    // This prevents duplicate ping intervals and resource leaks
+    if (this.connectionManager && this.connectionManager !== connectionManager) {
+      console.log(`🧹 Destroying old connection manager for ${this.id.toString().substring(0, 8)}... before setting up new one`);
+      try {
+        // Stop ping interval on old manager
+        if (typeof this.connectionManager.stopPing === 'function') {
+          this.connectionManager.stopPing();
+        }
+        // Destroy the old manager
+        if (typeof this.connectionManager.destroy === 'function') {
+          this.connectionManager.destroy();
+        }
+      } catch (error) {
+        console.error(`❌ Error destroying old connection manager: ${error.message}`);
+      }
+    }
+
     this.connectionManager = connectionManager;
     this.connection = connection;
 
