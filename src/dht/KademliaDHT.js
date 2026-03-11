@@ -6652,15 +6652,15 @@ export class KademliaDHT extends EventEmitter {
             // - Result: queue blocks waiting for itself = 30s+ delays on localhost
             //
             // Instead, tokens are validated during WebRTC handshake (see below)
+            
+            // Check if peer is already connected - needed for connection manager transfer below
+            const isAlreadyConnected = this.getConnectedPeers().includes(nodeInfo.id);
+            
             if (nodeInfo.metadata && nodeInfo.metadata.membershipToken) {
               console.log(`📋 Peer ${nodeInfo.id.substring(0, 8)}... has membership token - will validate during handshake`);
             } else {
               // Check if this is a bridge node (has bridgeAuthToken or isBridgeNode metadata)
               const isBridgeNode = nodeInfo.metadata?.isBridgeNode || nodeInfo.metadata?.bridgeAuthToken;
-
-              // LENIENT: If this peer is already connected, trust the connection managers
-              // Connection managers are responsible for validating bridge nodes during connection
-              const isAlreadyConnected = this.getConnectedPeers().includes(nodeInfo.id);
 
               if (!isBridgeNode && !isAlreadyConnected) {
                 // LENIENT: Allow peers discovered from trusted connected peers
