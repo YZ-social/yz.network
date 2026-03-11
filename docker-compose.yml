@@ -21,6 +21,7 @@ services:
       - BRIDGE_NODE_1=bridge-node-1:8083
       - BRIDGE_NODE_2=bridge-node-2:8084
       - BRIDGE_AUTH=${BRIDGE_AUTH:-default-bridge-auth-key}
+      - LOG_LEVEL=warn
     networks:
       - dht-network
     restart: unless-stopped
@@ -50,6 +51,7 @@ services:
       - BRIDGE_AUTH=${BRIDGE_AUTH:-default-bridge-auth-key}
       - BOOTSTRAP_URL=ws://bootstrap:8080
       - METRICS_PORT=9090
+      - LOG_LEVEL=warn
     networks:
       - dht-network
     restart: unless-stopped
@@ -82,6 +84,7 @@ services:
       - BRIDGE_AUTH=${BRIDGE_AUTH:-default-bridge-auth-key}
       - BOOTSTRAP_URL=ws://bootstrap:8080
       - METRICS_PORT=9090
+      - LOG_LEVEL=warn
     networks:
       - dht-network
     restart: unless-stopped
@@ -111,6 +114,7 @@ services:
       - BOOTSTRAP_URL=ws://bootstrap:8080
       - OPEN_NETWORK=true
       - METRICS_PORT=9090
+      - LOG_LEVEL=warn
     networks:
       - dht-network
     depends_on:

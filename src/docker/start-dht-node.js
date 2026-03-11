@@ -8,7 +8,30 @@
  * - METRICS_PORT: Port for metrics/health API (default: 9090)
  * - NODE_NAME: Optional node name for logging
  * - OPEN_NETWORK: Enable open network mode (default: true)
+ * - LOG_LEVEL: Logging verbosity (error, warn, info, debug, trace)
  */
+
+// Apply log level filtering BEFORE any imports
+// This reduces memory usage by preventing string allocations for suppressed logs
+const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
+const LOG_LEVELS = { error: 0, warn: 1, info: 2, debug: 3, trace: 4 };
+const currentLevel = LOG_LEVELS[LOG_LEVEL] ?? LOG_LEVELS.info;
+
+if (currentLevel < LOG_LEVELS.info) {
+  // Suppress console.log when LOG_LEVEL is error or warn
+  const originalLog = console.log;
+  console.log = (...args) => {
+    // Allow startup banner and critical messages (contain specific markers)
+    const msg = args[0]?.toString() || '';
+    if (msg.includes('━━━') || msg.includes('✅') || msg.includes('❌') || 
+        msg.includes('🌐 YZ Network') || msg.includes('Node started') ||
+        msg.includes('Shutdown')) {
+      originalLog.apply(console, args);
+    }
+    // All other console.log calls are suppressed
+  };
+  console.info = () => {}; // Suppress console.info entirely
+}
 
 import { ActiveDHTNode } from './ActiveDHTNode.js';
 
@@ -30,6 +53,7 @@ console.log('━━━━━━━━━━━━━━━━━━━━━━�
 console.log(`📝 Node Name: ${config.nodeName}`);
 console.log(`🔗 Bootstrap: ${config.bootstrapServers[0]}`);
 console.log(`📊 Metrics Port: ${config.metricsPort}`);
+console.log(`📢 Log Level: ${LOG_LEVEL.toUpperCase()}`);
 console.log(`🌍 Open Network: ${config.openNetwork ? 'ENABLED' : 'DISABLED'}`);
 if (config.websocketPort) {
   console.log(`🔌 WebSocket Port: ${config.websocketPort}`);
