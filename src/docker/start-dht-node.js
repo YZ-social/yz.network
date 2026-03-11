@@ -18,19 +18,10 @@ const LOG_LEVELS = { error: 0, warn: 1, info: 2, debug: 3, trace: 4 };
 const currentLevel = LOG_LEVELS[LOG_LEVEL] ?? LOG_LEVELS.info;
 
 if (currentLevel < LOG_LEVELS.info) {
-  // Suppress console.log when LOG_LEVEL is error or warn
-  const originalLog = console.log;
-  console.log = (...args) => {
-    // Allow startup banner and critical messages (contain specific markers)
-    const msg = args[0]?.toString() || '';
-    if (msg.includes('━━━') || msg.includes('✅') || msg.includes('❌') || 
-        msg.includes('🌐 YZ Network') || msg.includes('Node started') ||
-        msg.includes('Shutdown')) {
-      originalLog.apply(console, args);
-    }
-    // All other console.log calls are suppressed
-  };
-  console.info = () => {}; // Suppress console.info entirely
+  // Suppress ALL console.log when LOG_LEVEL is error or warn
+  // Only console.warn and console.error will pass through
+  console.log = () => {};
+  console.info = () => {};
 }
 
 import { ActiveDHTNode } from './ActiveDHTNode.js';
