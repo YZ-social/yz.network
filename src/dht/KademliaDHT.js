@@ -3713,7 +3713,7 @@ export class KademliaDHT extends EventEmitter {
         // Close the stale connection
         const peerNode = this.routingTable.getNode(peerId) || this.peerNodes?.get(peerId);
         if (peerNode?.connectionManager) {
-          peerNode.connectionManager.disconnect();
+          peerNode.connectionManager.destroyConnection(peerId);
         }
         
         throw new Error(`Connection to ${peerId.substring(0, 8)}... is stale (health check failed)`);
@@ -4703,7 +4703,7 @@ export class KademliaDHT extends EventEmitter {
       const node = this.routingTable.getNode(leastValuable.peerId);
       if (node?.connectionManager) {
         try {
-          await node.connectionManager.disconnect(leastValuable.peerId);
+          node.connectionManager.destroyConnection(leastValuable.peerId);
           // Remove from routing table
           this.routingTable.removeNode(leastValuable.peerId);
           return true;
@@ -4851,7 +4851,7 @@ export class KademliaDHT extends EventEmitter {
       const node = this.routingTable.getNode(leastValuable.peerId);
       if (node?.connectionManager) {
         try {
-          await node.connectionManager.disconnect(leastValuable.peerId);
+          node.connectionManager.destroyConnection(leastValuable.peerId);
 
           // IMPORTANT: Only remove from routing table if truly stale/broken
           // Healthy peers that are just not needed for this query should stay in routing table
@@ -5200,7 +5200,7 @@ export class KademliaDHT extends EventEmitter {
           // Close the connection to the failing peer
           const failingPeerNode = this.routingTable.getNode(peerId);
           if (failingPeerNode?.connectionManager) {
-            failingPeerNode.connectionManager.disconnect();
+            failingPeerNode.connectionManager.destroyConnection(peerId);
           }
         }
         
@@ -6933,7 +6933,7 @@ export class KademliaDHT extends EventEmitter {
       // Remove from routing table and disconnect
       this.routingTable.removeNode(peerId);
       if (peerNode && peerNode.connectionManager) {
-        await peerNode.connectionManager.disconnect(peerId);
+        peerNode.connectionManager.destroyConnection(peerId);
       }
 
       // Clean up tracking

@@ -143,24 +143,6 @@
       border-radius: 4px;
     }
 
-    .metric-badge.memory-warning {
-      background: linear-gradient(135deg, #92400e, #b45309);
-      color: #fef3c7;
-      font-weight: 600;
-    }
-
-    .metric-badge.memory-critical {
-      background: linear-gradient(135deg, #991b1b, #dc2626);
-      color: #fef2f2;
-      font-weight: 600;
-      animation: pulse-red 1.5s infinite;
-    }
-
-    @keyframes pulse-red {
-      0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4); }
-      50% { opacity: 0.9; box-shadow: 0 0 8px 2px rgba(220, 38, 38, 0.6); }
-    }
-
     .status-indicator {
       display: inline-block;
       width: 10px;
@@ -173,6 +155,22 @@
 
     .status-indicator.offline {
       background: #f87171;
+    }
+
+    .memory-warning {
+      color: #fbbf24 !important;
+      background: #78350f !important;
+    }
+
+    .memory-critical {
+      color: #fef2f2 !important;
+      background: #991b1b !important;
+      animation: pulse-critical 1s infinite;
+    }
+
+    @keyframes pulse-critical {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
     }
 
     @keyframes pulse {
@@ -1020,8 +1018,8 @@
         } else {
           nodeListEl.innerHTML = nodesData.nodes.map(node => {
             const memPercent = node.memory_percent || 0;
-            const memUsedMB = node.memory_used_bytes ? (node.memory_used_bytes / (1024 * 1024)).toFixed(0) : 0;
-            const memLimitMB = node.memory_limit_bytes ? (node.memory_limit_bytes / (1024 * 1024)).toFixed(0) : 0;
+            const memUsedMB = Math.round((node.memory_used_bytes || 0) / 1024 / 1024);
+            const memLimitMB = Math.round((node.memory_limit_bytes || 0) / 1024 / 1024);
             const memClass = memPercent >= 90 ? 'memory-critical' : memPercent >= 80 ? 'memory-warning' : '';
             
             return `
@@ -1031,8 +1029,8 @@
                 <span class="name">${node.nodeName}</span>
               </div>
               <div class="metrics">
-                <span class="metric-badge ${memClass}">Mem: ${memUsedMB}/${memLimitMB}MB (${memPercent.toFixed(0)}%)</span>
                 <span class="metric-badge">Peers: ${node.dht_connected_peers || 0}</span>
+                <span class="metric-badge ${memClass}">Mem: ${memUsedMB}/${memLimitMB}MB (${memPercent}%)</span>
                 <span class="metric-badge">Uptime: ${formatUptime(node.node_uptime_seconds)}</span>
                 <span class="metric-badge">Latency: ${(node.ping_latency_p50 || 0).toFixed(1)}ms</span>
               </div>

@@ -1405,7 +1405,7 @@ export class DHTVisualizer {
         try {
           const node = this.dht.routingTable.getNode(peerId);
           if (node && node.connectionManager) {
-            await node.connectionManager.disconnectFromPeer(peerId);
+            node.connectionManager.destroyConnection(peerId);
           }
         } catch (error) {
           this.log(`Warning: Failed to disconnect from ${peerId}: ${error.message}`, 'warn');

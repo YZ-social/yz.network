@@ -13,7 +13,6 @@
 import { NodeDHTClient } from '../node/NodeDHTClient.js';
 import { PubSubClient } from '../pubsub/PubSubClient.js';
 import { InvitationToken } from '../core/InvitationToken.js';
-import Logger from '../utils/Logger.js';
 import crypto from 'crypto';
 import http from 'http';
 import fs from 'fs';
@@ -141,7 +140,7 @@ export class ActiveDHTNode extends NodeDHTClient {
    * Start node with full DHT + PubSub + Metrics
    */
   async start() {
-    console.log(`🚀 Starting ActiveDHTNode...`);
+    console.log(`≡ƒÜÇ Starting ActiveDHTNode...`);
     console.log(`   Metrics Port: ${this.metricsPort}`);
     console.log(`   Bootstrap: ${this.options.bootstrapServers[0]}`);
 
@@ -168,7 +167,7 @@ export class ActiveDHTNode extends NodeDHTClient {
     // Start background tasks
     this.startBackgroundTasks();
 
-    console.log(`✅ ActiveDHTNode started`);
+    console.log(`Γ£à ActiveDHTNode started`);
     console.log(`   Node ID: ${this.nodeId.toString().substring(0, 16)}...`);
     console.log(`   Metrics: http://localhost:${this.metricsPort}/metrics`);
 
@@ -188,7 +187,7 @@ export class ActiveDHTNode extends NodeDHTClient {
     // Count already-connected peers (connections established before listener was added)
     const existingPeers = this.dht.getConnectedPeers();
     if (existingPeers.length > 0) {
-      console.log(`📊 Stability tracking: Found ${existingPeers.length} existing connections`);
+      console.log(`≡ƒôè Stability tracking: Found ${existingPeers.length} existing connections`);
       this.metrics.connectionsEstablished = existingPeers.length;
       this.metrics.currentConnections = existingPeers.length;
       this.metrics.peakConnections = existingPeers.length;
@@ -275,7 +274,7 @@ export class ActiveDHTNode extends NodeDHTClient {
       }
     );
 
-    console.log('📬 PubSub initialized');
+    console.log('≡ƒô¼ PubSub initialized');
   }
 
   /**
@@ -287,7 +286,7 @@ export class ActiveDHTNode extends NodeDHTClient {
       return await InvitationToken.generateKeyPair();
     } catch (error) {
       // Fallback to simple HMAC signing for PoC
-      console.warn('⚠️ Using fallback HMAC signing (not Ed25519)');
+      console.warn('ΓÜá∩╕Å Using fallback HMAC signing (not Ed25519)');
       const secret = crypto.randomBytes(32);
 
       return {
@@ -335,7 +334,7 @@ export class ActiveDHTNode extends NodeDHTClient {
         if (err) {
           reject(err);
         } else {
-          console.log(`📊 Metrics server listening on port ${this.metricsPort}`);
+          console.log(`≡ƒôè Metrics server listening on port ${this.metricsPort}`);
           resolve();
         }
       });
@@ -432,97 +431,94 @@ export class ActiveDHTNode extends NodeDHTClient {
   /**
    * Collect all metrics
    */
-  /**
-     * Collect all metrics
-     */
-    collectMetrics() {
-      const uptime = (Date.now() - this.metrics.startTime) / 1000;
-      const connectedPeers = this.dht ? this.dht.getConnectedPeers().length : 0;
-      const routingTableSize = this.dht ? this.dht.routingTable.getAllNodes().length : 0;
+  collectMetrics() {
+    const uptime = (Date.now() - this.metrics.startTime) / 1000;
+    const connectedPeers = this.dht ? this.dht.getConnectedPeers().length : 0;
+    const routingTableSize = this.dht ? this.dht.routingTable.getAllNodes().length : 0;
+
+    // Memory metrics
+    const memoryUsage = process.memoryUsage();
+    const memoryLimitBytes = this.getContainerMemoryLimit();
+    const memoryUsedBytes = memoryUsage.rss;
+    const memoryPercent = memoryLimitBytes > 0 ? (memoryUsedBytes / memoryLimitBytes) * 100 : 0;
+
+    return {
+      // Node info
+      node_uptime_seconds: uptime,
+      node_healthy: this.metrics.isHealthy ? 1 : 0,
 
       // Memory metrics
-      const memoryUsage = process.memoryUsage();
-      const memoryLimitBytes = this.getContainerMemoryLimit();
-      const memoryUsedBytes = memoryUsage.rss; // Resident Set Size - actual memory used
-      const memoryPercent = memoryLimitBytes > 0 ? (memoryUsedBytes / memoryLimitBytes) * 100 : 0;
+      memory_used_bytes: memoryUsedBytes,
+      memory_limit_bytes: memoryLimitBytes,
+      memory_percent: Math.round(memoryPercent * 10) / 10,
+      memory_heap_used_bytes: memoryUsage.heapUsed,
+      memory_heap_total_bytes: memoryUsage.heapTotal,
+      memory_external_bytes: memoryUsage.external,
 
-      return {
-        // Node info
-        node_uptime_seconds: uptime,
-        node_healthy: this.metrics.isHealthy ? 1 : 0,
+      // Connections
+      dht_connected_peers: connectedPeers,
+      dht_routing_table_size: routingTableSize,
+      dht_connection_failures_total: this.metrics.connectionFailures,
 
-        // Memory metrics
-        memory_used_bytes: memoryUsedBytes,
-        memory_limit_bytes: memoryLimitBytes,
-        memory_percent: Math.round(memoryPercent * 10) / 10, // Round to 1 decimal
-        memory_heap_used_bytes: memoryUsage.heapUsed,
-        memory_heap_total_bytes: memoryUsage.heapTotal,
-        memory_external_bytes: memoryUsage.external,
+      // DHT operations
+      dht_store_operations_total: this.metrics.dhtStores,
+      dht_get_operations_total: this.metrics.dhtGets,
+      dht_findnode_operations_total: this.metrics.dhtFindNodes,
+      dht_store_failures_total: this.metrics.dhtStoreFails,
+      dht_get_failures_total: this.metrics.dhtGetFails,
 
-        // Connections
-        dht_connected_peers: connectedPeers,
-        dht_routing_table_size: routingTableSize,
-        dht_connection_failures_total: this.metrics.connectionFailures,
+      // PubSub operations
+      pubsub_publish_operations_total: this.metrics.pubsubPublishes,
+      pubsub_subscribe_operations_total: this.metrics.pubsubSubscribes,
+      pubsub_messages_received_total: this.metrics.messagesReceived,
+      pubsub_messages_sent_total: this.metrics.messagesSent,
 
-        // DHT operations
-        dht_store_operations_total: this.metrics.dhtStores,
-        dht_get_operations_total: this.metrics.dhtGets,
-        dht_findnode_operations_total: this.metrics.dhtFindNodes,
-        dht_store_failures_total: this.metrics.dhtStoreFails,
-        dht_get_failures_total: this.metrics.dhtGetFails,
+      // Data transfer metrics (bytes)
+      data_bytes_received_total: this.metrics.bytesReceived,
+      data_bytes_sent_total: this.metrics.bytesSent,
+      data_bytes_received_per_second: this.calculateDataTransferRate('received'),
+      data_bytes_sent_per_second: this.calculateDataTransferRate('sent'),
 
-        // PubSub operations
-        pubsub_publish_operations_total: this.metrics.pubsubPublishes,
-        pubsub_subscribe_operations_total: this.metrics.pubsubSubscribes,
-        pubsub_messages_received_total: this.metrics.messagesReceived,
-        pubsub_messages_sent_total: this.metrics.messagesSent,
+      // Latency (percentiles in milliseconds)
+      dht_store_latency_p50: this.calculatePercentile(this.metrics.storeLatencies, 50),
+      dht_store_latency_p95: this.calculatePercentile(this.metrics.storeLatencies, 95),
+      dht_store_latency_p99: this.calculatePercentile(this.metrics.storeLatencies, 99),
+      dht_get_latency_p50: this.calculatePercentile(this.metrics.getLatencies, 50),
+      dht_get_latency_p95: this.calculatePercentile(this.metrics.getLatencies, 95),
+      dht_get_latency_p99: this.calculatePercentile(this.metrics.getLatencies, 99),
+      
+      // Ping latency (peer-to-peer connection latency)
+      ping_latency_p50: this.calculatePercentile(this.metrics.pingLatencies, 50),
+      ping_latency_p95: this.calculatePercentile(this.metrics.pingLatencies, 95),
+      ping_latency_p99: this.calculatePercentile(this.metrics.pingLatencies, 99),
 
-        // Data transfer metrics (bytes)
-        data_bytes_received_total: this.metrics.bytesReceived,
-        data_bytes_sent_total: this.metrics.bytesSent,
-        data_bytes_received_per_second: this.calculateDataTransferRate('received'),
-        data_bytes_sent_per_second: this.calculateDataTransferRate('sent'),
+      // Throughput
+      operations_per_second: this.calculateOpsPerSecond(),
+      
+      // Connection stability metrics
+      connections_established_total: this.metrics.connectionsEstablished,
+      connections_lost_total: this.metrics.connectionsLost,
+      connection_churn_per_minute: this.calculateConnectionChurnRate(),
+      reconnection_attempts_total: this.metrics.reconnectionAttempts,
+      reconnection_successes_total: this.metrics.reconnectionSuccesses,
+      peak_connections: this.metrics.peakConnections,
+      connection_stability_ratio: this.metrics.connectionsEstablished > 0 
+        ? ((this.metrics.connectionsEstablished - this.metrics.connectionsLost) / this.metrics.connectionsEstablished * 100).toFixed(1)
+        : 100
+    };
+  }
 
-        // Latency (percentiles in milliseconds)
-        dht_store_latency_p50: this.calculatePercentile(this.metrics.storeLatencies, 50),
-        dht_store_latency_p95: this.calculatePercentile(this.metrics.storeLatencies, 95),
-        dht_store_latency_p99: this.calculatePercentile(this.metrics.storeLatencies, 99),
-        dht_get_latency_p50: this.calculatePercentile(this.metrics.getLatencies, 50),
-        dht_get_latency_p95: this.calculatePercentile(this.metrics.getLatencies, 95),
-        dht_get_latency_p99: this.calculatePercentile(this.metrics.getLatencies, 99),
-
-        // Ping latency (peer-to-peer connection latency)
-        ping_latency_p50: this.calculatePercentile(this.metrics.pingLatencies, 50),
-        ping_latency_p95: this.calculatePercentile(this.metrics.pingLatencies, 95),
-        ping_latency_p99: this.calculatePercentile(this.metrics.pingLatencies, 99),
-
-        // Throughput
-        operations_per_second: this.calculateOpsPerSecond(),
-
-        // Connection stability metrics
-        connections_established_total: this.metrics.connectionsEstablished,
-        connections_lost_total: this.metrics.connectionsLost,
-        connection_churn_per_minute: this.calculateConnectionChurnRate(),
-        reconnection_attempts_total: this.metrics.reconnectionAttempts,
-        reconnection_successes_total: this.metrics.reconnectionSuccesses,
-        peak_connections: this.metrics.peakConnections,
-        connection_stability_ratio: this.metrics.connectionsEstablished > 0 
-          ? ((this.metrics.connectionsEstablished - this.metrics.connectionsLost) / this.metrics.connectionsEstablished * 100).toFixed(1)
-          : 100
-      };
-    }
-    /**
-     * Get container memory limit from cgroups (Docker)
-     * Returns the memory limit in bytes, or 0 if not in a container
-     */
-    getContainerMemoryLimit() {
+  /**
+   * Get container memory limit from cgroups (Docker)
+   * Returns the memory limit in bytes, or system total memory if not in a container
+   */
+  getContainerMemoryLimit() {
     try {
       // Try cgroups v2 first (newer Docker versions)
       const cgroupV2Path = '/sys/fs/cgroup/memory.max';
       if (fs.existsSync(cgroupV2Path)) {
         const content = fs.readFileSync(cgroupV2Path, 'utf8').trim();
         if (content === 'max') {
-          // No limit set, return system memory
           return os.totalmem();
         }
         return parseInt(content, 10);
@@ -533,22 +529,17 @@ export class ActiveDHTNode extends NodeDHTClient {
       if (fs.existsSync(cgroupV1Path)) {
         const content = fs.readFileSync(cgroupV1Path, 'utf8').trim();
         const limit = parseInt(content, 10);
-        // Very large values indicate no limit
         if (limit > 1e15) {
           return os.totalmem();
         }
         return limit;
       }
 
-      // Not in a container or cgroups not available
       return os.totalmem();
     } catch (error) {
-      // Fallback to system memory
       return os.totalmem();
     }
   }
-
-
 
   /**
    * Calculate percentile from latency samples
@@ -561,7 +552,7 @@ export class ActiveDHTNode extends NodeDHTClient {
     const filteredSamples = samples.filter(latency => latency <= 30000);
     
     if (filteredSamples.length === 0) {
-      console.warn(`⚠️ All latency samples were outliers (>${30000}ms) - using raw samples`);
+      console.warn(`ΓÜá∩╕Å All latency samples were outliers (>${30000}ms) - using raw samples`);
       const sorted = [...samples].sort((a, b) => a - b);
       const index = Math.ceil((percentile / 100) * sorted.length) - 1;
       return sorted[Math.max(0, index)];
@@ -571,10 +562,10 @@ export class ActiveDHTNode extends NodeDHTClient {
     const index = Math.ceil((percentile / 100) * sorted.length) - 1;
     const result = sorted[Math.max(0, index)];
     
-    // Debug logging for ping latencies (only in trace mode)
+    // Debug logging for ping latencies
     if (samples === this.metrics.pingLatencies && samples.length > 0) {
       const outlierCount = samples.length - filteredSamples.length;
-      Logger.trace(`📊 Ping latency P${percentile}: ${result}ms (from ${filteredSamples.length} samples, ${outlierCount} outliers filtered: [${filteredSamples.slice(-5).join(', ')}])`);
+      console.log(`≡ƒôè Ping latency P${percentile}: ${result}ms (from ${filteredSamples.length} samples, ${outlierCount} outliers filtered: [${filteredSamples.slice(-5).join(', ')}])`);
     }
     
     return result;
@@ -585,7 +576,7 @@ export class ActiveDHTNode extends NodeDHTClient {
    */
   calculateOpsPerSecond() {
     if (this.metrics.opsLastMinute.length === 0) {
-      Logger.trace(`📊 No operations recorded in opsLastMinute array`);
+      console.log(`≡ƒôè No operations recorded in opsLastMinute array`);
       return 0;
     }
 
@@ -596,7 +587,7 @@ export class ActiveDHTNode extends NodeDHTClient {
     const recentOps = this.metrics.opsLastMinute.filter(t => t > oneMinuteAgo);
     
     const opsPerSecond = recentOps.length / 60;
-    Logger.trace(`📊 Throughput calculation: ${recentOps.length} operations in last minute = ${opsPerSecond.toFixed(2)} ops/sec`);
+    console.log(`≡ƒôè Throughput calculation: ${recentOps.length} operations in last minute = ${opsPerSecond.toFixed(2)} ops/sec`);
 
     return opsPerSecond;
   }
@@ -627,12 +618,12 @@ export class ActiveDHTNode extends NodeDHTClient {
   recordLatency(type, latencyMs) {
     const bucket = this.metrics[`${type}Latencies`];
     if (!bucket) {
-      console.warn(`⚠️ No latency bucket for operation type: ${type}`);
+      console.warn(`ΓÜá∩╕Å No latency bucket for operation type: ${type}`);
       return;
     }
 
     bucket.push(latencyMs);
-    Logger.trace(`📊 Recorded ${type} operation: ${latencyMs}ms (bucket size: ${bucket.length})`);
+    console.log(`≡ƒôè Recorded ${type} operation: ${latencyMs}ms (bucket size: ${bucket.length})`);
 
     // Keep only recent samples
     if (bucket.length > this.maxLatencySamples) {
@@ -641,14 +632,14 @@ export class ActiveDHTNode extends NodeDHTClient {
 
     // Record operation timestamp for throughput
     this.metrics.opsLastMinute.push(Date.now());
-    Logger.trace(`📊 Recorded ${type} operation for throughput (total ops: ${this.metrics.opsLastMinute.length})`);
+    console.log(`≡ƒôè Recorded ${type} operation for throughput (total ops: ${this.metrics.opsLastMinute.length})`);
 
     // Cleanup old operation timestamps
     const oneMinuteAgo = Date.now() - 60000;
     const oldLength = this.metrics.opsLastMinute.length;
     this.metrics.opsLastMinute = this.metrics.opsLastMinute.filter(t => t > oneMinuteAgo);
     if (oldLength !== this.metrics.opsLastMinute.length) {
-      Logger.trace(`📊 Cleaned up old operations: ${oldLength} -> ${this.metrics.opsLastMinute.length}`);
+      console.log(`≡ƒôè Cleaned up old operations: ${oldLength} -> ${this.metrics.opsLastMinute.length}`);
     }
   }
 
@@ -693,7 +684,7 @@ export class ActiveDHTNode extends NodeDHTClient {
     } catch (error) {
       // Silently ignore errors - metrics should never break the system
       // This ensures Requirement 5.3: metrics tracking fails gracefully
-      console.warn(`⚠️ ActiveDHTNode metrics recording failed: ${error.message}`);
+      console.warn(`ΓÜá∩╕Å ActiveDHTNode metrics recording failed: ${error.message}`);
     }
   }
 
@@ -706,12 +697,12 @@ export class ActiveDHTNode extends NodeDHTClient {
     try {
       const result = await this.dht.store(key, value, ttl);
       this.metrics.dhtStores++;
-      Logger.debug(`📦 DHT store operation completed: key=${key.substring(0, 16)}... (total stores: ${this.metrics.dhtStores})`);
+      console.log(`≡ƒôª DHT store operation completed: key=${key.substring(0, 16)}... (total stores: ${this.metrics.dhtStores})`);
       this.recordLatency('store', Date.now() - startTime);
       return result;
     } catch (error) {
       this.metrics.dhtStoreFails++;
-      console.error(`❌ DHT store operation failed: key=${key.substring(0, 16)}... (total failures: ${this.metrics.dhtStoreFails})`);
+      console.log(`Γ¥î DHT store operation failed: key=${key.substring(0, 16)}... (total failures: ${this.metrics.dhtStoreFails})`);
       throw error;
     }
   }
@@ -725,12 +716,12 @@ export class ActiveDHTNode extends NodeDHTClient {
     try {
       const result = await this.dht.get(key);
       this.metrics.dhtGets++;
-      Logger.debug(`🔍 DHT get operation completed: key=${key.substring(0, 16)}... (total gets: ${this.metrics.dhtGets})`);
+      console.log(`≡ƒöì DHT get operation completed: key=${key.substring(0, 16)}... (total gets: ${this.metrics.dhtGets})`);
       this.recordLatency('get', Date.now() - startTime);
       return result;
     } catch (error) {
       this.metrics.dhtGetFails++;
-      console.error(`❌ DHT get operation failed: key=${key.substring(0, 16)}... (total failures: ${this.metrics.dhtGetFails})`);
+      console.log(`Γ¥î DHT get operation failed: key=${key.substring(0, 16)}... (total failures: ${this.metrics.dhtGetFails})`);
       throw error;
     }
   }
@@ -742,7 +733,7 @@ export class ActiveDHTNode extends NodeDHTClient {
     const startTime = Date.now();
     const result = await this.dht.findNode(targetId);
     this.metrics.dhtFindNodes++;
-    Logger.debug(`🔍 DHT findNode operation completed: target=${targetId.substring(0, 16)}... found ${result.length} nodes (total findNodes: ${this.metrics.dhtFindNodes})`);
+    console.log(`≡ƒöì DHT findNode operation completed: target=${targetId.substring(0, 16)}... found ${result.length} nodes (total findNodes: ${this.metrics.dhtFindNodes})`);
     this.recordLatency('findNode', Date.now() - startTime);
     return result;
   }
@@ -754,7 +745,7 @@ export class ActiveDHTNode extends NodeDHTClient {
     const result = await this.pubsub.publish(topic, data, options);
     this.metrics.pubsubPublishes++;
     this.metrics.messagesSent++;
-    Logger.debug(`📤 PubSub publish completed: topic=${topic} (total publishes: ${this.metrics.pubsubPublishes}, messages sent: ${this.metrics.messagesSent})`);
+    console.log(`≡ƒôñ PubSub publish completed: topic=${topic} (total publishes: ${this.metrics.pubsubPublishes}, messages sent: ${this.metrics.messagesSent})`);
     return result;
   }
 
@@ -766,12 +757,12 @@ export class ActiveDHTNode extends NodeDHTClient {
 
     this.pubsub.on(topic, (message) => {
       this.metrics.messagesReceived++;
-      Logger.trace(`📥 PubSub message received: topic=${topic} (total received: ${this.metrics.messagesReceived})`);
+      console.log(`≡ƒôÑ PubSub message received: topic=${topic} (total received: ${this.metrics.messagesReceived})`);
       if (handler) handler(message);
     });
 
     this.metrics.pubsubSubscribes++;
-    Logger.debug(`📬 PubSub subscribe completed: topic=${topic} (total subscriptions: ${this.metrics.pubsubSubscribes})`);
+    console.log(`≡ƒô¼ PubSub subscribe completed: topic=${topic} (total subscriptions: ${this.metrics.pubsubSubscribes})`);
     return result;
   }
 
@@ -781,7 +772,7 @@ export class ActiveDHTNode extends NodeDHTClient {
   setupPingLatencyCollection() {
     // Expose metrics globally so WebSocketConnectionManager can record ping latencies
     global.activeDHTNodeMetrics = this.metrics;
-    console.log('🏓 Ping latency collection set up (global metrics exposed)');
+    console.log('≡ƒÅô Ping latency collection set up (global metrics exposed)');
     
     // Set up periodic cleanup of extreme outliers
     setInterval(() => {
@@ -805,7 +796,7 @@ export class ActiveDHTNode extends NodeDHTClient {
         
         if (filtered.length < originalLength) {
           this.metrics[bucketName] = filtered;
-          console.log(`🧹 Cleaned up ${originalLength - filtered.length} latency outliers from ${bucketName} (${filtered.length} samples remaining)`);
+          console.log(`≡ƒº╣ Cleaned up ${originalLength - filtered.length} latency outliers from ${bucketName} (${filtered.length} samples remaining)`);
         }
       }
     });
@@ -853,12 +844,12 @@ export class ActiveDHTNode extends NodeDHTClient {
       } else {
         this.metrics.healthCheckFailures++;
         this.metrics.isHealthy = this.metrics.healthCheckFailures < 5;
-        console.warn(`⚠️ Health check warning: connections=${connectedPeers}, failures=${this.metrics.healthCheckFailures}`);
+        console.warn(`ΓÜá∩╕Å Health check warning: connections=${connectedPeers}, failures=${this.metrics.healthCheckFailures}`);
       }
     } catch (error) {
       this.metrics.healthCheckFailures++;
       this.metrics.isHealthy = false;
-      console.error('❌ Health check error:', error.message);
+      console.error('Γ¥î Health check error:', error.message);
     }
   }
 
@@ -869,7 +860,7 @@ export class ActiveDHTNode extends NodeDHTClient {
     if (!this.dht) return;
 
     try {
-      Logger.debug('📊 Performing throughput test operations...');
+      console.log('≡ƒôè Performing throughput test operations...');
       
       // Perform a few findNode operations (these are common DHT maintenance operations)
       const randomNodeId = crypto.randomBytes(20).toString('hex');
@@ -885,7 +876,7 @@ export class ActiveDHTNode extends NodeDHTClient {
       
       // Perform PubSub test operations if PubSub is available
       if (this.pubsub) {
-        Logger.debug('📊 Performing PubSub test operations...');
+        console.log('≡ƒôè Performing PubSub test operations...');
         
         // Test publish operation
         const testTopic = `test_topic_${this.nodeId.toString().substring(0, 8)}`;
@@ -899,17 +890,17 @@ export class ActiveDHTNode extends NodeDHTClient {
         
         // Test subscribe operation (subscribe to our own test topic)
         await this.subscribe(`test_topic_global`, (message) => {
-          Logger.trace(`📬 Received test message:`, message);
+          console.log(`≡ƒô¼ Received test message:`, message);
         });
         
-        Logger.debug('✅ PubSub test operations completed');
+        console.log('Γ£à PubSub test operations completed');
       } else {
-        Logger.debug('⚠️ PubSub not available for test operations');
+        console.log('ΓÜá∩╕Å PubSub not available for test operations');
       }
       
-      Logger.debug('✅ All throughput test operations completed');
+      console.log('Γ£à All throughput test operations completed');
     } catch (error) {
-      console.warn('⚠️ Throughput test failed:', error.message);
+      console.warn('ΓÜá∩╕Å Throughput test failed:', error.message);
     }
   }
 
@@ -917,7 +908,7 @@ export class ActiveDHTNode extends NodeDHTClient {
    * Graceful shutdown
    */
   async shutdown() {
-    console.log('🛑 Shutting down ActiveDHTNode...');
+    console.log('≡ƒ¢æ Shutting down ActiveDHTNode...');
 
     // Stop background tasks
     if (this.metricsInterval) clearInterval(this.metricsInterval);
@@ -939,6 +930,6 @@ export class ActiveDHTNode extends NodeDHTClient {
       await this.dht.shutdown();
     }
 
-    console.log('✅ Shutdown complete');
+    console.log('Γ£à Shutdown complete');
   }
 }
