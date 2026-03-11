@@ -172,6 +172,13 @@ export class ConnectionManager extends EventEmitter {
     try {
       // NOTE: Peer activity tracking moved to DHTNode.updateLastSeen()
 
+      // DEBUG: Log ping/pong messages to diagnose timeout issue
+      if (message.type === 'ping' || message.type === 'pong') {
+        console.log(`📨 MESSAGE RECEIVED: ${message.type} from ${peerId.substring(0, 8)}... (requestId: ${message.requestId})`);
+        console.log(`   Manager: ${this.constructor.name}, peerId: ${this.peerId?.substring(0, 8) || 'none'}`);
+        console.log(`   Has pending request: ${this.pendingRequests.has(message.requestId)}`);
+      }
+
       // Handle responses to pending requests
       if (message.requestId && this.pendingRequests.has(message.requestId)) {
         const pendingRequest = this.pendingRequests.get(message.requestId);
@@ -179,6 +186,10 @@ export class ConnectionManager extends EventEmitter {
         this.pendingRequests.delete(message.requestId);
 
         if (message.type.endsWith('_response') || message.type === 'pong') {
+          // DEBUG: Log pong resolution
+          if (message.type === 'pong') {
+            console.log(`✅ PONG RESOLVING pending request ${message.requestId}`);
+          }
           pendingRequest.resolve(message);
         } else {
           pendingRequest.reject(new Error(`Unexpected response type: ${message.type}`));
@@ -259,15 +270,16 @@ export class ConnectionManager extends EventEmitter {
    */
   async handlePing(peerId, message) {
     try {
-      Logger.trace(`🏓 Handling ping from ${peerId.substring(0, 8)}... (requestId: ${message.requestId})`);
-      Logger.trace(`   Manager: ${this.constructor.name}, peerId: ${this.peerId?.substring(0, 8) || 'none'}, connected: ${this.isConnected()}`);
+      // DEBUG: Temporarily using console.log to diagnose ping timeout issue
+      console.log(`🏓 PING RECEIVED from ${peerId.substring(0, 8)}... (requestId: ${message.requestId})`);
+      console.log(`   Manager: ${this.constructor.name}, peerId: ${this.peerId?.substring(0, 8) || 'none'}, connected: ${this.isConnected()}`);
       await this.sendMessage(peerId, {
         type: 'pong',
         requestId: message.requestId,
         timestamp: Date.now(),
         originalTimestamp: message.timestamp
       });
-      Logger.trace(`✅ Sent pong to ${peerId.substring(0, 8)}...`);
+      console.log(`✅ PONG SENT to ${peerId.substring(0, 8)}... (requestId: ${message.requestId})`);
     } catch (error) {
       console.error(`❌ Failed to send pong to ${peerId.substring(0, 8)}...: ${error.message}`);
     }
@@ -278,7 +290,8 @@ export class ConnectionManager extends EventEmitter {
    */
   handlePong(peerId, message) {
     const rtt = Date.now() - (message.originalTimestamp || message.timestamp);
-    Logger.trace(`📡 Received pong from ${peerId.substring(0, 8)}... (RTT: ${rtt}ms)`);
+    // DEBUG: Temporarily using console.log to diagnose ping timeout issue
+    console.log(`📡 PONG RECEIVED from ${peerId.substring(0, 8)}... (RTT: ${rtt}ms, requestId: ${message.requestId})`);
     this.emit('pong', { peerId, rtt, message });
   }
 
@@ -296,12 +309,17 @@ export class ConnectionManager extends EventEmitter {
     }
 
     try {
+      const requestId = this.generateRequestId();
+      // DEBUG: Temporarily using console.log to diagnose ping timeout issue
+      console.log(`🏓 PING SENDING to ${peerId.substring(0, 8)}... (requestId: ${requestId})`);
       const response = await this.sendRequest(peerId, {
         type: 'ping',
+        requestId: requestId,
         timestamp: Date.now()
       }, 5000);
 
       const rtt = Date.now() - response.originalTimestamp;
+      console.log(`✅ PING SUCCESS to ${peerId.substring(0, 8)}... (RTT: ${rtt}ms, requestId: ${requestId})`);
       return { success: true, rtt };
     } catch (error) {
       return { success: false, error: error.message };
