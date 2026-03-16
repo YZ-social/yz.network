@@ -235,12 +235,38 @@ export class KBucket {
 
   /**
    * Remove stale nodes (older than threshold)
+   * @param {number} maxAge - Maximum age in ms before a node is considered stale (default 15 minutes)
+   * @param {Set<string>|null} connectedPeerIds - Optional set of currently connected peer IDs for connection-based stale detection
+   * @returns {number} - Number of nodes removed
    */
-  removeStaleNodes(maxAge = 15 * 60 * 1000) { // 15 minutes default
+  removeStaleNodes(maxAge = 15 * 60 * 1000, connectedPeerIds = null) { // 15 minutes default
     const now = Date.now();
     const originalLength = this.nodes.length;
 
-    this.nodes = this.nodes.filter(node => (now - node.lastSeen) < maxAge);
+    this.nodes = this.nodes.filter(node => {
+      const nodeIdStr = node.id.toString();
+      const age = now - node.lastSeen;
+      const isStaleByAge = age >= maxAge;
+      
+      // If we have connection info, also check if disconnected peers are stale
+      if (connectedPeerIds !== null) {
+        const isConnected = connectedPeerIds.has(nodeIdStr);
+        
+        // Remove if: stale by age AND not connected
+        // This ensures we don't remove actively connected peers even if lastSeen is old
+        // But we DO remove disconnected peers that are also stale by age
+        if (isStaleByAge && !isConnected) {
+          return false; // Remove this node
+        }
+        
+        // Keep connected peers regardless of age
+        // Keep non-stale peers regardless of connection status
+        return true;
+      }
+      
+      // No connection info - use age-based removal only (original behavior)
+      return !isStaleByAge;
+    });
 
     if (this.nodes.length !== originalLength) {
       this.lastUpdated = now;

@@ -282,6 +282,33 @@ export class ConnectionManager extends EventEmitter {
   }
 
   /**
+   * Verify DHT message handler is attached and emit event if not
+   * Used to detect and recover from detached handlers after OOM restart
+   * @returns {boolean} true if handler is attached, false if detached
+   */
+  ensureDHTMessageHandler() {
+    const listenerCount = this.listenerCount('dhtMessage');
+    const flaggedAsAttached = this._dhtMessageHandlerAttached || false;
+    
+    if (listenerCount === 0) {
+      console.warn(`⚠️ DHT message handler detached on ${this.constructor.name} for peer ${this.peerId?.substring(0, 8) || 'unknown'}`);
+      console.warn(`   Flag says attached: ${flaggedAsAttached}, Actual listeners: ${listenerCount}`);
+      
+      // Reset the stale flag since there are no actual listeners
+      if (flaggedAsAttached) {
+        this._dhtMessageHandlerAttached = false;
+        console.warn(`   Reset stale _dhtMessageHandlerAttached flag to false`);
+      }
+      
+      // Emit event to allow DHT to reattach handler
+      this.emit('handlerDetached', { manager: this, peerId: this.peerId });
+      return false;
+    }
+    
+    return true;
+  }
+
+  /**
    * Send ping to peer
    */
   async ping(peerId) {

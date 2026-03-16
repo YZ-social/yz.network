@@ -459,12 +459,15 @@ export class RoutingTable {
 
   /**
    * Remove stale nodes from all buckets
+   * @param {number} maxAge - Maximum age in ms before a node is considered stale (default 15 minutes)
+   * @param {Set<string>|null} connectedPeerIds - Optional set of currently connected peer IDs for connection-based stale detection
+   * @returns {number} - Total number of nodes removed
    */
-  removeStaleNodes(maxAge = 15 * 60 * 1000) {
+  removeStaleNodes(maxAge = 15 * 60 * 1000, connectedPeerIds = null) {
     let totalRemoved = 0;
 
     for (const bucket of this.buckets) {
-      const removed = bucket.removeStaleNodes(maxAge);
+      const removed = bucket.removeStaleNodes(maxAge, connectedPeerIds);
       totalRemoved += removed;
     }
 

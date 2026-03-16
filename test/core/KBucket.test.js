@@ -223,5 +223,63 @@ describe('KBucket', () => {
       expect(node.isStale(60 * 1000)).toBe(true); // 60 second timeout
       expect(node.isStale(80 * 1000)).toBe(false); // 80 second timeout
     });
+
+    test('should keep connected peers even if stale by age', () => {
+      const nodes = [];
+      for (let i = 0; i < 5; i++) {
+        const node = new DHTNode(new DHTNodeId(), `address-${i}`);
+        bucket.addNode(node);
+        // Make nodes stale AFTER adding them
+        node.lastSeen = Date.now() - 20 * 60 * 1000; // 20 minutes ago
+        nodes.push(node);
+      }
+      
+      // Create a set of connected peer IDs (first 2 nodes are "connected")
+      const connectedPeerIds = new Set([
+        nodes[0].id.toString(),
+        nodes[1].id.toString()
+      ]);
+      
+      const removed = bucket.removeStaleNodes(15 * 60 * 1000, connectedPeerIds);
+      
+      // Should only remove 3 nodes (the disconnected stale ones)
+      expect(removed).toBe(3);
+      expect(bucket.size()).toBe(2);
+      // Connected nodes should still be in bucket
+      expect(bucket.hasNode(nodes[0].id)).toBe(true);
+      expect(bucket.hasNode(nodes[1].id)).toBe(true);
+      // Disconnected stale nodes should be removed
+      expect(bucket.hasNode(nodes[2].id)).toBe(false);
+      expect(bucket.hasNode(nodes[3].id)).toBe(false);
+      expect(bucket.hasNode(nodes[4].id)).toBe(false);
+    });
+
+    test('should remove disconnected stale peers but keep fresh disconnected peers', () => {
+      const nodes = [];
+      for (let i = 0; i < 4; i++) {
+        const node = new DHTNode(new DHTNodeId(), `address-${i}`);
+        bucket.addNode(node);
+        nodes.push(node);
+      }
+      
+      // Make first 2 nodes stale
+      nodes[0].lastSeen = Date.now() - 20 * 60 * 1000; // 20 minutes ago (stale)
+      nodes[1].lastSeen = Date.now() - 20 * 60 * 1000; // 20 minutes ago (stale)
+      // Keep last 2 nodes fresh
+      nodes[2].lastSeen = Date.now() - 5 * 60 * 1000; // 5 minutes ago (fresh)
+      nodes[3].lastSeen = Date.now() - 5 * 60 * 1000; // 5 minutes ago (fresh)
+      
+      // No nodes are connected
+      const connectedPeerIds = new Set();
+      
+      const removed = bucket.removeStaleNodes(15 * 60 * 1000, connectedPeerIds);
+      
+      // Should only remove 2 stale disconnected nodes
+      expect(removed).toBe(2);
+      expect(bucket.size()).toBe(2);
+      // Fresh nodes should still be in bucket even though disconnected
+      expect(bucket.hasNode(nodes[2].id)).toBe(true);
+      expect(bucket.hasNode(nodes[3].id)).toBe(true);
+    });
   });
 });

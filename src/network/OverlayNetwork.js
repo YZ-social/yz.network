@@ -457,17 +457,17 @@ export class OverlayNetwork extends EventEmitter {
    */
   startMaintenanceTasks() {
     // Keep-alive for direct connections
-    setInterval(() => {
+    this.keepAliveTimer = setInterval(() => {
       this.sendKeepAlives();
     }, this.options.keepAliveInterval);
 
     // Clean up stale routes
-    setInterval(() => {
+    this.routingCacheCleanupTimer = setInterval(() => {
       this.cleanupRoutingCache();
     }, 5 * 60 * 1000); // 5 minutes
 
     // Connection health check
-    setInterval(() => {
+    this.connectionHealthTimer = setInterval(() => {
       this.checkConnectionHealth();
     }, 30 * 1000); // 30 seconds
   }
@@ -577,6 +577,20 @@ export class OverlayNetwork extends EventEmitter {
     if (!this.isStarted) return;
 
     console.log('Stopping overlay network...');
+
+    // Clear all maintenance timers
+    if (this.keepAliveTimer) {
+      clearInterval(this.keepAliveTimer);
+      this.keepAliveTimer = null;
+    }
+    if (this.routingCacheCleanupTimer) {
+      clearInterval(this.routingCacheCleanupTimer);
+      this.routingCacheCleanupTimer = null;
+    }
+    if (this.connectionHealthTimer) {
+      clearInterval(this.connectionHealthTimer);
+      this.connectionHealthTimer = null;
+    }
 
     // Close all direct connections
     for (const [peerId, connectionInfo] of this.directConnections.entries()) {

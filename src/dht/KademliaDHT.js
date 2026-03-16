@@ -4513,6 +4513,79 @@ export class KademliaDHT extends EventEmitter {
   }
 
   /**
+   * Verify and reattach DHT message handlers for all peer nodes
+   * Used to recover from detached handlers after OOM restart
+   * @returns {Object} Summary of handler status and reattachments
+   */
+  ensureAllHandlersAttached() {
+    const summary = {
+      checked: 0,
+      attached: 0,
+      reattached: 0,
+      detached: 0
+    };
+
+    // Check all nodes in routing table
+    const allNodes = this.routingTable.getAllNodes();
+    for (const node of allNodes) {
+      if (!node.connectionManager) continue;
+      
+      summary.checked++;
+      const peerId = node.id.toString();
+      const manager = node.connectionManager;
+      const actualListeners = manager.listenerCount('dhtMessage');
+      const flaggedAsAttached = manager._dhtMessageHandlerAttached || false;
+      
+      if (actualListeners > 0) {
+        summary.attached++;
+      } else if (flaggedAsAttached && actualListeners === 0) {
+        // Stale flag - reset and reattach
+        console.warn(`🔄 ensureAllHandlersAttached: Reattaching handler for ${peerId.substring(0, 8)}... (stale flag)`);
+        manager._dhtMessageHandlerAttached = false;
+        this.getOrCreatePeerNode(peerId);
+        summary.reattached++;
+      } else {
+        // No handler and no flag - attach
+        console.warn(`🔄 ensureAllHandlersAttached: Attaching handler for ${peerId.substring(0, 8)}... (missing)`);
+        this.getOrCreatePeerNode(peerId);
+        summary.reattached++;
+      }
+    }
+
+    // Also check peerNodes Map for nodes not in routing table
+    if (this.peerNodes) {
+      for (const [peerId, peerNode] of this.peerNodes.entries()) {
+        if (!peerNode || !peerNode.connectionManager) continue;
+        
+        // Skip if already checked via routing table
+        const inRoutingTable = allNodes.some(n => n.id.toString() === peerId);
+        if (inRoutingTable) continue;
+        
+        summary.checked++;
+        const manager = peerNode.connectionManager;
+        const actualListeners = manager.listenerCount('dhtMessage');
+        const flaggedAsAttached = manager._dhtMessageHandlerAttached || false;
+        
+        if (actualListeners > 0) {
+          summary.attached++;
+        } else if (flaggedAsAttached && actualListeners === 0) {
+          console.warn(`🔄 ensureAllHandlersAttached: Reattaching handler for ${peerId.substring(0, 8)}... (stale flag, peerNodes)`);
+          manager._dhtMessageHandlerAttached = false;
+          this.getOrCreatePeerNode(peerId);
+          summary.reattached++;
+        } else {
+          console.warn(`🔄 ensureAllHandlersAttached: Attaching handler for ${peerId.substring(0, 8)}... (missing, peerNodes)`);
+          this.getOrCreatePeerNode(peerId);
+          summary.reattached++;
+        }
+      }
+    }
+
+    console.log(`📊 ensureAllHandlersAttached: checked=${summary.checked}, attached=${summary.attached}, reattached=${summary.reattached}`);
+    return summary;
+  }
+
+  /**
    * Analyze bucket coverage to identify undercovered buckets
    * Returns array of bucket stats sorted by priority
    */
@@ -5014,6 +5087,17 @@ export class KademliaDHT extends EventEmitter {
     if (peerNode.connectionManager) {
       Logger.trace(`🔄 Using existing connection manager for ${peerId.substring(0, 8)}... (already set up by incoming connection)`);
       
+      // CRITICAL FIX: Detect stale _dhtMessageHandlerAttached flag after OOM restart
+      // The flag may say handlers are attached, but actual listeners may be 0 after restart
+      if (peerNode.connectionManager._dhtMessageHandlerAttached) {
+        const actualListeners = peerNode.connectionManager.listenerCount('dhtMessage');
+        if (actualListeners === 0) {
+          console.warn(`⚠️ Stale handler flag detected for ${peerId.substring(0, 8)}... - flag=true but listeners=0`);
+          console.warn(`   Resetting flag and reattaching handler...`);
+          peerNode.connectionManager._dhtMessageHandlerAttached = false;
+        }
+      }
+      
       // Still need to ensure DHT message handler is attached to the EXISTING manager
       if (!peerNode.connectionManager._dhtMessageHandlerAttached) {
         Logger.debug(`🔧 Attaching DHT message handler to EXISTING manager for ${peerId.substring(0, 8)}`);
@@ -5024,6 +5108,17 @@ export class KademliaDHT extends EventEmitter {
         });
         peerNode.connectionManager._dhtMessageHandlerAttached = true;
         Logger.debug(`📨 DHT message handler attached to existing manager for ${peerId.substring(0, 8)}`);
+      }
+      
+      // Set up handlerDetached event listener to auto-reattach handlers
+      if (!peerNode.connectionManager._handlerDetachedListenerAttached) {
+        peerNode.connectionManager.on('handlerDetached', ({ manager, peerId: detachedPeerId }) => {
+          console.warn(`🔄 Handler detached event received for ${detachedPeerId?.substring(0, 8) || 'unknown'} - reattaching...`);
+          // Force reattachment by calling getOrCreatePeerNode again
+          // The stale flag detection above will handle the reattachment
+          this.getOrCreatePeerNode(detachedPeerId || peerId);
+        });
+        peerNode.connectionManager._handlerDetachedListenerAttached = true;
       }
       
       // Still set up DHT signaling callback if needed
@@ -5092,6 +5187,16 @@ export class KademliaDHT extends EventEmitter {
     }
 
     // CRITICAL: Set up DHT message event listener for ALL connection managers (only if not already attached)
+    // CRITICAL FIX: Detect stale _dhtMessageHandlerAttached flag after OOM restart
+    if (peerNode.connectionManager._dhtMessageHandlerAttached) {
+      const actualListeners = peerNode.connectionManager.listenerCount('dhtMessage');
+      if (actualListeners === 0) {
+        console.warn(`⚠️ Stale handler flag detected for NEW manager ${peerId.substring(0, 8)}... - flag=true but listeners=0`);
+        console.warn(`   Resetting flag and reattaching handler...`);
+        peerNode.connectionManager._dhtMessageHandlerAttached = false;
+      }
+    }
+    
     if (!peerNode.connectionManager._dhtMessageHandlerAttached) {
       console.log(`🔧 DEBUG: Attaching DHT message handler to ${peerNode.connectionManager.constructor.name} for ${peerId.substring(0, 8)}`);
       console.log(`🔧 DEBUG: Manager instance ID: ${peerNode.connectionManager.localNodeId?.substring(0,8) || 'not initialized'}`);
@@ -5106,6 +5211,16 @@ export class KademliaDHT extends EventEmitter {
       console.log(`📨 DHT message handler attached for ${peerId.substring(0, 8)}`);
     } else {
       console.log(`🔄 DHT message handler already attached for ${peerId.substring(0, 8)}`);
+    }
+    
+    // Set up handlerDetached event listener to auto-reattach handlers
+    if (!peerNode.connectionManager._handlerDetachedListenerAttached) {
+      peerNode.connectionManager.on('handlerDetached', ({ manager, peerId: detachedPeerId }) => {
+        console.warn(`🔄 Handler detached event received for ${detachedPeerId?.substring(0, 8) || 'unknown'} - reattaching...`);
+        // Force reattachment by calling getOrCreatePeerNode again
+        this.getOrCreatePeerNode(detachedPeerId || peerId);
+      });
+      peerNode.connectionManager._handlerDetachedListenerAttached = true;
     }
 
     // NOTE: Signal handling removed - WebRTC signaling should be handled by WebRTCConnectionManager itself,
@@ -5409,18 +5524,18 @@ export class KademliaDHT extends EventEmitter {
     // Start with aggressive refresh for new nodes, then adapt
     this.scheduleAdaptiveRefresh();
 
-    // Periodic republish
-    setInterval(() => {
+    // Periodic republish - store timer reference for cleanup on stop()
+    this.republishDataTimer = setInterval(() => {
       this.republishData();
     }, this.options.republishInterval / 10); // Check 10x more frequently than republish
 
-    // Periodic cleanup of rate limiting and tracking maps
-    setInterval(() => {
+    // Periodic cleanup of rate limiting and tracking maps - store timer reference for cleanup on stop()
+    this.cleanupTrackingMapsTimer = setInterval(() => {
       this.cleanupTrackingMaps();
     }, 5 * 60 * 1000); // Every 5 minutes
 
-    // Periodic cleanup
-    setInterval(() => {
+    // Periodic cleanup - store timer reference for cleanup on stop()
+    this.cleanupTimer = setInterval(() => {
       this.cleanup();
     }, this.options.expireInterval / 10);
 
@@ -5431,13 +5546,15 @@ export class KademliaDHT extends EventEmitter {
     // FIXED: Background maintenance with configurable interval to reduce message flooding
     // Routing table maintenance interval should be proportional to network size
     const routingMaintenanceInterval = Math.max(180 * 1000, this.options.pingInterval * 3); // Min 3 minutes or 3x ping interval
-    setInterval(() => {
+    // Store timer reference for cleanup on stop()
+    this.routingMaintenanceTimer = setInterval(() => {
       this.maintainRoutingTableConnections();
     }, routingMaintenanceInterval);
 
     // FIXED: Stale connection cleanup with longer interval to reduce overhead
     const staleCleanupInterval = Math.max(300 * 1000, this.options.pingInterval * 5); // Min 5 minutes or 5x ping interval
-    setInterval(() => {
+    // Store timer reference for cleanup on stop()
+    this.staleCleanupTimer = setInterval(() => {
       this.cleanupStaleConnections();
     }, staleCleanupInterval);
 
@@ -6256,6 +6373,22 @@ export class KademliaDHT extends EventEmitter {
 
     // Clean up old find_node rate limit entries (older than 10 minutes)
     let cleaned = 0;
+
+    // Clean up timed-out pending requests (Requirements 2.4, 3.4)
+    // Use requestTimeout * 2 as the cleanup threshold to ensure requests have
+    // had sufficient time to complete or timeout before being cleaned up
+    const requestTimeout = this.options.requestTimeout || 10000;
+    let pendingRequestsCleaned = 0;
+    for (const [requestId, request] of this.pendingRequests.entries()) {
+      if (now - request.timestamp > requestTimeout * 2) {
+        this.pendingRequests.delete(requestId);
+        pendingRequestsCleaned++;
+        cleaned++;
+      }
+    }
+    if (pendingRequestsCleaned > 0) {
+      console.log(`🧹 Cleaned up ${pendingRequestsCleaned} timed-out pending requests (remaining: ${this.pendingRequests.size})`);
+    }
     for (const [peerId, timestamp] of this.findNodeRateLimit.entries()) {
       if (timestamp < tenMinutesAgo) {
         this.findNodeRateLimit.delete(peerId);
@@ -6277,6 +6410,25 @@ export class KademliaDHT extends EventEmitter {
       if (now > backoffUntil) {
         this.peerFailureBackoff.delete(peerId);
         cleaned++;
+      }
+    }
+
+    // Clean up stale entries from failedPeerQueries (Requirements 2.5)
+    // Remove entries older than 10 minutes based on peerFailureBackoff timestamps
+    // This prevents unbounded growth of the failedPeerQueries Map
+    if (this.failedPeerQueries) {
+      let failedPeerQueriesCleaned = 0;
+      for (const [peerId] of this.failedPeerQueries.entries()) {
+        const backoffTimestamp = this.peerFailureBackoff.get(peerId);
+        // Clean up if no backoff entry exists (orphaned) or if backoff is older than 10 minutes
+        if (!backoffTimestamp || backoffTimestamp < tenMinutesAgo) {
+          this.failedPeerQueries.delete(peerId);
+          failedPeerQueriesCleaned++;
+          cleaned++;
+        }
+      }
+      if (failedPeerQueriesCleaned > 0) {
+        console.log(`🧹 Cleaned up ${failedPeerQueriesCleaned} stale failedPeerQueries entries (remaining: ${this.failedPeerQueries.size})`);
       }
     }
 
@@ -6342,8 +6494,13 @@ export class KademliaDHT extends EventEmitter {
       }
     }
 
+    // Get currently connected peer IDs for connection-based stale detection
+    // This ensures we don't remove actively connected peers from routing table
+    const connectedPeerIds = new Set(this.getConnectedPeers());
+
     // Clean stale nodes and verify routing table consistency
-    const staleRemoved = this.routingTable.removeStaleNodes();
+    // Pass connected peer IDs to enable connection-based stale detection for browser peers
+    const staleRemoved = this.routingTable.removeStaleNodes(15 * 60 * 1000, connectedPeerIds);
     const routingCleanup = this.cleanupRoutingTable();
     // Note: Stale connections are cleaned up by individual connection managers
 
@@ -6598,6 +6755,35 @@ export class KademliaDHT extends EventEmitter {
       clearInterval(this.bootstrapRetryTimer);
       this.bootstrapRetryTimer = null;
     }
+
+    // Clear maintenance timers (from startMaintenanceTasks)
+    if (this.republishDataTimer) {
+      clearInterval(this.republishDataTimer);
+      this.republishDataTimer = null;
+    }
+    if (this.cleanupTrackingMapsTimer) {
+      clearInterval(this.cleanupTrackingMapsTimer);
+      this.cleanupTrackingMapsTimer = null;
+    }
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
+    if (this.routingMaintenanceTimer) {
+      clearInterval(this.routingMaintenanceTimer);
+      this.routingMaintenanceTimer = null;
+    }
+    if (this.staleCleanupTimer) {
+      clearInterval(this.staleCleanupTimer);
+      this.staleCleanupTimer = null;
+    }
+    if (this.pingMaintenanceTimer) {
+      clearTimeout(this.pingMaintenanceTimer);
+      this.pingMaintenanceTimer = null;
+    }
+
+    // Also ensure DHT offer polling is stopped
+    this.stopDHTOfferPolling();
 
     // Clear data
     this.storage.clear();

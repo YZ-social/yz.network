@@ -183,6 +183,36 @@ describe('RoutingTable', () => {
       expect(routingTable.totalNodes).toBe(0);
     });
 
+    test('should keep connected peers even if stale by age', () => {
+      const nodes = [];
+      for (let i = 0; i < 5; i++) {
+        const node = new DHTNode(new DHTNodeId(), `address-${i}`);
+        routingTable.addNode(node);
+        // Make nodes stale AFTER adding them
+        node.lastSeen = Date.now() - 20 * 60 * 1000; // 20 minutes ago
+        nodes.push(node);
+      }
+      
+      // Create a set of connected peer IDs (first 2 nodes are "connected")
+      const connectedPeerIds = new Set([
+        nodes[0].id.toString(),
+        nodes[1].id.toString()
+      ]);
+      
+      const removedCount = routingTable.removeStaleNodes(15 * 60 * 1000, connectedPeerIds);
+      
+      // Should only remove 3 nodes (the disconnected stale ones)
+      expect(removedCount).toBe(3);
+      expect(routingTable.totalNodes).toBe(2);
+      // Connected nodes should still be in routing table
+      expect(routingTable.hasNode(nodes[0].id)).toBe(true);
+      expect(routingTable.hasNode(nodes[1].id)).toBe(true);
+      // Disconnected stale nodes should be removed
+      expect(routingTable.hasNode(nodes[2].id)).toBe(false);
+      expect(routingTable.hasNode(nodes[3].id)).toBe(false);
+      expect(routingTable.hasNode(nodes[4].id)).toBe(false);
+    });
+
     test('should get nodes that need pinging', () => {
       const node = new DHTNode(new DHTNodeId(), 'test-address');
       node.lastPing = Date.now() - 70000; // 70 seconds ago
