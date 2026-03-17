@@ -1,7 +1,7 @@
 # YZ Network - Active DHT Node
 # Multi-stage build for optimized production image
 
-FROM node:18-alpine AS builder
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
@@ -15,7 +15,7 @@ RUN npm ci --production
 COPY src/ ./src/
 
 # Production image
-FROM node:18-alpine
+FROM node:20-alpine
 
 WORKDIR /app
 
