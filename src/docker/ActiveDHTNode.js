@@ -876,7 +876,7 @@ export class ActiveDHTNode extends NodeDHTClient {
       
       // Perform PubSub test operations if PubSub is available
       if (this.pubsub) {
-        console.log('≡ƒôè Performing PubSub test operations...');
+        console.log('📊 Performing PubSub test operations...');
         
         // Test publish operation
         const testTopic = `test_topic_${this.nodeId.toString().substring(0, 8)}`;
@@ -888,14 +888,17 @@ export class ActiveDHTNode extends NodeDHTClient {
         
         await this.publish(testTopic, testMessage);
         
-        // Test subscribe operation (subscribe to our own test topic)
-        await this.subscribe(`test_topic_global`, (message) => {
-          console.log(`≡ƒô¼ Received test message:`, message);
-        });
+        // Test subscribe operation - only subscribe once to avoid listener leak
+        const globalTopic = 'test_topic_global';
+        if (!this.pubsub.isSubscribed(globalTopic)) {
+          await this.subscribe(globalTopic, (message) => {
+            console.log(`📬 Received test message:`, message);
+          });
+        }
         
-        console.log('Γ£à PubSub test operations completed');
+        console.log('✅ PubSub test operations completed');
       } else {
-        console.log('ΓÜá∩╕Å PubSub not available for test operations');
+        console.log('⚠️ PubSub not available for test operations');
       }
       
       console.log('Γ£à All throughput test operations completed');

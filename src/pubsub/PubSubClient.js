@@ -72,6 +72,10 @@ export class PubSubClient extends EventEmitter {
   constructor(dht, nodeID, keyInfo, options = {}) {
     super();
 
+    // Increase max listeners since we emit events per topic
+    // Each subscription adds a listener, so allow more than default 10
+    this.setMaxListeners(100);
+
     if (!dht) throw new Error('PubSubClient requires DHT instance');
     if (!nodeID) throw new Error('PubSubClient requires nodeID');
     if (!keyInfo) throw new Error('PubSubClient requires keyInfo');
