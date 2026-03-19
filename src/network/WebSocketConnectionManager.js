@@ -858,19 +858,22 @@ export class WebSocketConnectionManager extends ConnectionManager {
    * Send ping to connected peer using base class method
    */
   async sendPingToConnectedPeer() {
-    if (!this.isConnected() || !this.peerId) {
+    // Capture peerId at start for error logging (may become null during async operations)
+    const peerId = this.peerId;
+    
+    if (!this.isConnected() || !peerId) {
       return;
     }
 
     try {
-      const result = await this.ping(this.peerId);
+      const result = await this.ping(peerId);
       if (result.success) {
         this.currentRTT = result.rtt;
         this.lastPingTime = Date.now();
         
         // Update peer RTT in routing table if available
-        if (this.routingTable && this.peerId) {
-          const peerNode = this.routingTable.getNode(this.peerId);
+        if (this.routingTable && peerId) {
+          const peerNode = this.routingTable.getNode(peerId);
           if (peerNode) {
             peerNode.rtt = result.rtt;
             peerNode.lastPing = Date.now();
@@ -878,10 +881,10 @@ export class WebSocketConnectionManager extends ConnectionManager {
         }
       } else if (result.error && !result.error.includes('Inactive browser tab')) {
         // Only log errors that aren't from inactive tab filtering
-        console.error(`❌ Failed to ping ${this.peerId}:`, result.error);
+        console.error(`❌ Failed to ping ${peerId}:`, result.error);
       }
     } catch (error) {
-      console.error(`❌ Failed to ping ${this.peerId}:`, error);
+      console.error(`❌ Failed to ping ${peerId}:`, error);
     }
   }
 
@@ -975,6 +978,10 @@ export class WebSocketConnectionManager extends ConnectionManager {
     if (this.isDestroyed) return;
 
     console.log('🌐 Destroying WebSocketConnectionManager');
+
+    // CRITICAL: Stop ping interval FIRST to prevent "Failed to ping null" errors
+    // Must happen before clearing peerId in super.destroy()
+    this.stopPing();
 
     // Close server
     if (this.server) {

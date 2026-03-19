@@ -169,6 +169,11 @@ export class ConnectionManager extends EventEmitter {
    * Handle incoming protocol message
    */
   handleMessage(peerId, message) {
+    // Guard against destroyed managers - silently drop messages
+    if (this.isDestroyed) {
+      return;
+    }
+    
     try {
       // NOTE: Peer activity tracking moved to DHTNode.updateLastSeen()
 
@@ -258,6 +263,12 @@ export class ConnectionManager extends EventEmitter {
    * Handle ping message
    */
   async handlePing(peerId, message) {
+    // Guard against destroyed managers - don't try to respond
+    if (this.isDestroyed) {
+      Logger.trace(`⏭️ Ignoring ping from ${peerId.substring(0, 8)}... - manager is destroyed`);
+      return;
+    }
+    
     try {
       Logger.trace(`🏓 Handling ping from ${peerId.substring(0, 8)}... (requestId: ${message.requestId})`);
       await this.sendMessage(peerId, {
@@ -268,7 +279,10 @@ export class ConnectionManager extends EventEmitter {
       });
       Logger.trace(`✅ Sent pong to ${peerId.substring(0, 8)}...`);
     } catch (error) {
-      console.error(`❌ Failed to send pong to ${peerId.substring(0, 8)}...: ${error.message}`);
+      // Only log if not a destroyed manager error (expected during cleanup)
+      if (!error.message.includes('destroyed')) {
+        console.error(`❌ Failed to send pong to ${peerId.substring(0, 8)}...: ${error.message}`);
+      }
     }
   }
 
