@@ -879,12 +879,15 @@ export class WebSocketConnectionManager extends ConnectionManager {
             peerNode.lastPing = Date.now();
           }
         }
-      } else if (result.error && !result.error.includes('Inactive browser tab')) {
-        // Only log errors that aren't from inactive tab filtering
+      } else if (result.error && !result.error.includes('Inactive browser tab') && !result.error.includes('destroyed')) {
+        // Only log errors that aren't from inactive tab filtering or destroyed managers
         console.error(`❌ Failed to ping ${peerId}:`, result.error);
       }
     } catch (error) {
-      console.error(`❌ Failed to ping ${peerId}:`, error);
+      // Don't log destroyed manager errors (expected during cleanup)
+      if (!error.message?.includes('destroyed')) {
+        console.error(`❌ Failed to ping ${peerId}:`, error);
+      }
     }
   }
 
