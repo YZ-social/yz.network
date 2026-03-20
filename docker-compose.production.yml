@@ -142,6 +142,9 @@ services:
       - NODE_NAME=genesis-node
       - OPEN_NETWORK=true
       - LOG_LEVEL=warn
+    volumes:
+      # Mount bundle-hash.json for version checking synchronization
+      - ./dist/bundle-hash.json:/app/dist/bundle-hash.json:ro
     networks:
       - yz-network
     restart: unless-stopped
