@@ -353,6 +353,12 @@ export class BootstrapClient extends EventEmitter {
           this.emit('connectToBridge', message);
           break;
 
+        case 'send_invitation_request':
+          // Bootstrap is asking us to send an invitation to a new peer
+          console.log(`📨 Bootstrap requesting invitation for peer ${message.targetPeerId?.substring(0, 8)}...`);
+          this.emit('sendInvitationRequest', message);
+          break;
+
         case 'genesis_response':
           // Temporary response from bootstrap while setting up genesis connection
           console.log('🌟 Received genesis response from bootstrap server');

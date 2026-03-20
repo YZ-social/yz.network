@@ -600,6 +600,11 @@ export class KademliaDHT extends EventEmitter {
     this.bootstrap.on('onboardingFailed', (message) => {
       this.handleOnboardingFailed(message);
     });
+
+    // Handle invitation requests from bootstrap (asking us to invite a new peer)
+    this.bootstrap.on('sendInvitationRequest', (message) => {
+      this.handleSendInvitationRequest(message);
+    });
   }
 
 
@@ -1632,6 +1637,55 @@ export class KademliaDHT extends EventEmitter {
 
     } catch (error) {
       console.error('Error handling bridge invitation request:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Handle send invitation request from bootstrap server
+   * Bootstrap is asking us to invite a new peer to join the DHT
+   */
+  async handleSendInvitationRequest(message) {
+    const { targetPeerId, requestId } = message;
+    console.log(`📨 Received send_invitation_request for ${targetPeerId?.substring(0, 8)}... (requestId: ${requestId})`);
+
+    try {
+      if (!targetPeerId) {
+        console.warn(`⚠️ Invalid send_invitation_request - missing targetPeerId`);
+        return false;
+      }
+
+      // Check if we have a membership token (required to create invitations)
+      if (!this._membershipToken) {
+        console.warn(`⚠️ Cannot invite peer - no membership token available`);
+        return false;
+      }
+
+      console.log(`🎫 Creating invitation for peer ${targetPeerId.substring(0, 8)}...`);
+
+      // Use inviteNewClient which handles the full invitation flow
+      const success = await this.inviteNewClient(targetPeerId);
+
+      if (success) {
+        console.log(`✅ Successfully invited peer ${targetPeerId.substring(0, 8)}...`);
+        
+        // Notify bootstrap that invitation was sent
+        if (this.bootstrap && this.bootstrap.isConnected()) {
+          this.bootstrap.sendMessage({
+            type: 'invitation_sent',
+            targetPeerId,
+            requestId,
+            success: true
+          });
+        }
+        return true;
+      } else {
+        console.error(`❌ Failed to invite peer ${targetPeerId.substring(0, 8)}...`);
+        return false;
+      }
+
+    } catch (error) {
+      console.error(`Error handling send_invitation_request for ${targetPeerId?.substring(0, 8)}...:`, error);
       return false;
     }
   }
