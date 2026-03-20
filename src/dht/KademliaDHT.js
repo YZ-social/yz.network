@@ -1670,7 +1670,7 @@ export class KademliaDHT extends EventEmitter {
         console.log(`✅ Successfully invited peer ${targetPeerId.substring(0, 8)}...`);
         
         // Notify bootstrap that invitation was sent
-        if (this.bootstrap && this.bootstrap.isConnected()) {
+        if (this.bootstrap && this.bootstrap.isBootstrapConnected()) {
           this.bootstrap.sendMessage({
             type: 'invitation_sent',
             targetPeerId,
