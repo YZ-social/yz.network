@@ -2043,14 +2043,9 @@ export class KademliaDHT extends EventEmitter {
       return false;
     }
 
-    // Additional validation: peer must be either connected or have been discovered through invitation
-    // This helps prevent random search target IDs from being treated as real peers
-    if (!this.isPeerConnected(peerId) && !this.isPeerConnected(peerId)) {
-      // Allow peer if it was discovered through invitation system or routing table
-      if (!this.routingTable.getNode(peerId)) {
-        console.debug(`🔍 Validating disconnected peer ${peerId.substring(0,8)}: not in routing table yet`);
-      }
-    }
+    // Note: We previously logged validation of disconnected peers here, but this caused
+    // massive log spam (30k+ messages) during find_node operations. The validation itself
+    // is still performed, just without the debug logging.
 
     return true;
   }
@@ -2274,6 +2269,12 @@ export class KademliaDHT extends EventEmitter {
               // Use overlay routing
               await this.overlayNetwork.sendViaRouting(message.targetId, message.payload);
             }
+          }
+          break;
+        case 'overlay_routed_message':
+          // Forward to overlay network for routing
+          if (this.overlayNetwork) {
+            await this.overlayNetwork.handleMessage(peerId, message);
           }
           break;
         default:
