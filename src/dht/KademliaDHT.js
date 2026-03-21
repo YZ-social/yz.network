@@ -3045,6 +3045,16 @@ export class KademliaDHT extends EventEmitter {
   async handlePong(peerId, message) {
     const rtt = Date.now() - message.timestamp;
 
+    // CRITICAL FIX: Resolve pending request if this pong matches one
+    // This fixes the bug where pings sent via sendRequestWithResponse() never got their responses matched
+    if (message.requestId && this.pendingRequests.has(message.requestId)) {
+      const pendingRequest = this.pendingRequests.get(message.requestId);
+      this.pendingRequests.delete(message.requestId);
+      console.log(`✅ Matched pong response for requestId=${message.requestId} from ${peerId.substring(0, 8)}... RTT=${rtt}ms`);
+      pendingRequest.resolve(message);
+      return; // Don't process further - request is resolved
+    }
+
     const node = this.routingTable.getNode(peerId);
     if (node) {
       node.recordPing(rtt);

@@ -207,7 +207,10 @@ export class ConnectionManager extends EventEmitter {
           this.handlePing(peerId, message);
           break;
         case 'pong':
+          // CRITICAL FIX: Also emit dhtMessage for pong so KademliaDHT can resolve pending requests
+          // ConnectionManager.handlePong just logs RTT, but KademliaDHT.handlePong resolves pendingRequests
           this.handlePong(peerId, message);
+          this.emit('dhtMessage', { peerId, message, sourceManager: this });
           break;
         case 'find_node':
         case 'find_value':
