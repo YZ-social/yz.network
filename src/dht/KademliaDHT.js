@@ -468,6 +468,41 @@ export class KademliaDHT extends EventEmitter {
       }
     };
 
+    // CRITICAL FIX: Set up callback to attach DHT message handlers directly to connection managers
+    // This ensures handlers are attached to the CORRECT manager (the one with the actual connection)
+    // regardless of whether the node is added to the main bucket or replacement cache
+    // This fixes the bug where handlers were attached to a different manager instance
+    this.routingTable.onAttachDHTHandler = (manager, peerId) => {
+      if (!manager) {
+        console.warn(`⚠️ onAttachDHTHandler called with null manager for ${peerId?.substring(0, 8) || 'unknown'}`);
+        return;
+      }
+      
+      // Guard against duplicate handler attachment
+      if (manager._dhtMessageHandlerAttached) {
+        // Check for stale flag (flag says attached but no actual listeners)
+        const actualListeners = manager.listenerCount('dhtMessage');
+        if (actualListeners > 0) {
+          console.log(`🔄 DHT handler already attached to manager for ${peerId.substring(0, 8)}... (${actualListeners} listeners)`);
+          return;
+        }
+        // Stale flag - reset and reattach
+        console.warn(`⚠️ Stale handler flag for ${peerId.substring(0, 8)}... - resetting and reattaching`);
+        manager._dhtMessageHandlerAttached = false;
+      }
+      
+      console.log(`🔧 Attaching DHT message handler to ${manager.constructor.name} for ${peerId.substring(0, 8)}...`);
+      
+      // Attach the DHT message handler - same logic as in getOrCreatePeerNode()
+      manager.on('dhtMessage', ({ peerId: msgPeerId, message, sourceManager }) => {
+        console.log(`📥 DHT MESSAGE HANDLER (via onAttachDHTHandler): ${message.type} from ${msgPeerId.substring(0, 8)}`);
+        this.handlePeerMessage(msgPeerId, message, sourceManager);
+      });
+      
+      manager._dhtMessageHandlerAttached = true;
+      console.log(`✅ DHT message handler attached to ${manager.constructor.name} for ${peerId.substring(0, 8)}`);
+    };
+
     // CRITICAL FIX: Set up WebRTC signal routing callback for RoutingTable
     // This will be attached to each WebRTCConnectionManager when nodes are created
     this.routingTable.webrtcSignalHandler = ({ peerId, signal }) => {

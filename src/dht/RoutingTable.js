@@ -20,6 +20,11 @@ export class RoutingTable {
     // Event handling for connection managers
     this.onNodeAdded = null; // Callback to notify DHT when nodes are added via connections
     this.eventHandlersSetup = false;
+    
+    // CRITICAL FIX: Callback to attach DHT message handlers directly to connection managers
+    // This ensures handlers are attached to the CORRECT manager (the one with the actual connection)
+    // regardless of whether the node is added to the main bucket or replacement cache
+    this.onAttachDHTHandler = null; // Callback signature: (manager, peerId) => void
 
     // EMERGENCY: Circuit breaker to completely disable debug logging after threshold
     this._debugLoggingDisabled = false;
@@ -769,6 +774,14 @@ export class RoutingTable {
       //
       // For now: Always accept new connections (ConnectionManager will handle collisions internally)
       console.log(`🔗 Updating connection for existing node ${peerId.substring(0, 8)}...`);
+      
+      // CRITICAL FIX: Attach DHT message handler to the manager BEFORE setupConnection
+      // This ensures handlers are ready before any messages can arrive
+      if (this.onAttachDHTHandler && manager) {
+        console.log(`🔧 Attaching DHT handler to manager for existing node ${peerId.substring(0, 8)}...`);
+        this.onAttachDHTHandler(manager, peerId);
+      }
+      
       existingNode.setupConnection(manager, connection);
       existingNode.initiator = initiator; // Store initiator flag
 
@@ -786,6 +799,14 @@ export class RoutingTable {
 
     // Create new DHTNode
     const node = new DHTNode(peerId, peerId);
+
+    // CRITICAL FIX: Attach DHT message handler to the manager BEFORE setupConnection
+    // This ensures handlers are ready before any messages can arrive
+    // This is the key fix for the bug where handlers were attached to wrong manager
+    if (this.onAttachDHTHandler && manager) {
+      console.log(`🔧 Attaching DHT handler to manager for new node ${peerId.substring(0, 8)}...`);
+      this.onAttachDHTHandler(manager, peerId);
+    }
 
     // Set up the node's connection and manager
     node.setupConnection(manager, connection);
