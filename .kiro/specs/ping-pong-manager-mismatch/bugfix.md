@@ -103,3 +103,48 @@ if (message.type === 'pong') {
 
 ## Related Bugs
 This is similar to the DHT handler attachment bug (`.kiro/specs/dht-handler-attachment-fix/`) where DHT message handlers were attached to the wrong manager instance.
+
+---
+
+## Additional Issue: Self-Message Bug (discovered during investigation)
+
+### Symptoms
+- Logs show: `⚠️ Attempted to look up local node ID afa8b3e6... in routing table - returning null`
+- Logs show: `❌ Failed to send store_response to afa8b3e6...: No connection to peer afa8b3e6...`
+- Logs show: `Error handling message from afa8b3e6f68b5a66ebf672df91ca209844b2a633`
+- Node afa8b3e6 is dht-node-1's OWN node ID
+
+### Analysis
+A node is receiving DHT messages (specifically `store` requests) where the `peerId` parameter is set to its own local node ID. This causes:
+1. `handlePeerMessage()` tries to look up the peer in routing table → warning (local node not in routing table)
+2. `handleStore()` tries to send `store_response` back to the "peer" → fails (no connection to self)
+
+### Possible Causes
+1. **Routed message with wrong source**: OverlayNetwork routes messages and sets `source` from the message. If a node sends a routed message to itself, the source would be its own ID.
+2. **Connection manager with wrong peerId**: A connection manager might have `this.peerId` set to the local node's ID instead of the remote peer's ID.
+3. **find_node_response includes local node**: When a peer responds to find_node, it might include the querying node in the results.
+
+### Evidence from Logs
+The self-lookup warnings appear:
+- After "replication failures" during store operations
+- Before "Failed to send store_response to afa8b3e6"
+- Alongside UNMATCHED_PONG warnings
+
+This suggests the issue is related to the store replication process, where the local node might be included in the list of nodes to replicate to.
+
+---
+
+## Additional Issue: Connection Count Discrepancy
+
+### Symptom
+Dashboard shows 20 connections per node, but only 17 peers exist in the network.
+
+### Analysis
+`getConnectedPeers()` in KademliaDHT.js checks two sources:
+1. `this.routingTable.getAllNodes()` - nodes with connected managers
+2. `this.peerNodes` Map - additional peer nodes not in routing table
+
+If the same peer exists in both places with different manager instances, it could be counted twice.
+
+### Potential Fix
+Ensure `getConnectedPeers()` deduplicates by peer ID, not by manager instance.

@@ -390,15 +390,29 @@ export class ActiveDHTNode extends NodeDHTClient {
    */
   handleStatus(req, res) {
     const connectedPeers = this.dht ? this.dht.getConnectedPeers().length : 0;
+    
+    // Get detailed peer list for debugging
+    const peerList = this.dht ? this.dht.getConnectedPeers() : [];
+    const routingTableNodes = this.dht ? this.dht.routingTable.getAllNodes() : [];
+    const peerNodesMap = this.dht?.peerNodes ? Array.from(this.dht.peerNodes.keys()) : [];
+    
     const status = {
       nodeId: this.nodeId.toString().substring(0, 16) + '...',
+      fullNodeId: this.nodeId.toString(),
       nodeType: this.getNodeType(),
       capabilities: this.getCapabilities(),
       uptime: Date.now() - this.metrics.startTime,
       dht: this.dht ? {
         connectedPeers: connectedPeers,
         routingTableSize: this.dht.routingTable.getAllNodes().length,
-        active: true
+        active: true,
+        // Debug: actual peer list
+        peerListShort: peerList.map(p => p.substring(0, 8)),
+        routingTableNodesShort: routingTableNodes.map(n => n.id.toString().substring(0, 8)),
+        peerNodesMapShort: peerNodesMap.map(p => p.substring(0, 8)),
+        // Check for duplicates
+        uniquePeers: [...new Set(peerList)].length,
+        duplicatesInPeerList: peerList.length - [...new Set(peerList)].length
       } : { active: false },
       pubsub: this.pubsub ? {
         activeSubscriptions: this.pubsub.getSubscriptions().length,
