@@ -315,23 +315,21 @@ export class ConnectionManager extends EventEmitter {
 
   /**
    * Send ping to peer
+   * NOTE: This method is primarily used for testing. Production code uses
+   * KademliaDHT.pingPeer() via the pingCallback mechanism for proper response tracking.
    */
   async ping(peerId) {
-    // CRITICAL FIX: Skip pinging inactive browser tabs to prevent high latency
+    // Skip pinging inactive browser tabs to prevent high latency
     if (this.routingTable && peerId) {
       const peerNode = this.routingTable.getNode(peerId);
       if (peerNode?.metadata?.nodeType === 'browser' && peerNode.metadata?.tabVisible === false) {
-        Logger.debug(`⏭️ [Ping] Skipping ping to inactive browser tab ${peerId.substring(0, 8)}... (would cause high latency)`);
+        Logger.debug(`⏭️ [Ping] Skipping ping to inactive browser tab ${peerId.substring(0, 8)}...`);
         return { success: false, error: 'Inactive browser tab - skipped to prevent high latency' };
       }
     }
 
     try {
-      // DIAGNOSTIC: Log which manager is sending the ping
-      const managerId = this._managerId || (this._managerId = Math.random().toString(36).substr(2, 6));
       const requestId = this.generateRequestId();
-      
-      console.log(`🏓 PING_SEND: manager=${managerId} peerId=${peerId?.substring(0, 8)} requestId=${requestId} pendingBefore=${this.pendingRequests.size}`);
       
       const response = await this.sendRequest(peerId, {
         type: 'ping',
@@ -340,11 +338,8 @@ export class ConnectionManager extends EventEmitter {
       }, 5000);
 
       const rtt = Date.now() - response.originalTimestamp;
-      console.log(`🏓 PING_SUCCESS: manager=${managerId} peerId=${peerId?.substring(0, 8)} rtt=${rtt}ms`);
       return { success: true, rtt };
     } catch (error) {
-      const managerId = this._managerId || 'unknown';
-      console.log(`🏓 PING_FAIL: manager=${managerId} peerId=${peerId?.substring(0, 8)} error=${error.message}`);
       return { success: false, error: error.message };
     }
   }

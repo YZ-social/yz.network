@@ -2063,8 +2063,10 @@ export class KademliaDHT extends EventEmitter {
       }
 
       // Send ping to establish RTT
-      this.sendPing(peerId).catch(error => {
-        console.warn(`Failed to ping newly connected peer ${peerId}:`, error);
+      this.pingPeer(peerId).then(result => {
+        if (!result.success) {
+          console.warn(`Failed to ping newly connected peer ${peerId}: ${result.error}`);
+        }
       });
 
       this.emit('peerConnected', peerId);
@@ -3053,17 +3055,6 @@ export class KademliaDHT extends EventEmitter {
         peerNode.recordFailure();
       }
       return { success: false, error: error.message };
-    }
-  }
-
-  /**
-   * @deprecated Use pingPeer() instead - this fire-and-forget method doesn't track responses
-   */
-  async sendPing(peerId) {
-    // Redirect to the unified ping method
-    const result = await this.pingPeer(peerId);
-    if (!result.success) {
-      console.error(`Failed to ping ${peerId}:`, result.error);
     }
   }
 
@@ -6808,7 +6799,7 @@ export class KademliaDHT extends EventEmitter {
 
     for (const node of nodesToPing) {
       if (this.isPeerConnected(node.id.toString())) {
-        await this.sendPing(node.id.toString());
+        await this.pingPeer(node.id.toString());
       }
     }
   }
