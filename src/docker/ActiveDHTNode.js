@@ -152,7 +152,23 @@ export class ActiveDHTNode extends NodeDHTClient {
       this.dht.metricsTracker = this;
       
       // Set up connection stability tracking
+      // IMPORTANT: This must be called after super.start() creates the DHT,
+      // but the listener setup will catch future events. We also need to
+      // count any connections that were established during startup.
       this.setupConnectionStabilityTracking();
+      
+      // Count connections that were established during startup
+      // (before our listeners were attached)
+      // Wait a moment for any in-flight connections to complete
+      setTimeout(() => {
+        const existingPeers = this.dht.getConnectedPeers();
+        if (existingPeers.length > 0 && this.metrics.connectionsEstablished === 0) {
+          console.warn(`📊 Stability tracking: Counting ${existingPeers.length} connections from startup (delayed check)`);
+          this.metrics.connectionsEstablished = existingPeers.length;
+          this.metrics.currentConnections = existingPeers.length;
+          this.metrics.peakConnections = existingPeers.length;
+        }
+      }, 3000); // Wait 3 seconds for connections to establish
     }
 
     // Initialize PubSub
