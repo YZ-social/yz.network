@@ -865,6 +865,10 @@ export class WebSocketConnectionManager extends ConnectionManager {
       return;
     }
 
+    // DIAGNOSTIC: Log before calling ping to verify this code path is reached
+    const managerId = this._managerId || (this._managerId = Math.random().toString(36).substr(2, 6));
+    console.log(`[WSPING] manager=${managerId} calling ping() for peer=${peerId.substring(0, 8)}`);
+
     try {
       const result = await this.ping(peerId);
       if (result.success) {
