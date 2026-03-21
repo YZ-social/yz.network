@@ -191,15 +191,9 @@ export class ConnectionManager extends EventEmitter {
         return;
       }
       
-      // DIAGNOSTIC: Log unmatched pong messages to debug ping timeout issue
-      if (message.type === 'pong') {
-        const managerId = this._managerId || (this._managerId = Math.random().toString(36).substr(2, 6));
-        console.warn(`⚠️ UNMATCHED_PONG: manager=${managerId} requestId=${message.requestId} from ${peerId.substring(0, 8)}... pendingRequests.size=${this.pendingRequests.size}`);
-        if (this.pendingRequests.size > 0) {
-          const pendingIds = Array.from(this.pendingRequests.keys());
-          console.warn(`   Pending requestIds: ${pendingIds.join(', ')}`);
-        }
-      }
+      // NOTE: Pong messages that don't match ConnectionManager.pendingRequests are expected
+      // when using the unified ping system (KademliaDHT.pingPeer). The pong will be matched
+      // in KademliaDHT.handlePong() via the dhtMessage event below.
 
       // Route protocol messages to appropriate handlers
       switch (message.type) {
@@ -228,28 +222,11 @@ export class ConnectionManager extends EventEmitter {
         case 'create_invitation_for_peer':
         case 'forward_invitation':
         case 'overlay_routed_message': {
-          // DIAGNOSTIC LOGGING: Task 1.3 - Log number of listeners when dhtMessage event is emitted
+          // Emit to DHT for handling - include manager reference for response routing
           const listenerCount = this.listenerCount('dhtMessage');
-          console.log(`🔔 DHT_MESSAGE EVENT:`);
-          console.log(`   Message Type: ${message.type}`);
-          console.log(`   From Peer: ${peerId.substring(0, 8)}...`);
-          console.log(`   Manager: ${this.constructor.name}`);
-          console.log(`   Manager PeerId: ${this.peerId?.substring(0, 8) || 'none'}`);
-          console.log(`   Listener Count: ${listenerCount}`);
-          console.log(`   Handler Attached Flag: ${this._dhtMessageHandlerAttached || false}`);
-          console.log(`   Timestamp: ${new Date().toISOString()}`);
-          
-          // DIAGNOSTIC LOGGING: Task 1.3 - Log warning if no listeners attached
           if (listenerCount === 0) {
-            console.warn(`⚠️ NO DHT MESSAGE LISTENERS ATTACHED!`);
-            console.warn(`   Message Type: ${message.type}`);
-            console.warn(`   From Peer: ${peerId.substring(0, 8)}...`);
-            console.warn(`   Manager: ${this.constructor.name}`);
-            console.warn(`   This message will NOT be processed by DHT!`);
-            console.warn(`   RequestId: ${message.requestId || 'none'}`);
+            console.warn(`⚠️ NO DHT MESSAGE LISTENERS: ${message.type} from ${peerId.substring(0, 8)}... will NOT be processed`);
           }
-          
-          // Emit to DHT for handling - TASK 2.1: Include manager reference for response routing
           this.emit('dhtMessage', { peerId, message, sourceManager: this });
           break;
         }
