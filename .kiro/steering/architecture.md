@@ -1,5 +1,17 @@
 # YZ Network Architecture & Development Guidelines
 
+## Local Development Environment (Windows)
+
+### Git Push
+- `git push` requires manual password entry (SSH key passphrase)
+- Run `git push` WITHOUT stderr redirect (no `2>&1`) to allow interactive password prompt
+- Example: `git push` (not `git push 2>&1`)
+
+### Command Limitations
+- `tail` command does NOT work on the local Windows box
+- Use `tail` only on the production server via SSH: `ssh oracle-yz "tail -f ..."`
+- For local file viewing, use `Get-Content -Tail` in PowerShell or read the file directly
+
 ## Production Server (oracle-yz)
 
 Access the production server via SSH:

@@ -190,6 +190,11 @@ export class ConnectionManager extends EventEmitter {
         }
         return;
       }
+      
+      // DIAGNOSTIC: Log unmatched pong messages to debug ping timeout issue
+      if (message.type === 'pong') {
+        console.warn(`⚠️ UNMATCHED_PONG: requestId=${message.requestId} from ${peerId.substring(0, 8)}... pendingRequests.size=${this.pendingRequests.size}`);
+      }
 
       // Route protocol messages to appropriate handlers
       switch (message.type) {
