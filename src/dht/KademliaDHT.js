@@ -2328,7 +2328,7 @@ export class KademliaDHT extends EventEmitter {
         case 'overlay_routed_message':
           // Forward to overlay network for routing
           if (this.overlayNetwork) {
-            await this.overlayNetwork.handleMessage(peerId, message);
+            await this.overlayNetwork.handleOverlayMessage(peerId, message);
           }
           break;
         default:
