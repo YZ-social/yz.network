@@ -855,44 +855,42 @@ export class WebSocketConnectionManager extends ConnectionManager {
   }
 
   /**
-   * Send ping to connected peer using base class method
+   * Send ping to connected peer using DHT's unified ping method
+   * REFACTORED: Uses pingCallback set by DHT instead of ConnectionManager.ping()
+   * This ensures pong responses are properly matched in KademliaDHT.pendingRequests
    */
   async sendPingToConnectedPeer() {
-    // Capture peerId at start for error logging (may become null during async operations)
     const peerId = this.peerId;
     
     if (!this.isConnected() || !peerId) {
       return;
     }
 
-    // DIAGNOSTIC: Log before calling ping to verify this code path is reached
-    const managerId = this._managerId || (this._managerId = Math.random().toString(36).substr(2, 6));
-    console.log(`[WSPING] manager=${managerId} calling ping() for peer=${peerId.substring(0, 8)}`);
-
-    try {
-      const result = await this.ping(peerId);
-      if (result.success) {
-        this.currentRTT = result.rtt;
-        this.lastPingTime = Date.now();
-        
-        // Update peer RTT in routing table if available
-        if (this.routingTable && peerId) {
-          const peerNode = this.routingTable.getNode(peerId);
-          if (peerNode) {
-            peerNode.rtt = result.rtt;
-            peerNode.lastPing = Date.now();
-          }
+    // Use DHT's pingCallback if available (preferred - proper response tracking)
+    if (this.pingCallback) {
+      try {
+        const result = await this.pingCallback(peerId);
+        if (result.success) {
+          this.currentRTT = result.rtt;
+          this.lastPingTime = Date.now();
+        } else if (result.error && !result.error.includes('Inactive browser tab') && !result.error.includes('skipped')) {
+          console.error(`❌ Failed to ping ${peerId.substring(0, 8)}...: ${result.error}`);
         }
-      } else if (result.error && !result.error.includes('Inactive browser tab') && !result.error.includes('destroyed')) {
-        // Only log errors that aren't from inactive tab filtering or destroyed managers
-        console.error(`❌ Failed to ping ${peerId}:`, result.error);
-      }
-    } catch (error) {
-      // Don't log destroyed manager errors (expected during cleanup)
-      if (!error.message?.includes('destroyed')) {
-        console.error(`❌ Failed to ping ${peerId}:`, error);
+      } catch (error) {
+        if (!error.message?.includes('destroyed')) {
+          console.error(`❌ Failed to ping ${peerId.substring(0, 8)}...:`, error);
+        }
       }
     }
+    // If no pingCallback, skip ping - the old ConnectionManager.ping() had routing issues
+  }
+
+  /**
+   * Set ping callback - called by DHT to provide unified ping method
+   * @param {Function} callback - async function(peerId) => {success, rtt?, error?}
+   */
+  setPingCallback(callback) {
+    this.pingCallback = callback;
   }
 
   /**

@@ -500,6 +500,13 @@ export class KademliaDHT extends EventEmitter {
       });
       
       manager._dhtMessageHandlerAttached = true;
+      
+      // UNIFIED PING: Set pingCallback so WebSocketConnectionManager uses DHT's pingPeer method
+      if (typeof manager.setPingCallback === 'function') {
+        manager.setPingCallback((targetPeerId) => this.pingPeer(targetPeerId));
+        console.log(`🏓 Ping callback set for ${manager.constructor.name} (peer: ${peerId.substring(0, 8)})`);
+      }
+      
       console.log(`✅ DHT message handler attached to ${manager.constructor.name} for ${peerId.substring(0, 8)}`);
     };
 
@@ -2989,26 +2996,74 @@ export class KademliaDHT extends EventEmitter {
   }
 
   /**
-   * Send ping to peer
+   * Send ping to peer and wait for response
+   * UNIFIED PING: This is the ONLY ping method - uses sendRequestWithResponse for proper tracking
+   * @param {string} peerId - Peer to ping
+   * @param {number} timeout - Timeout in ms (default 5000)
+   * @returns {Promise<{success: boolean, rtt?: number, error?: string}>}
    */
-  async sendPing(peerId) {
-    const message = {
-      type: 'ping',
-      requestId: this.generateRequestId(),
-      timestamp: Date.now(),
-      nodeId: this.localNodeId.toString()
-    };
+  async pingPeer(peerId, timeout = 5000) {
+    // Skip pinging inactive browser tabs
+    const peerNode = this.routingTable.getNode(peerId);
+    if (peerNode?.metadata?.nodeType === 'browser' && peerNode.metadata?.tabVisible === false) {
+      return { success: false, error: 'Inactive browser tab - skipped' };
+    }
 
     try {
-      await this.sendMessage(peerId, message);
-    } catch (error) {
-      console.error(`Failed to ping ${peerId}:`, error);
+      const startTime = Date.now();
+      const response = await this.sendRequestWithResponse(peerId, {
+        type: 'ping',
+        requestId: this.generateRequestId(),
+        timestamp: startTime,
+        nodeId: this.localNodeId.toString()
+      }, timeout);
 
-      // Mark peer as failed
-      const node = this.routingTable.getNode(peerId);
-      if (node) {
-        node.recordFailure();
+      const rtt = Date.now() - startTime;
+      
+      // Update node RTT and record ping
+      if (peerNode) {
+        peerNode.recordPing(rtt);
+        peerNode.lastPing = Date.now();
+        peerNode.rtt = rtt;
+        
+        // Extract tabVisible from metaFlags
+        if (response.metaFlags !== undefined) {
+          const tabVisible = (response.metaFlags & 0x01) !== 0;
+          if (!peerNode.metadata) peerNode.metadata = {};
+          peerNode.metadata.tabVisible = tabVisible;
+        }
       }
+
+      // Record ping latency in global metrics for dashboard
+      const globalObj = typeof globalThis !== 'undefined' ? globalThis : (typeof global !== 'undefined' ? global : window);
+      if (globalObj?.activeDHTNodeMetrics) {
+        globalObj.activeDHTNodeMetrics.pingLatencies.push(rtt);
+        if (globalObj.activeDHTNodeMetrics.pingLatencies.length > 100) {
+          globalObj.activeDHTNodeMetrics.pingLatencies.shift();
+        }
+        globalObj.activeDHTNodeMetrics.opsLastMinute.push(Date.now());
+        const oneMinuteAgo = Date.now() - 60000;
+        globalObj.activeDHTNodeMetrics.opsLastMinute = globalObj.activeDHTNodeMetrics.opsLastMinute.filter(t => t > oneMinuteAgo);
+      }
+
+      return { success: true, rtt };
+    } catch (error) {
+      // Mark peer as failed
+      if (peerNode) {
+        peerNode.recordFailure();
+      }
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * @deprecated Use pingPeer() instead - this fire-and-forget method doesn't track responses
+   */
+  async sendPing(peerId) {
+    // Redirect to the unified ping method
+    const result = await this.pingPeer(peerId);
+    if (!result.success) {
+      console.error(`Failed to ping ${peerId}:`, result.error);
     }
   }
 
@@ -5207,6 +5262,12 @@ export class KademliaDHT extends EventEmitter {
           this.handlePeerMessage(msgPeerId, message, sourceManager);
         });
         peerNode.connectionManager._dhtMessageHandlerAttached = true;
+        
+        // UNIFIED PING: Set pingCallback so WebSocketConnectionManager uses DHT's pingPeer method
+        if (typeof peerNode.connectionManager.setPingCallback === 'function') {
+          peerNode.connectionManager.setPingCallback((targetPeerId) => this.pingPeer(targetPeerId));
+        }
+        
         Logger.debug(`📨 DHT message handler attached to existing manager for ${peerId.substring(0, 8)}`);
       }
       
@@ -5308,6 +5369,12 @@ export class KademliaDHT extends EventEmitter {
         this.handlePeerMessage(msgPeerId, message, sourceManager);
       });
       peerNode.connectionManager._dhtMessageHandlerAttached = true;
+      
+      // UNIFIED PING: Set pingCallback so WebSocketConnectionManager uses DHT's pingPeer method
+      if (typeof peerNode.connectionManager.setPingCallback === 'function') {
+        peerNode.connectionManager.setPingCallback((targetPeerId) => this.pingPeer(targetPeerId));
+      }
+      
       console.log(`📨 DHT message handler attached for ${peerId.substring(0, 8)}`);
     } else {
       console.log(`🔄 DHT message handler already attached for ${peerId.substring(0, 8)}`);
