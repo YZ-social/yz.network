@@ -193,7 +193,12 @@ export class ConnectionManager extends EventEmitter {
       
       // DIAGNOSTIC: Log unmatched pong messages to debug ping timeout issue
       if (message.type === 'pong') {
-        console.warn(`⚠️ UNMATCHED_PONG: requestId=${message.requestId} from ${peerId.substring(0, 8)}... pendingRequests.size=${this.pendingRequests.size}`);
+        const managerId = this._managerId || (this._managerId = Math.random().toString(36).substr(2, 6));
+        console.warn(`⚠️ UNMATCHED_PONG: manager=${managerId} requestId=${message.requestId} from ${peerId.substring(0, 8)}... pendingRequests.size=${this.pendingRequests.size}`);
+        if (this.pendingRequests.size > 0) {
+          const pendingIds = Array.from(this.pendingRequests.keys());
+          console.warn(`   Pending requestIds: ${pendingIds.join(', ')}`);
+        }
       }
 
       // Route protocol messages to appropriate handlers
@@ -342,14 +347,24 @@ export class ConnectionManager extends EventEmitter {
     }
 
     try {
+      // DIAGNOSTIC: Log which manager is sending the ping
+      const managerId = this._managerId || (this._managerId = Math.random().toString(36).substr(2, 6));
+      const requestId = this.generateRequestId();
+      
+      console.log(`🏓 PING_SEND: manager=${managerId} peerId=${peerId?.substring(0, 8)} requestId=${requestId} pendingBefore=${this.pendingRequests.size}`);
+      
       const response = await this.sendRequest(peerId, {
         type: 'ping',
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        requestId: requestId
       }, 5000);
 
       const rtt = Date.now() - response.originalTimestamp;
+      console.log(`🏓 PING_SUCCESS: manager=${managerId} peerId=${peerId?.substring(0, 8)} rtt=${rtt}ms`);
       return { success: true, rtt };
     } catch (error) {
+      const managerId = this._managerId || 'unknown';
+      console.log(`🏓 PING_FAIL: manager=${managerId} peerId=${peerId?.substring(0, 8)} error=${error.message}`);
       return { success: false, error: error.message };
     }
   }
