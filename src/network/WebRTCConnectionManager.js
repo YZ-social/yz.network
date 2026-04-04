@@ -14,19 +14,14 @@ export class WebRTCConnectionManager extends ConnectionManager {
     this.bootstrapClient = options.bootstrapClient || null;
 
     this.rtcOptions = {
+      // STUN servers for NAT discovery only - no TURN servers
+      // We use our own WebSocket relay infrastructure instead of third-party TURN
+      // See: .kiro/specs/symmetric-nat-relay/design.md for rationale
       iceServers: options.iceServers || [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
         { urls: 'stun:stun2.l.google.com:19302' },
-        { urls: 'stun:stun3.l.google.com:19302' },
-        // Multiple TURN servers for better reliability
-        { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-        { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-        { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
-        // More reliable TURN servers
-        { urls: 'turn:relay.metered.ca:80', username: 'f60e8e5b8493fa5e8b6fcbb1', credential: 'hIvFMxNqIRobbdxC' },
-        { urls: 'turn:relay.metered.ca:443', username: 'f60e8e5b8493fa5e8b6fcbb1', credential: 'hIvFMxNqIRobbdxC' },
-        { urls: 'turn:relay.metered.ca:443?transport=tcp', username: 'f60e8e5b8493fa5e8b6fcbb1', credential: 'hIvFMxNqIRobbdxC' }
+        { urls: 'stun:stun3.l.google.com:19302' }
       ],
       ...options
     };

@@ -534,10 +534,11 @@ class App {
       },
 
       async testConnectivity() {
-        console.log('Testing STUN/TURN server connectivity...');
+        console.log('Testing STUN server connectivity...');
+        // STUN servers only - no TURN servers (we use our own WebSocket relay)
         const iceServers = [
           { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }
+          { urls: 'stun:stun1.l.google.com:19302' }
         ];
 
         try {

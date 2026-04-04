@@ -2379,7 +2379,29 @@ export class KademliaDHT extends EventEmitter {
           console.warn(`Unknown message type from ${peerId}: ${message.type}`);
       }
     } catch (error) {
-      console.error(`Error handling message from ${peerId}:`, error);
+      // MEMORY FIX: Rate limit error logging to prevent log spam and memory growth
+      // Only log full error once per peer per minute
+      if (!this._messageErrorLogTimes) {
+        this._messageErrorLogTimes = new Map();
+      }
+      
+      const now = Date.now();
+      const lastLogTime = this._messageErrorLogTimes.get(peerId) || 0;
+      
+      if (now - lastLogTime > 60000) { // Log at most once per minute per peer
+        console.error(`Error handling message from ${peerId}:`, error);
+        this._messageErrorLogTimes.set(peerId, now);
+        
+        // Clean up old entries to prevent memory leak
+        if (this._messageErrorLogTimes.size > 100) {
+          const cutoff = now - 120000; // Remove entries older than 2 minutes
+          for (const [key, time] of this._messageErrorLogTimes) {
+            if (time < cutoff) {
+              this._messageErrorLogTimes.delete(key);
+            }
+          }
+        }
+      }
     }
   }
 
@@ -3702,12 +3724,34 @@ export class KademliaDHT extends EventEmitter {
           const isTimeout = error.message && error.message.includes('timeout');
           const isStale = error.message && error.message.includes('stale');
           
-          if (isTimeout) {
-            console.warn(`⏰ Find node query timeout for ${peerId.substring(0, 8)}... (${error.message}) - connection may be stale`);
-          } else if (isStale) {
-            console.warn(`🔌 Find node query failed for ${peerId.substring(0, 8)}... - connection was stale and cleaned up`);
-          } else {
-            console.warn(`❌ Find node query failed for ${peerId.substring(0, 8)}...:`, error.message);
+          // MEMORY FIX: Rate limit timeout/failure logging to prevent log spam
+          if (!this._findNodeErrorLogTimes) {
+            this._findNodeErrorLogTimes = new Map();
+          }
+          
+          const now = Date.now();
+          const lastLogTime = this._findNodeErrorLogTimes.get(peerId) || 0;
+          
+          if (now - lastLogTime > 60000) { // Log at most once per minute per peer
+            if (isTimeout) {
+              console.warn(`⏰ Find node query timeout for ${peerId.substring(0, 8)}... (${error.message}) - connection may be stale`);
+            } else if (isStale) {
+              console.warn(`🔌 Find node query failed for ${peerId.substring(0, 8)}... - connection was stale and cleaned up`);
+            } else {
+              console.warn(`❌ Find node query failed for ${peerId.substring(0, 8)}...:`, error.message);
+            }
+            
+            this._findNodeErrorLogTimes.set(peerId, now);
+            
+            // Clean up old entries to prevent memory leak
+            if (this._findNodeErrorLogTimes.size > 100) {
+              const cutoff = now - 120000; // Remove entries older than 2 minutes
+              for (const [key, time] of this._findNodeErrorLogTimes) {
+                if (time < cutoff) {
+                  this._findNodeErrorLogTimes.delete(key);
+                }
+              }
+            }
           }
 
           // CRITICAL: Don't count rate limiting as a peer failure
@@ -4385,7 +4429,29 @@ export class KademliaDHT extends EventEmitter {
           return response.value;
         }
       } catch (error) {
-        console.warn(`⚠️ GET: Query failed for connected node ${node.id.toString().substring(0, 8)}...: ${error.message}`);
+        // MEMORY FIX: Rate limit GET query failure logging
+        const peerId = node.id.toString();
+        if (!this._getQueryErrorLogTimes) {
+          this._getQueryErrorLogTimes = new Map();
+        }
+        
+        const now = Date.now();
+        const lastLogTime = this._getQueryErrorLogTimes.get(peerId) || 0;
+        
+        if (now - lastLogTime > 60000) { // Log at most once per minute per peer
+          console.warn(`⚠️ GET: Query failed for connected node ${peerId.substring(0, 8)}...: ${error.message}`);
+          this._getQueryErrorLogTimes.set(peerId, now);
+          
+          // Clean up old entries to prevent memory leak
+          if (this._getQueryErrorLogTimes.size > 100) {
+            const cutoff = now - 120000;
+            for (const [key, time] of this._getQueryErrorLogTimes) {
+              if (time < cutoff) {
+                this._getQueryErrorLogTimes.delete(key);
+              }
+            }
+          }
+        }
       }
     }
 
@@ -4565,18 +4631,41 @@ export class KademliaDHT extends EventEmitter {
       
       return result;
     } catch (error) {
-      console.error(`❌ Failed to send ${message.type} to ${peerId.substring(0, 8)}...: ${error.message}`);
+      // MEMORY FIX: Rate limit error logging to prevent log spam and memory growth
+      // Only log full error once per peer per minute
+      if (!this._sendMessageErrorLogTimes) {
+        this._sendMessageErrorLogTimes = new Map();
+      }
+      
+      const now = Date.now();
+      const lastLogTime = this._sendMessageErrorLogTimes.get(peerId) || 0;
+      
+      if (now - lastLogTime > 60000) { // Log at most once per minute per peer
+        console.error(`❌ Failed to send ${message.type} to ${peerId.substring(0, 8)}...: ${error.message}`);
 
-      // Add debugging info for connection state
-      const peerNode = this.routingTable.getNode(peerId);
-      if (peerNode && peerNode.connectionManager) {
-        // REFACTORED: isConnected() no longer takes peerId parameter (single-connection architecture)
-        const isConnected = peerNode.connectionManager.isConnected();
-        console.error(`   Connection state: isConnected=${isConnected}`);
-        console.error(`   Connection manager type: ${peerNode.connectionManager.constructor.name}`);
-        console.error(`   Manager peerId: ${peerNode.connectionManager.peerId?.substring(0, 8) || 'none'}`);
-      } else {
-        console.error(`   No connection manager found for peer`);
+        // Add debugging info for connection state
+        const peerNode = this.routingTable.getNode(peerId);
+        if (peerNode && peerNode.connectionManager) {
+          // REFACTORED: isConnected() no longer takes peerId parameter (single-connection architecture)
+          const isConnected = peerNode.connectionManager.isConnected();
+          console.error(`   Connection state: isConnected=${isConnected}`);
+          console.error(`   Connection manager type: ${peerNode.connectionManager.constructor.name}`);
+          console.error(`   Manager peerId: ${peerNode.connectionManager.peerId?.substring(0, 8) || 'none'}`);
+        } else {
+          console.error(`   No connection manager found for peer`);
+        }
+        
+        this._sendMessageErrorLogTimes.set(peerId, now);
+        
+        // Clean up old entries to prevent memory leak
+        if (this._sendMessageErrorLogTimes.size > 100) {
+          const cutoff = now - 120000; // Remove entries older than 2 minutes
+          for (const [key, time] of this._sendMessageErrorLogTimes) {
+            if (time < cutoff) {
+              this._sendMessageErrorLogTimes.delete(key);
+            }
+          }
+        }
       }
 
       throw error;

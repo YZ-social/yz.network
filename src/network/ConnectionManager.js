@@ -246,7 +246,29 @@ export class ConnectionManager extends EventEmitter {
       this.emit('data', { peerId, data: message });
 
     } catch (error) {
-      console.error(`Error handling message from ${peerId}:`, error);
+      // MEMORY FIX: Rate limit error logging to prevent log spam and memory growth
+      // Only log full error once per peer per minute
+      if (!this._messageErrorLogTimes) {
+        this._messageErrorLogTimes = new Map();
+      }
+      
+      const now = Date.now();
+      const lastLogTime = this._messageErrorLogTimes.get(peerId) || 0;
+      
+      if (now - lastLogTime > 60000) { // Log at most once per minute per peer
+        console.error(`Error handling message from ${peerId}:`, error);
+        this._messageErrorLogTimes.set(peerId, now);
+        
+        // Clean up old entries to prevent memory leak
+        if (this._messageErrorLogTimes.size > 100) {
+          const cutoff = now - 120000; // Remove entries older than 2 minutes
+          for (const [key, time] of this._messageErrorLogTimes) {
+            if (time < cutoff) {
+              this._messageErrorLogTimes.delete(key);
+            }
+          }
+        }
+      }
     }
   }
 

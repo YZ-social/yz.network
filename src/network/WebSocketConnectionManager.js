@@ -873,12 +873,42 @@ export class WebSocketConnectionManager extends ConnectionManager {
         if (result.success) {
           this.currentRTT = result.rtt;
           this.lastPingTime = Date.now();
+          this.consecutivePingFailures = 0; // Reset failure count on success
         } else if (result.error && !result.error.includes('Inactive browser tab') && !result.error.includes('skipped')) {
-          console.error(`❌ Failed to ping ${peerId.substring(0, 8)}...: ${result.error}`);
+          // MEMORY FIX: Rate limit "Failed to ping" log messages to prevent log spam
+          // Only log once per peer per minute to reduce memory usage from string allocations
+          this.consecutivePingFailures = (this.consecutivePingFailures || 0) + 1;
+          const now = Date.now();
+          const lastLogTime = this._lastPingFailureLogTime || 0;
+          
+          if (now - lastLogTime > 60000) { // Log at most once per minute
+            console.warn(`⚠️ Ping failed for ${peerId.substring(0, 8)}... (${this.consecutivePingFailures} consecutive failures): ${result.error}`);
+            this._lastPingFailureLogTime = now;
+          }
+          
+          // CRITICAL: If connection is gone, stop pinging immediately
+          if (result.error.includes('No connection to peer')) {
+            console.log(`🛑 Stopping ping for ${peerId.substring(0, 8)}... - connection lost`);
+            this.stopPing();
+          }
         }
       } catch (error) {
         if (!error.message?.includes('destroyed')) {
-          console.error(`❌ Failed to ping ${peerId.substring(0, 8)}...:`, error);
+          // MEMORY FIX: Rate limit error logging
+          this.consecutivePingFailures = (this.consecutivePingFailures || 0) + 1;
+          const now = Date.now();
+          const lastLogTime = this._lastPingFailureLogTime || 0;
+          
+          if (now - lastLogTime > 60000) { // Log at most once per minute
+            console.warn(`⚠️ Ping error for ${peerId.substring(0, 8)}... (${this.consecutivePingFailures} consecutive failures):`, error.message);
+            this._lastPingFailureLogTime = now;
+          }
+          
+          // CRITICAL: If connection is gone, stop pinging immediately
+          if (error.message?.includes('No connection to peer')) {
+            console.log(`🛑 Stopping ping for ${peerId.substring(0, 8)}... - connection lost`);
+            this.stopPing();
+          }
         }
       }
     }
