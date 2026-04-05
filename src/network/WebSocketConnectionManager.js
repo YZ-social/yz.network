@@ -866,6 +866,20 @@ export class WebSocketConnectionManager extends ConnectionManager {
       return;
     }
 
+    // CRITICAL FIX: Never ping ourselves - this can happen if peerId was incorrectly
+    // set to the local node ID due to a bug in connection setup
+    if (this.localNodeId && peerId === this.localNodeId) {
+      // Rate limit this warning to prevent log spam
+      const now = Date.now();
+      if (!this._lastSelfPingWarning || now - this._lastSelfPingWarning > 60000) {
+        console.warn(`⚠️ Connection manager has peerId set to local node ID (${peerId.substring(0, 8)}...) - stopping ping`);
+        this._lastSelfPingWarning = now;
+      }
+      // Stop the ping interval since this is a misconfigured manager
+      this.stopPing();
+      return;
+    }
+
     // Use DHT's pingCallback if available (preferred - proper response tracking)
     if (this.pingCallback) {
       try {

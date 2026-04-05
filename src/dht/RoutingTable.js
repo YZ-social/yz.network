@@ -220,7 +220,12 @@ export class RoutingTable {
     // This prevents the negative bucket index issue
     const nodeIdStr = nodeId instanceof DHTNodeId ? nodeId.toString() : nodeId;
     if (nodeIdStr === this.localNodeId.toString()) {
-      console.warn(`⚠️ Attempted to look up local node ID ${nodeIdStr.substring(0, 8)}... in routing table - returning null`);
+      // MEMORY FIX: Rate limit this warning to prevent log spam (once per minute)
+      const now = Date.now();
+      if (!this._lastLocalNodeLookupWarning || now - this._lastLocalNodeLookupWarning > 60000) {
+        console.warn(`⚠️ Attempted to look up local node ID ${nodeIdStr.substring(0, 8)}... in routing table - returning null (rate limited)`);
+        this._lastLocalNodeLookupWarning = now;
+      }
       return null;
     }
 

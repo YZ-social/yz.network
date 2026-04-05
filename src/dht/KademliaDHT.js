@@ -3027,6 +3027,18 @@ export class KademliaDHT extends EventEmitter {
    * @returns {Promise<{success: boolean, rtt?: number, error?: string}>}
    */
   async pingPeer(peerId, timeout = 5000) {
+    // CRITICAL FIX: Never ping ourselves - this can happen if a connection manager
+    // has peerId set to the local node ID due to a bug
+    if (peerId === this.localNodeId.toString()) {
+      // Rate limit this warning to prevent log spam
+      const now = Date.now();
+      if (!this._lastSelfPingWarning || now - this._lastSelfPingWarning > 60000) {
+        console.warn(`⚠️ Attempted to ping self (${peerId.substring(0, 8)}...) - skipping (rate limited)`);
+        this._lastSelfPingWarning = now;
+      }
+      return { success: false, error: 'Cannot ping self' };
+    }
+
     // Skip pinging inactive browser tabs
     const peerNode = this.routingTable.getNode(peerId);
     if (peerNode?.metadata?.nodeType === 'browser' && peerNode.metadata?.tabVisible === false) {
@@ -6885,10 +6897,16 @@ export class KademliaDHT extends EventEmitter {
    */
   async pingNodes() {
     const nodesToPing = this.routingTable.getNodesToPing(this.currentPingInterval);
+    const localNodeIdStr = this.localNodeId.toString();
 
     for (const node of nodesToPing) {
-      if (this.isPeerConnected(node.id.toString())) {
-        await this.pingPeer(node.id.toString());
+      const nodeIdStr = node.id.toString();
+      // CRITICAL FIX: Skip local node ID (should never be in routing table, but defense in depth)
+      if (nodeIdStr === localNodeIdStr) {
+        continue;
+      }
+      if (this.isPeerConnected(nodeIdStr)) {
+        await this.pingPeer(nodeIdStr);
       }
     }
   }
