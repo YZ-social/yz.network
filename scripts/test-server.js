@@ -17,16 +17,17 @@ const PORT = process.env.PORT || 3000;
 
 // Serve static files from dist directory
 const distPath = path.join(__dirname, '..', 'dist');
+
+// Health check endpoint (must be before static/catch-all routes)
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 app.use(express.static(distPath));
 
 // Serve index.html for all routes (SPA)
 app.get('*', (req, res) => {
   res.sendFile(path.join(distPath, 'index.html'));
-});
-
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 const server = app.listen(PORT, () => {
