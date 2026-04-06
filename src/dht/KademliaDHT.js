@@ -6978,6 +6978,46 @@ export class KademliaDHT extends EventEmitter {
   }
 
   /**
+   * Analyze storage keys for debugging memory growth
+   * @returns {Object} Storage analysis with key prefixes and counts
+   */
+  analyzeStorageKeys() {
+    const prefixCounts = {};
+    const oldestEntries = [];
+    const newestEntries = [];
+    const now = Date.now();
+
+    for (const [key, stored] of this.storage.entries()) {
+      // Extract prefix (everything before first ':' or the whole key if no ':')
+      const colonIndex = key.indexOf(':');
+      const prefix = colonIndex > 0 ? key.substring(0, colonIndex) : 'no-prefix';
+      prefixCounts[prefix] = (prefixCounts[prefix] || 0) + 1;
+
+      // Track age
+      const ageMs = now - stored.timestamp;
+      oldestEntries.push({ key: key.substring(0, 50), ageMs, publisher: stored.publisher?.substring(0, 8) });
+    }
+
+    // Sort by age
+    oldestEntries.sort((a, b) => b.ageMs - a.ageMs);
+
+    return {
+      totalEntries: this.storage.size,
+      prefixCounts,
+      oldest5: oldestEntries.slice(0, 5).map(e => ({
+        key: e.key,
+        ageMinutes: Math.round(e.ageMs / 60000),
+        publisher: e.publisher
+      })),
+      newest5: oldestEntries.slice(-5).reverse().map(e => ({
+        key: e.key,
+        ageMinutes: Math.round(e.ageMs / 60000),
+        publisher: e.publisher
+      }))
+    };
+  }
+
+  /**
    * Debug utility: Show strategic connection management status
    */
   debugStrategicConnections() {

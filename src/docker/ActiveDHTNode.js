@@ -540,7 +540,10 @@ export class ActiveDHTNode extends NodeDHTClient {
         : 100,
       
       // Internal Map sizes for memory leak detection
-      map_sizes: mapSizes
+      map_sizes: mapSizes,
+      
+      // Storage analysis for debugging
+      storage_analysis: this.dht?.analyzeStorageKeys ? this.dht.analyzeStorageKeys() : null
     };
   }
 
