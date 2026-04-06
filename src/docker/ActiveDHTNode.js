@@ -859,10 +859,11 @@ export class ActiveDHTNode extends NodeDHTClient {
       this.performHealthCheck();
     }, 30000);
 
-    // Periodic DHT operations for throughput measurement (every 2 minutes)
-    this.throughputTestInterval = setInterval(() => {
-      this.performThroughputTest();
-    }, 120000);
+    // NOTE: Throughput is measured from actual DHT/PubSub operations via:
+    // - data_bytes_received_per_second / data_bytes_sent_per_second
+    // - operations_per_second
+    // - ping_latency_p50/p95/p99
+    // No synthetic test data is generated - we report 0 when idle.
   }
 
   /**
@@ -893,60 +894,6 @@ export class ActiveDHTNode extends NodeDHTClient {
   }
 
   /**
-   * Perform periodic DHT operations to measure throughput
-   */
-  async performThroughputTest() {
-    if (!this.dht) return;
-
-    try {
-      console.log('≡ƒôè Performing throughput test operations...');
-      
-      // Perform a few findNode operations (these are common DHT maintenance operations)
-      const randomNodeId = crypto.randomBytes(20).toString('hex');
-      await this.findNode(randomNodeId);
-      
-      // Small delay between operations
-      await new Promise(resolve => setTimeout(resolve, 100));
-      
-      // Perform a test store operation
-      const testKey = `throughput_test_${Date.now()}`;
-      const testValue = { timestamp: Date.now(), nodeId: this.nodeId.toString().substring(0, 8) };
-      await this.store(testKey, JSON.stringify(testValue), 300); // 5 minute TTL
-      
-      // Perform PubSub test operations if PubSub is available
-      if (this.pubsub) {
-        console.log('📊 Performing PubSub test operations...');
-        
-        // Test publish operation
-        const testTopic = `test_topic_${this.nodeId.toString().substring(0, 8)}`;
-        const testMessage = { 
-          type: 'throughput_test', 
-          timestamp: Date.now(), 
-          nodeId: this.nodeId.toString().substring(0, 8) 
-        };
-        
-        await this.publish(testTopic, testMessage);
-        
-        // Test subscribe operation - only subscribe once to avoid listener leak
-        const globalTopic = 'test_topic_global';
-        if (!this.pubsub.isSubscribed(globalTopic)) {
-          await this.subscribe(globalTopic, (message) => {
-            console.log(`📬 Received test message:`, message);
-          });
-        }
-        
-        console.log('✅ PubSub test operations completed');
-      } else {
-        console.log('⚠️ PubSub not available for test operations');
-      }
-      
-      console.log('Γ£à All throughput test operations completed');
-    } catch (error) {
-      console.warn('ΓÜá∩╕Å Throughput test failed:', error.message);
-    }
-  }
-
-  /**
    * Graceful shutdown
    */
   async shutdown() {
@@ -955,7 +902,6 @@ export class ActiveDHTNode extends NodeDHTClient {
     // Stop background tasks
     if (this.metricsInterval) clearInterval(this.metricsInterval);
     if (this.healthInterval) clearInterval(this.healthInterval);
-    if (this.throughputTestInterval) clearInterval(this.throughputTestInterval);
 
     // Close metrics server
     if (this.metricsServer) {

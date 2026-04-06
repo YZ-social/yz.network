@@ -6739,14 +6739,56 @@ export class KademliaDHT extends EventEmitter {
 
   /**
    * Clean up expired data
+   * Respects content-based TTL (expiresAt) if present in stored value,
+   * otherwise falls back to blanket expireInterval (24 hours)
    */
   cleanup() {
     const now = Date.now();
     let cleaned = 0;
+    let contentExpired = 0;
+    let timestampExpired = 0;
 
     // Clean expired storage
     for (const [key, stored] of this.storage.entries()) {
-      if (now - stored.timestamp > this.options.expireInterval) {
+      let shouldDelete = false;
+
+      // Check if the stored value has content-based expiration (PubSub data)
+      // The value might be serialized JSON or an object with expiresAt
+      try {
+        let valueObj = stored.value;
+        
+        // If value is a string, try to parse it as JSON
+        if (typeof valueObj === 'string') {
+          try {
+            valueObj = JSON.parse(valueObj);
+          } catch {
+            // Not JSON, use timestamp-based expiration
+            valueObj = null;
+          }
+        }
+
+        // Check for expiresAt in the value (PubSub messages, collections, etc.)
+        if (valueObj && typeof valueObj.expiresAt === 'number') {
+          if (now > valueObj.expiresAt) {
+            shouldDelete = true;
+            contentExpired++;
+          }
+        } else {
+          // No content-based TTL, use timestamp-based expiration
+          if (now - stored.timestamp > this.options.expireInterval) {
+            shouldDelete = true;
+            timestampExpired++;
+          }
+        }
+      } catch {
+        // Error checking expiration, fall back to timestamp-based
+        if (now - stored.timestamp > this.options.expireInterval) {
+          shouldDelete = true;
+          timestampExpired++;
+        }
+      }
+
+      if (shouldDelete) {
         this.storage.delete(key);
         this.republishQueue.delete(key);
         cleaned++;
@@ -6764,7 +6806,7 @@ export class KademliaDHT extends EventEmitter {
     // Note: Stale connections are cleaned up by individual connection managers
 
     if (cleaned > 0 || staleRemoved > 0 || routingCleanup > 0) {
-      console.log(`Cleanup: ${cleaned} storage, ${staleRemoved} stale nodes, ${routingCleanup} routing inconsistencies`);
+      console.log(`Cleanup: ${cleaned} storage (${contentExpired} content-expired, ${timestampExpired} timestamp-expired), ${staleRemoved} stale nodes, ${routingCleanup} routing inconsistencies`);
     }
   }
 
