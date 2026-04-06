@@ -472,6 +472,9 @@ export class ActiveDHTNode extends NodeDHTClient {
     const memoryUsedBytes = memoryUsage.rss;
     const memoryPercent = memoryLimitBytes > 0 ? (memoryUsedBytes / memoryLimitBytes) * 100 : 0;
 
+    // Get internal Map sizes for memory leak detection
+    const mapSizes = this.dht ? this.dht.getInternalMapSizes() : {};
+
     return {
       // Node info
       node_uptime_seconds: uptime,
@@ -534,7 +537,10 @@ export class ActiveDHTNode extends NodeDHTClient {
       peak_connections: this.metrics.peakConnections,
       connection_stability_ratio: this.metrics.connectionsEstablished > 0 
         ? ((this.metrics.connectionsEstablished - this.metrics.connectionsLost) / this.metrics.connectionsEstablished * 100).toFixed(1)
-        : 100
+        : 100,
+      
+      // Internal Map sizes for memory leak detection
+      map_sizes: mapSizes
     };
   }
 

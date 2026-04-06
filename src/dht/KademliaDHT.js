@@ -6942,7 +6942,38 @@ export class KademliaDHT extends EventEmitter {
         avgConnectionsPerBucket: activeBuckets.length > 0 ?
           (connectedPeers.length / activeBuckets.length).toFixed(1) : 0
       },
-      bootstrap: this.bootstrap.getStatus()
+      bootstrap: this.bootstrap.getStatus(),
+      // Memory tracking - internal Map sizes for leak detection
+      internalMaps: this.getInternalMapSizes()
+    };
+  }
+
+  /**
+   * Get sizes of all internal Maps for memory leak detection
+   * @returns {Object} Map sizes
+   */
+  getInternalMapSizes() {
+    return {
+      storage: this.storage?.size || 0,
+      republishQueue: this.republishQueue?.size || 0,
+      pendingRequests: this.pendingRequests?.size || 0,
+      messageQueue: this.messageQueue?.size || 0,
+      messageProcessingFlags: this.messageProcessingFlags?.size || 0,
+      pendingWebSocketRequests: this.pendingWebSocketRequests?.size || 0,
+      processedMessages: this.processedMessages?.size || 0,
+      failedPeerQueries: this.failedPeerQueries?.size || 0,
+      peerFailureBackoff: this.peerFailureBackoff?.size || 0,
+      findNodeRateLimit: this.findNodeRateLimit?.size || 0,
+      bucketLastActivity: this.bucketLastActivity?.size || 0,
+      peerNodes: this.peerNodes?.size || 0,
+      unsolicitedResponseCounts: this.unsolicitedResponseCounts?.size || 0,
+      connectionFailureCount: this.connectionFailureCount?.size || 0,
+      failedOfferChecks: this.failedOfferChecks?.size || 0,
+      // Error log rate limiting Maps
+      _messageErrorLogTimes: this._messageErrorLogTimes?.size || 0,
+      _findNodeErrorLogTimes: this._findNodeErrorLogTimes?.size || 0,
+      _getQueryErrorLogTimes: this._getQueryErrorLogTimes?.size || 0,
+      _sendMessageErrorLogTimes: this._sendMessageErrorLogTimes?.size || 0
     };
   }
 
