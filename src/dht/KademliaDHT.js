@@ -2015,6 +2015,11 @@ export class KademliaDHT extends EventEmitter {
         console.log(`📋 Node ${peerId.substring(0, 8)} confirmed in routing table`);
 
         this.considerDHTSignaling();
+        
+        // CRITICAL FIX: Still emit peerConnected for reconnections
+        // Bridge nodes and other listeners need to know about ALL connections,
+        // not just new nodes added to the routing table
+        this.emit('peerConnected', peerId);
         return;
       }
 
@@ -5835,13 +5840,26 @@ export class KademliaDHT extends EventEmitter {
 
     const connectedPeers = this.getConnectedPeers().length;
     const routingNodes = this.routingTable.getAllNodes().length;
+    
+    // FULL MESH FIX: Check if we've achieved full mesh connectivity
+    // For small networks (< k nodes), we should be connected to ALL other nodes
+    // Only switch to slow refresh when we have full mesh OR network is large enough
+    const k = this.options.k || 20;
+    const isSmallNetwork = routingNodes < k;
+    const hasFullMesh = isSmallNetwork ? (connectedPeers >= routingNodes) : (connectedPeers >= k - 1);
+    const unconnectedNodes = routingNodes - connectedPeers;
 
     // Determine appropriate refresh interval based on connectivity
     let nextInterval;
     if (connectedPeers < 3 || routingNodes < 4) {
       // New/isolated node - aggressive discovery for mesh formation
       nextInterval = this.options.aggressiveRefreshInterval;
-      console.log(`🚀 Aggressive refresh mode: ${nextInterval/1000}s (${connectedPeers} peers, ${routingNodes} routing)`);
+      console.log(`🚀 Aggressive refresh mode: ${nextInterval/1000}s (${connectedPeers} peers, ${routingNodes} routing, ${unconnectedNodes} unconnected)`);
+    } else if (!hasFullMesh && isSmallNetwork) {
+      // FULL MESH FIX: Small network without full mesh - stay aggressive
+      // This ensures we keep trying to connect to all peers until we achieve full mesh
+      nextInterval = this.options.aggressiveRefreshInterval;
+      console.log(`🔗 Full mesh mode: ${nextInterval/1000}s (${connectedPeers}/${routingNodes} peers, need ${unconnectedNodes} more connections)`);
     } else if (connectedPeers < 5 || routingNodes < 8) {
       // Moderately connected - medium interval
       nextInterval = this.options.refreshInterval;
@@ -5849,7 +5867,7 @@ export class KademliaDHT extends EventEmitter {
     } else {
       // Well connected - standard Kademlia timing
       nextInterval = this.options.standardRefreshInterval;
-      console.log(`🐌 Standard refresh mode: ${nextInterval/1000}s (${connectedPeers} peers, ${routingNodes} routing)`);
+      console.log(`🐌 Standard refresh mode: ${nextInterval/1000}s (${connectedPeers} peers, ${routingNodes} routing, fullMesh=${hasFullMesh})`);
     }
 
     this.currentRefreshInterval = nextInterval;
