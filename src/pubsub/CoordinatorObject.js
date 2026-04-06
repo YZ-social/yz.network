@@ -10,6 +10,7 @@
  * - Version-based concurrency: supports optimistic locking for conflict detection
  * - Channel state tracking: ACTIVE, RECOVERING, or FAILED
  * - History-based merging: resolves conflicts via set union of collection IDs
+ * - Inactivity-based TTL: coordinators expire after 24 hours of inactivity
  *
  * Integration:
  * - Stored at DHT key hash(topicID)
@@ -36,6 +37,12 @@ export class CoordinatorObject {
    * Minimum history entries to keep after pruning
    */
   static MIN_HISTORY_ENTRIES = 10;
+
+  /**
+   * Inactivity TTL - coordinators expire after this period of no updates (24 hours)
+   * This prevents abandoned topics from consuming storage indefinitely
+   */
+  static INACTIVITY_TTL = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
   /**
    * Channel states
@@ -359,7 +366,10 @@ export class CoordinatorObject {
       previousCoordinator: this.previousCoordinator,
       state: this.state,
       createdAt: this.createdAt,
-      lastModified: this.lastModified
+      lastModified: this.lastModified,
+      // Inactivity-based TTL: expires 24 hours after last modification
+      // This allows DHT cleanup to remove abandoned coordinators
+      expiresAt: this.lastModified + CoordinatorObject.INACTIVITY_TTL
     };
   }
 
