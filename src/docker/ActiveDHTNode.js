@@ -859,11 +859,63 @@ export class ActiveDHTNode extends NodeDHTClient {
       this.performHealthCheck();
     }, 30000);
 
+    // Adaptive peer discovery - only runs when needed
+    // Per Kademlia spec: buckets should be refreshed hourly if no activity
+    // But for small/low-connectivity networks, we need more aggressive discovery
+    this.peerDiscoveryInterval = setInterval(() => {
+      this.performAdaptivePeerDiscovery();
+    }, 120000); // Check every 2 minutes
+
     // NOTE: Throughput is measured from actual DHT/PubSub operations via:
     // - data_bytes_received_per_second / data_bytes_sent_per_second
     // - operations_per_second
     // - ping_latency_p50/p95/p99
     // No synthetic test data is generated - we report 0 when idle.
+  }
+
+  /**
+   * Perform adaptive peer discovery based on network conditions
+   * 
+   * Per Kademlia spec, buckets should be refreshed hourly if no activity.
+   * However, for small networks or nodes with low connectivity, we need
+   * more aggressive discovery to achieve full mesh.
+   * 
+   * This only triggers findNode when:
+   * 1. Network is small (< k nodes) and we don't have full mesh
+   * 2. Node has very few connections (< 3)
+   * 3. Significant peer churn detected
+   */
+  async performAdaptivePeerDiscovery() {
+    if (!this.dht) return;
+
+    try {
+      const connectedPeers = this.dht.getConnectedPeers().length;
+      const routingTableSize = this.dht.routingTable.getAllNodes().length;
+      const k = this.dht.options.k || 20;
+      
+      // Condition 1: Small network without full mesh
+      const isSmallNetwork = routingTableSize < k;
+      const hasFullMesh = connectedPeers >= routingTableSize;
+      
+      // Condition 2: Very low connectivity
+      const hasLowConnectivity = connectedPeers < 3;
+      
+      // Condition 3: Significant churn (lost more than 20% of peak connections)
+      const peakConnections = this.metrics.peakConnections || connectedPeers;
+      const hasSignificantChurn = peakConnections > 5 && connectedPeers < peakConnections * 0.8;
+      
+      // Only perform discovery if one of the conditions is met
+      if ((isSmallNetwork && !hasFullMesh) || hasLowConnectivity || hasSignificantChurn) {
+        console.log(`🔍 Adaptive peer discovery triggered: connected=${connectedPeers}, routing=${routingTableSize}, smallNetwork=${isSmallNetwork}, fullMesh=${hasFullMesh}, lowConn=${hasLowConnectivity}, churn=${hasSignificantChurn}`);
+        
+        // Perform a findNode with a random target to discover peers
+        const randomNodeId = crypto.randomBytes(20).toString('hex');
+        await this.findNode(randomNodeId);
+      }
+      // Otherwise, rely on normal Kademlia bucket refresh (hourly) in KademliaDHT
+    } catch (error) {
+      // Silently ignore errors - this is just maintenance
+    }
   }
 
   /**
@@ -897,11 +949,12 @@ export class ActiveDHTNode extends NodeDHTClient {
    * Graceful shutdown
    */
   async shutdown() {
-    console.log('≡ƒ¢æ Shutting down ActiveDHTNode...');
+    console.log('🛑 Shutting down ActiveDHTNode...');
 
     // Stop background tasks
     if (this.metricsInterval) clearInterval(this.metricsInterval);
     if (this.healthInterval) clearInterval(this.healthInterval);
+    if (this.peerDiscoveryInterval) clearInterval(this.peerDiscoveryInterval);
 
     // Close metrics server
     if (this.metricsServer) {
@@ -918,6 +971,6 @@ export class ActiveDHTNode extends NodeDHTClient {
       await this.dht.shutdown();
     }
 
-    console.log('Γ£à Shutdown complete');
+    console.log('✅ Shutdown complete');
   }
 }
