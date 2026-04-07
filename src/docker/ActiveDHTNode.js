@@ -880,10 +880,11 @@ export class ActiveDHTNode extends NodeDHTClient {
    * However, for small networks or nodes with low connectivity, we need
    * more aggressive discovery to achieve full mesh.
    * 
-   * This only triggers findNode when:
+   * This triggers findNode when:
    * 1. Network is small (< k nodes) and we don't have full mesh
    * 2. Node has very few connections (< 3)
    * 3. Significant peer churn detected
+   * 4. We have unconnected nodes in our routing table
    */
   async performAdaptivePeerDiscovery() {
     if (!this.dht) return;
@@ -894,8 +895,12 @@ export class ActiveDHTNode extends NodeDHTClient {
       const k = this.dht.options.k || 20;
       
       // Condition 1: Small network without full mesh
+      // Full mesh means connected to ALL known peers AND we know about enough peers
       const isSmallNetwork = routingTableSize < k;
-      const hasFullMesh = connectedPeers >= routingTableSize;
+      const connectedToAllKnown = connectedPeers >= routingTableSize;
+      // If we're connected to all known peers but know fewer than k-1, we need to discover more
+      const needsMoreDiscovery = connectedToAllKnown && routingTableSize < k - 1;
+      const hasFullMesh = connectedToAllKnown && !needsMoreDiscovery;
       
       // Condition 2: Very low connectivity
       const hasLowConnectivity = connectedPeers < 3;
@@ -904,9 +909,14 @@ export class ActiveDHTNode extends NodeDHTClient {
       const peakConnections = this.metrics.peakConnections || connectedPeers;
       const hasSignificantChurn = peakConnections > 5 && connectedPeers < peakConnections * 0.8;
       
-      // Only perform discovery if one of the conditions is met
-      if ((isSmallNetwork && !hasFullMesh) || hasLowConnectivity || hasSignificantChurn) {
-        console.log(`🔍 Adaptive peer discovery triggered: connected=${connectedPeers}, routing=${routingTableSize}, smallNetwork=${isSmallNetwork}, fullMesh=${hasFullMesh}, lowConn=${hasLowConnectivity}, churn=${hasSignificantChurn}`);
+      // Condition 4: Have unconnected nodes in routing table
+      const hasUnconnectedNodes = connectedPeers < routingTableSize;
+      
+      // Perform discovery if any condition is met
+      const shouldDiscover = (isSmallNetwork && !hasFullMesh) || hasLowConnectivity || hasSignificantChurn || hasUnconnectedNodes || needsMoreDiscovery;
+      
+      if (shouldDiscover) {
+        console.log(`🔍 Adaptive peer discovery triggered: connected=${connectedPeers}, routing=${routingTableSize}, k=${k}, smallNetwork=${isSmallNetwork}, fullMesh=${hasFullMesh}, lowConn=${hasLowConnectivity}, churn=${hasSignificantChurn}, unconnected=${hasUnconnectedNodes}, needsMore=${needsMoreDiscovery}`);
         
         // Perform a findNode with a random target to discover peers
         const randomNodeId = crypto.randomBytes(20).toString('hex');
