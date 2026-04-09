@@ -442,8 +442,11 @@ export class ActiveDHTNode extends NodeDHTClient {
         connectionsLost: this.metrics.connectionsLost,
         connectionFailures: this.metrics.connectionFailures,
         churnPerMinute: this.calculateConnectionChurnRate(),
-        stabilityRatio: this.metrics.connectionsEstablished > 0 
-          ? ((this.metrics.connectionsEstablished - this.metrics.connectionsLost) / this.metrics.connectionsEstablished * 100).toFixed(1) + '%'
+        // Stability ratio: current connections as % of peak (more meaningful metric)
+        // Old formula (established-lost)/established was broken because lost can exceed established
+        // when disconnections happen before tracking starts
+        stabilityRatio: this.metrics.peakConnections > 0 
+          ? ((connectedPeers / this.metrics.peakConnections) * 100).toFixed(1) + '%'
           : '100%',
         netConnections: this.metrics.connectionsEstablished - this.metrics.connectionsLost
       },
@@ -535,8 +538,9 @@ export class ActiveDHTNode extends NodeDHTClient {
       reconnection_attempts_total: this.metrics.reconnectionAttempts,
       reconnection_successes_total: this.metrics.reconnectionSuccesses,
       peak_connections: this.metrics.peakConnections,
-      connection_stability_ratio: this.metrics.connectionsEstablished > 0 
-        ? ((this.metrics.connectionsEstablished - this.metrics.connectionsLost) / this.metrics.connectionsEstablished * 100).toFixed(1)
+      // Stability ratio: current connections as % of peak (more meaningful metric)
+      connection_stability_ratio: this.metrics.peakConnections > 0 
+        ? ((connectedPeers / this.metrics.peakConnections) * 100).toFixed(1)
         : 100,
       
       // Internal Map sizes for memory leak detection
