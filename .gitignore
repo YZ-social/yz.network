@@ -9,6 +9,22 @@ build/
 .env*
 !.env.example
 
+# Private keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+!*.test.key
+!*.example.pem
+
+# Secrets directories
+secrets/
+credentials/
+.secrets/
+.credentials/
+
 # Logs
 *.log
 
@@ -19,6 +35,9 @@ Thumbs.db
 # IDE/editor settings
 .vscode/
 .idea/
+
+# AI assistant settings (may contain permissions/credentials)
+.claude/
 
 # Coverage reports
 coverage/

@@ -1,6 +1,7 @@
 import { ConnectionManager } from './ConnectionManager.js';
 import { ConnectionManagerFactory } from './ConnectionManagerFactory.js';
 import { ConnectionStates, ConnectionTracker } from './ConnectionTracker.js';
+import { ConnectionMetricsTracker, ConnectionOutcome, ConnectionType } from './ConnectionMetricsTracker.js';
 
 /**
  * WebRTC-based connection manager for browser peers
@@ -38,14 +39,25 @@ export class WebRTCConnectionManager extends ConnectionManager {
     this.candidateTypes = { host: 0, srflx: 0, relay: 0 }; // Candidate type counts
 
     // Keep-alive system for browser tab visibility (single peer)
+    // Task 5.1: Handle NAT mapping timeout (typically 30 seconds for UDP)
+    // Keep-alive interval must be UNDER the NAT timeout to prevent mapping expiration
+    // Using 25 seconds for active tabs (under typical 30s NAT timeout)
+    // Using 10 seconds for inactive tabs (more aggressive to maintain connection)
     this.keepAliveIntervalId = null; // Interval ID for single peer
     this.keepAlivePings = new Set(); // Set of pending pings
     this.keepAliveLastResponse = null; // Last response timestamp
     this.keepAliveTimeouts = new Set(); // Set of timeout IDs
     this.isTabVisible = true;
-    this.keepAliveInterval = 30000; // 30 seconds for active tabs
-    this.keepAliveIntervalHidden = 10000; // 10 seconds for inactive tabs
-    this.keepAliveTimeout = 60000; // 60 seconds to wait for pong response
+    this.keepAliveInterval = options.keepAliveInterval || 25000; // 25 seconds for active tabs (under 30s NAT timeout)
+    this.keepAliveIntervalHidden = options.keepAliveIntervalHidden || 10000; // 10 seconds for inactive tabs
+    this.keepAliveTimeout = options.keepAliveTimeout || 60000; // 60 seconds to wait for pong response
+    
+    // NAT mapping timeout configuration
+    // Most NATs have a 30-second UDP mapping timeout, some aggressive NATs use 20 seconds
+    // We track this to proactively refresh mappings before they expire
+    this.natMappingTimeout = options.natMappingTimeout || 30000; // Typical NAT mapping timeout
+    this.natMappingRefreshMargin = options.natMappingRefreshMargin || 5000; // Refresh 5s before timeout
+    this.lastNatRefreshTime = null; // Track when we last refreshed NAT mapping
 
     // NOTE: Metadata now passed directly in peerConnected/metadataUpdated events
     // No intermediate storage needed - clean architecture!
@@ -171,7 +183,7 @@ export class WebRTCConnectionManager extends ConnectionManager {
       let resolved = false;
 
       const cleanup = () => {
-        if (this.connection) {
+        if (this.connection && typeof this.connection.removeEventListener === 'function') {
           this.connection.removeEventListener('connectionstatechange', onStateChange);
         }
         clearTimeout(timeoutId);
@@ -201,8 +213,8 @@ export class WebRTCConnectionManager extends ConnectionManager {
         resolve(finalState);
       }, timeout);
 
-      // Listen for state changes
-      if (this.connection) {
+      // Listen for state changes (guard against mock objects in tests)
+      if (this.connection && typeof this.connection.addEventListener === 'function') {
         this.connection.addEventListener('connectionstatechange', onStateChange);
       }
 
@@ -421,11 +433,20 @@ export class WebRTCConnectionManager extends ConnectionManager {
 
   /**
    * Create WebRTC connection to peer
+   * 
+   * Task 4.1: Modified to support non-blocking mode for parallel connection strategy.
+   * When options.nonBlocking is true, returns immediately after starting ICE gathering
+   * instead of waiting for the connection to complete. This enables the "relay first"
+   * strategy where relay is used immediately while WebRTC probes in parallel.
+   * 
    * @param {string} peerId - Target peer ID
    * @param {boolean} initiator - Whether we're initiating the connection
    * @param {Object} metadata - Peer metadata (optional, for API compatibility)
+   * @param {Object} options - Connection options
+   * @param {boolean} options.nonBlocking - If true, return immediately without waiting for ICE completion
+   * @returns {Promise<RTCPeerConnection>} - In blocking mode: resolves when connected. In non-blocking mode: resolves immediately after ICE starts.
    */
-  async createConnection(peerId, initiator = true, metadata = null) {
+  async createConnection(peerId, initiator = true, metadata = null, options = {}) {
     if (this.isDestroyed) {
       throw new Error('WebRTCConnectionManager is destroyed');
     }
@@ -434,7 +455,10 @@ export class WebRTCConnectionManager extends ConnectionManager {
       throw new Error(`Connection already exists to ${this.peerId}`);
     }
 
-    console.log(`🚀 Creating ${initiator ? 'outgoing' : 'incoming'} WebRTC connection to ${peerId.substring(0, 8)}...`);
+    // Task 4.1: Support non-blocking mode for parallel connection strategy
+    const nonBlocking = options.nonBlocking === true;
+
+    console.log(`🚀 Creating ${initiator ? 'outgoing' : 'incoming'} WebRTC connection to ${peerId.substring(0, 8)}... (nonBlocking: ${nonBlocking})`);
     console.log(`🔍 DEBUG WebRTC createConnection: peerId=${peerId.substring(0, 8)}, initiator=${initiator}, hasMetadata=${!!metadata}`);
     if (metadata) {
       console.log(`🔍 DEBUG WebRTC metadata: nodeType=${metadata.nodeType}, canAccept=${metadata.canAcceptConnections}`);
@@ -473,6 +497,24 @@ export class WebRTCConnectionManager extends ConnectionManager {
           iceConnectionState: pc.iceConnectionState,
           signalingState: pc.signalingState
         });
+        
+        // Track timeout failure (Task 1.3)
+        const startTime = this.pendingConnectionInfo ? this.pendingConnectionInfo.startTime : null;
+        const duration = startTime ? Date.now() - startTime : this.options.timeout;
+        ConnectionMetricsTracker.recordAttempt({
+          connectionType: ConnectionType.BROWSER_TO_BROWSER,
+          outcome: ConnectionOutcome.FAILURE,
+          localNodeType: 'browser',
+          remoteNodeType: 'browser',
+          peerId,
+          duration,
+          failureReason: 'timeout',
+          candidateTypes: { ...this.candidateTypes }
+        });
+        
+        // Task 4.1: Emit connectionFailed event for non-blocking callers
+        this.emit('connectionFailed', { peerId, reason: 'timeout' });
+        
         this.destroyConnection(peerId, 'timeout');
       }
     }, this.options.timeout);
@@ -490,13 +532,15 @@ export class WebRTCConnectionManager extends ConnectionManager {
       // Create offer
       try {
         const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        console.log(`📤 Created offer for ${peerId.substring(0, 8)}...`);
+        // Task 6.1: Apply IPv6 prioritization before setting local description
+        // This boosts IPv6 host candidate priorities to prefer direct IPv6 connections
+        const modifiedOffer = await this._setLocalDescriptionWithIPv6Priority(pc, offer);
+        console.log(`📤 Created offer for ${peerId.substring(0, 8)}... (IPv6 prioritized)`);
 
         // Send offer through appropriate signaling channel
         await this.sendSignal(peerId, {
           type: 'offer',
-          sdp: offer.sdp
+          sdp: modifiedOffer.sdp
         });
       } catch (error) {
         console.error(`❌ Failed to create offer for ${peerId}:`, error);
@@ -505,6 +549,21 @@ export class WebRTCConnectionManager extends ConnectionManager {
       }
     }
 
+    // Task 4.1: Non-blocking mode - return immediately after ICE gathering starts
+    // The caller can listen for 'peerConnected' and 'connectionFailed' events
+    // This enables the parallel connection strategy where relay is used immediately
+    // while WebRTC probes in the background
+    if (nonBlocking) {
+      console.log(`🔄 Non-blocking mode: ICE gathering started for ${peerId.substring(0, 8)}..., returning immediately`);
+      
+      // Emit event to indicate ICE probing has started
+      this.emit('iceGatheringStarted', { peerId, pc });
+      
+      // Return the peer connection immediately - caller uses events for completion
+      return pc;
+    }
+
+    // Blocking mode (default) - wait for connection to complete
     return new Promise((resolve, reject) => {
       const checkConnection = () => {
         if (this.connectionState === 'connected') {
@@ -549,6 +608,9 @@ export class WebRTCConnectionManager extends ConnectionManager {
       console.log(`🔍 WebRTC Peer Connection state: ${pc.connectionState}, ICE state: ${pc.iceConnectionState}, Signaling state: ${pc.signalingState}`);
 
       // ICE candidate gathering with enhanced debugging
+      // TRICKLE ICE: Send candidates immediately as they're discovered (Task 5.2)
+      // This is more efficient than waiting for gathering complete - candidates
+      // are sent to the peer as soon as they're available, reducing connection time.
       const onIceCandidate = (event) => {
         if (event.candidate) {
           console.log(`🧊 ICE candidate for ${peerId.substring(0, 8)}...: ${event.candidate.type} (${event.candidate.protocol}:${event.candidate.address}:${event.candidate.port})`);
@@ -559,7 +621,8 @@ export class WebRTCConnectionManager extends ConnectionManager {
           else if (event.candidate.type === 'srflx') this.candidateTypes.srflx++;
           else if (event.candidate.type === 'relay') this.candidateTypes.relay++;
 
-          // Send ICE candidate through appropriate signaling channel
+          // TRICKLE ICE: Send ICE candidate immediately through signaling channel
+          // Don't wait for gathering complete - send as discovered for faster connection
           this.sendSignal(peerId, {
             type: 'candidate',
             candidate: event.candidate.candidate,
@@ -591,7 +654,68 @@ export class WebRTCConnectionManager extends ConnectionManager {
 
           // CRITICAL FIX: Get initiator flag before clearing pending connection
           const initiator = this.pendingConnectionInfo ? this.pendingConnectionInfo.initiator : false;
+          const startTime = this.pendingConnectionInfo ? this.pendingConnectionInfo.startTime : null;
           this.pendingConnectionInfo = null;
+
+          // Track successful direct WebRTC connection (Task 1.3)
+          const duration = startTime ? Date.now() - startTime : undefined;
+          
+          // Extract the selected ICE candidate pair for metrics (Task 1.3)
+          // Task 4.4: Also include in peerConnected event for IPv6 detection
+          this._getSelectedCandidatePair(pc).then(selectedCandidatePair => {
+            // Task 4.4: Detect if connection uses IPv6 (bypasses NAT entirely)
+            const isIPv6 = selectedCandidatePair && this._isIPv6Address(selectedCandidatePair.localAddress);
+            
+            ConnectionMetricsTracker.recordAttempt({
+              connectionType: ConnectionType.BROWSER_TO_BROWSER,
+              outcome: ConnectionOutcome.DIRECT_SUCCESS,
+              localNodeType: 'browser',
+              remoteNodeType: 'browser',
+              peerId,
+              duration,
+              candidateTypes: { ...this.candidateTypes },
+              selectedCandidatePair
+            });
+            
+            // Report to bootstrap server for network-wide metrics (Task 1.3)
+            if (this.bootstrapClient) {
+              ConnectionMetricsTracker.reportToBootstrap(this.bootstrapClient, {
+                success: true,
+                connectionType: 'webrtc',
+                iceCandidateType: selectedCandidatePair?.localType || 'unknown',
+                isIPv6
+              });
+            }
+            
+            // Task 4.4: Emit selectedCandidatePair event for HybridConnectionManager
+            // This allows path tracking to distinguish IPv6 from IPv4 WebRTC connections
+            this.emit('selectedCandidatePair', {
+              peerId,
+              selectedCandidatePair,
+              isIPv6,
+              duration
+            });
+          }).catch(err => {
+            // Still record the attempt even if we can't get candidate pair
+            console.warn(`Failed to get selected candidate pair: ${err.message}`);
+            ConnectionMetricsTracker.recordAttempt({
+              connectionType: ConnectionType.BROWSER_TO_BROWSER,
+              outcome: ConnectionOutcome.DIRECT_SUCCESS,
+              localNodeType: 'browser',
+              remoteNodeType: 'browser',
+              peerId,
+              duration,
+              candidateTypes: { ...this.candidateTypes }
+            });
+            
+            // Report to bootstrap server for network-wide metrics (Task 1.3)
+            if (this.bootstrapClient) {
+              ConnectionMetricsTracker.reportToBootstrap(this.bootstrapClient, {
+                success: true,
+                connectionType: 'webrtc'
+              });
+            }
+          });
 
           console.log(`✅ WebRTC Connected to ${peerId.substring(0, 8)}... - EMITTING peerConnected EVENT (initiator: ${initiator})`);
           // CRITICAL FIX: Include manager reference so RoutingTable can store the correct manager on the DHTNode
@@ -603,6 +727,32 @@ export class WebRTCConnectionManager extends ConnectionManager {
         } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
           // Requirement 9.1, 9.2, 9.3: Detect unexpected disconnects and perform cleanup
           console.log(`❌ Connection failed/disconnected for ${peerId.substring(0, 8)}...: ${pc.connectionState}`);
+          
+          // Track connection failure (Task 1.3)
+          // Only track as failure if we were still connecting (not an established connection dropping)
+          if (this.pendingConnectionInfo) {
+            const startTime = this.pendingConnectionInfo.startTime;
+            const duration = startTime ? Date.now() - startTime : undefined;
+            ConnectionMetricsTracker.recordAttempt({
+              connectionType: ConnectionType.BROWSER_TO_BROWSER,
+              outcome: ConnectionOutcome.FAILURE,
+              localNodeType: 'browser',
+              remoteNodeType: 'browser',
+              peerId,
+              duration,
+              failureReason: pc.connectionState,
+              candidateTypes: { ...this.candidateTypes }
+            });
+            
+            // Report to bootstrap server for network-wide metrics (Task 1.3)
+            if (this.bootstrapClient) {
+              ConnectionMetricsTracker.reportToBootstrap(this.bootstrapClient, {
+                success: false,
+                connectionType: 'webrtc',
+                failureReason: pc.connectionState
+              });
+            }
+          }
           
           // Log to ConnectionTracker with peer ID and state (Requirement 9.3)
           console.log(`📊 Logging unexpected disconnect to ConnectionTracker: peerId=${peerId.substring(0, 8)}, state=${pc.connectionState}`);
@@ -627,8 +777,32 @@ export class WebRTCConnectionManager extends ConnectionManager {
 
         if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
           console.log(`✅ ICE connection established for ${peerId.substring(0, 8)}...: ${pc.iceConnectionState}`);
+          
+          // Clear ICE restart state if we were doing a restart
+          if (this._iceRestartInProgress) {
+            console.log(`❄️ [WebRTC] ICE restart succeeded for ${peerId.substring(0, 8)}...`);
+            this._iceRestartInProgress = false;
+            this._iceRestartSessionId = null;
+            this.emit('iceRestartSucceeded', { peerId, sessionId: this._iceRestartSessionId });
+          }
         } else if (pc.iceConnectionState === 'failed') {
           console.error(`❌ ICE connection failed for ${peerId.substring(0, 8)}...`);
+          
+          // Task 4.3: Emit iceConnectionFailed event BEFORE destroying connection
+          // This allows HybridConnectionManager to request coordinated ICE restart
+          // if both peers have hard NAT and this is the initial ICE failure
+          const wasIceRestart = this._iceRestartInProgress;
+          this._iceRestartInProgress = false;
+          
+          this.emit('iceConnectionFailed', {
+            peerId,
+            wasIceRestart,
+            sessionId: this._iceRestartSessionId,
+            candidateTypes: { ...this.candidateTypes }
+          });
+          
+          this._iceRestartSessionId = null;
+          
           this.destroyConnection(peerId, 'ice_failed');
         } else if (pc.iceConnectionState === 'checking') {
           console.log(`🔍 ICE connectivity checks started for ${peerId.substring(0, 8)}...`);
@@ -933,9 +1107,11 @@ export class WebRTCConnectionManager extends ConnectionManager {
 
         // Create answer
         const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
+        // Task 6.1: Apply IPv6 prioritization before setting local description
+        // This boosts IPv6 host candidate priorities to prefer direct IPv6 connections
+        const modifiedAnswer = await this._setLocalDescriptionWithIPv6Priority(pc, answer);
 
-        console.log(`📤 Created answer for ${peerId.substring(0, 8)}...`);
+        console.log(`📤 Created answer for ${peerId.substring(0, 8)}... (IPv6 prioritized)`);
         console.log(`🔍 Answer peer connection state after setLocalDescription: connection=${pc.connectionState}, ice=${pc.iceConnectionState}, iceGathering=${pc.iceGatheringState}, signaling=${pc.signalingState}`);
 
         // CRITICAL: Wait for ICE gathering to start before sending answer
@@ -973,7 +1149,7 @@ export class WebRTCConnectionManager extends ConnectionManager {
         // Send answer through appropriate signaling channel
         await this.sendSignal(peerId, {
           type: 'answer',
-          sdp: answer.sdp
+          sdp: modifiedAnswer.sdp
         });
 
       } else if (signal.type === 'answer') {
@@ -1065,6 +1241,127 @@ export class WebRTCConnectionManager extends ConnectionManager {
 
     // Clear the queue
     this.signalQueue = [];
+  }
+
+  /**
+   * Handle synchronized ICE start signal (Task 4.2: Coordinated ICE timing)
+   * 
+   * This implements the Tailscale technique for synchronized NAT traversal:
+   * - Both peers have exchanged ICE candidates via the bootstrap server
+   * - Bootstrap server sends ice_start to BOTH peers at the same time
+   * - Both peers add each other's candidates simultaneously
+   * - Packets cross in flight, opening both firewalls at the same time
+   * 
+   * This is especially effective for symmetric NAT ↔ cone NAT pairs where
+   * timing matters for successful hole punching.
+   * 
+   * @param {Object} data - ICE start data
+   * @param {string} data.peerId - The peer we're coordinating with
+   * @param {Array} data.peerCandidates - Peer's ICE candidates to add
+   * @param {Object} data.peerProfile - Peer's connection profile (NAT type, etc.)
+   * @param {string} data.sessionId - Session ID for tracking
+   */
+  async handleIceStart(data) {
+    const { peerId, peerCandidates, peerProfile, sessionId } = data;
+    
+    console.log(`❄️ [WebRTC] Synchronized ICE start for ${peerId?.substring(0, 8)}...`);
+    console.log(`   Session: ${sessionId?.substring(0, 12)}...`);
+    console.log(`   Peer candidates: ${peerCandidates?.length || 0}`);
+    console.log(`   Peer NAT type: ${peerProfile?.natType || 'unknown'}`);
+    
+    // Validate we have a peer connection
+    const pc = this.connection;
+    if (!pc) {
+      console.warn(`❄️ [WebRTC] No peer connection for synchronized ICE start to ${peerId?.substring(0, 8)}...`);
+      // Emit event so HybridConnectionManager can handle it
+      this.emit('iceStartFailed', { peerId, reason: 'no_connection', sessionId });
+      return;
+    }
+    
+    // Validate peer ID matches
+    if (this.peerId && this.peerId !== peerId) {
+      console.warn(`❄️ [WebRTC] Peer ID mismatch for ICE start: expected ${this.peerId?.substring(0, 8)}..., got ${peerId?.substring(0, 8)}...`);
+      this.emit('iceStartFailed', { peerId, reason: 'peer_mismatch', sessionId });
+      return;
+    }
+    
+    // Check if we have remote description set (required for adding candidates)
+    if (!this.remoteDescriptionSet) {
+      console.log(`❄️ [WebRTC] Remote description not set yet, queuing ${peerCandidates?.length || 0} candidates for synchronized start`);
+      // Queue the candidates - they'll be processed when remote description is set
+      if (peerCandidates && peerCandidates.length > 0) {
+        for (const candidate of peerCandidates) {
+          this.signalQueue.push({
+            type: 'candidate',
+            candidate: candidate.candidate || candidate,
+            sdpMLineIndex: candidate.sdpMLineIndex || 0,
+            sdpMid: candidate.sdpMid || '0'
+          });
+        }
+        console.log(`❄️ [WebRTC] Queued ${peerCandidates.length} candidates for later processing`);
+      }
+      return;
+    }
+    
+    // Add peer's ICE candidates to trigger connectivity checks
+    // This is the synchronized moment - both peers do this at the same time
+    if (peerCandidates && peerCandidates.length > 0) {
+      console.log(`❄️ [WebRTC] Adding ${peerCandidates.length} peer candidates NOW (synchronized)`);
+      
+      let addedCount = 0;
+      let failedCount = 0;
+      
+      for (const candidate of peerCandidates) {
+        try {
+          // Handle both raw candidate strings and candidate objects
+          const candidateStr = candidate.candidate || candidate;
+          const sdpMLineIndex = candidate.sdpMLineIndex ?? 0;
+          const sdpMid = candidate.sdpMid ?? '0';
+          
+          await pc.addIceCandidate(new RTCIceCandidate({
+            candidate: candidateStr,
+            sdpMLineIndex,
+            sdpMid
+          }));
+          
+          addedCount++;
+          
+          // Log candidate type for debugging
+          const candidateType = candidateStr.includes('typ host') ? 'host' :
+                               candidateStr.includes('typ srflx') ? 'srflx' :
+                               candidateStr.includes('typ relay') ? 'relay' : 'unknown';
+          console.log(`   ✅ Added ${candidateType} candidate`);
+          
+        } catch (error) {
+          failedCount++;
+          console.warn(`   ❌ Failed to add candidate: ${error.message}`);
+        }
+      }
+      
+      console.log(`❄️ [WebRTC] Synchronized ICE start complete: ${addedCount} added, ${failedCount} failed`);
+      
+      // Emit success event
+      this.emit('iceStarted', {
+        peerId,
+        sessionId,
+        candidatesAdded: addedCount,
+        candidatesFailed: failedCount,
+        peerNatType: peerProfile?.natType
+      });
+      
+      // Log current ICE state for debugging
+      console.log(`❄️ [WebRTC] ICE state after synchronized start: connection=${pc.connectionState}, ice=${pc.iceConnectionState}, gathering=${pc.iceGatheringState}`);
+      
+    } else {
+      console.log(`❄️ [WebRTC] No peer candidates to add for synchronized start`);
+      this.emit('iceStarted', {
+        peerId,
+        sessionId,
+        candidatesAdded: 0,
+        candidatesFailed: 0,
+        peerNatType: peerProfile?.natType
+      });
+    }
   }
 
   /**
@@ -1188,6 +1485,15 @@ export class WebRTCConnectionManager extends ConnectionManager {
 
   /**
    * Send keep-alive ping to peer
+   * Task 5.1: Handle NAT mapping timeout by sending periodic packets
+   * 
+   * This method serves two purposes:
+   * 1. Detect connection failures (peer not responding)
+   * 2. Keep NAT mappings alive by sending traffic before they expire
+   * 
+   * NAT mappings typically expire after 30 seconds of inactivity for UDP.
+   * By sending keep-alive pings every 25 seconds, we ensure the mapping
+   * stays active and the connection remains viable.
    */
   async sendKeepAlivePing() {
     if (!this.isConnected()) {
@@ -1202,11 +1508,17 @@ export class WebRTCConnectionManager extends ConnectionManager {
         type: 'keep_alive_ping',
         pingId: `ping_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
         timestamp: Date.now(),
-        tabVisible: this.isTabVisible
+        tabVisible: this.isTabVisible,
+        // Include NAT refresh info for debugging/monitoring
+        natRefresh: true
       };
 
       // Add to pending pings
       this.keepAlivePings.add(pingMessage.pingId);
+      
+      // Track NAT mapping refresh time
+      // This helps monitor if we're keeping the NAT mapping alive
+      this.lastNatRefreshTime = Date.now();
 
       // Send ping message
       if (this.dataChannel && this.dataChannel.readyState === 'open') {
@@ -1223,6 +1535,12 @@ export class WebRTCConnectionManager extends ConnectionManager {
 
             if (timeSinceLastResponse > this.keepAliveTimeout * 2) {
               console.error(`❌ Peer ${peerId.substring(0, 8)}... not responding to keep-alive pings, marking as failed`);
+              // NAT mapping may have expired - connection is likely dead
+              this.emit('natMappingExpired', {
+                peerId,
+                lastRefresh: this.lastNatRefreshTime,
+                timeSinceLastResponse
+              });
               this.destroyConnection(peerId, 'keep_alive_timeout');
             }
           }
@@ -1265,6 +1583,8 @@ export class WebRTCConnectionManager extends ConnectionManager {
 
   /**
    * Handle incoming keep-alive pong from peer
+   * Task 4.4: Add RTT measurement to WebRTC path (existing keep-alive)
+   * Task 5.1: Track NAT mapping refresh - receiving a pong confirms the mapping is alive
    */
   handleKeepAlivePong(pongMessage) {
     // Remove from pending pings
@@ -1274,6 +1594,96 @@ export class WebRTCConnectionManager extends ConnectionManager {
 
     // Update last response timestamp
     this.keepAliveLastResponse = Date.now();
+    
+    // Task 5.1: Track NAT mapping refresh - receiving a pong confirms the mapping is alive
+    // This is important for monitoring NAT mapping health
+    this.lastNatRefreshTime = Date.now();
+    
+    // Task 4.4: Calculate RTT from the original timestamp
+    if (pongMessage.originalTimestamp) {
+      const rtt = Date.now() - pongMessage.originalTimestamp;
+      
+      // Store RTT measurement
+      this._lastRtt = rtt;
+      
+      // Update RTT history for averaging
+      if (!this._rttHistory) {
+        this._rttHistory = [];
+      }
+      this._rttHistory.push({
+        rtt,
+        timestamp: Date.now()
+      });
+      
+      // Keep only last 10 samples
+      while (this._rttHistory.length > 10) {
+        this._rttHistory.shift();
+      }
+      
+      // Calculate average RTT
+      const avgRtt = Math.round(
+        this._rttHistory.reduce((sum, s) => sum + s.rtt, 0) / this._rttHistory.length
+      );
+      this._avgRtt = avgRtt;
+      
+      // Calculate jitter (standard deviation)
+      if (this._rttHistory.length >= 2) {
+        const variance = this._rttHistory.reduce(
+          (sum, s) => sum + Math.pow(s.rtt - avgRtt, 2), 0
+        ) / this._rttHistory.length;
+        this._rttJitter = Math.sqrt(variance);
+      }
+      
+      // Emit event for HybridConnectionManager/PathTracker integration
+      this.emit('rttMeasured', {
+        peerId: this.peerId,
+        rtt,
+        avgRtt: this._avgRtt,
+        jitter: this._rttJitter,
+        pingId: pongMessage.pingId
+      });
+    }
+  }
+  
+  /**
+   * Get the last measured RTT for this WebRTC connection
+   * Task 4.4: RTT measurement getter
+   * @returns {number|null} Last RTT in milliseconds, or null if not measured
+   */
+  getLastRtt() {
+    return this._lastRtt || null;
+  }
+  
+  /**
+   * Get the average RTT for this WebRTC connection
+   * Task 4.4: Average RTT getter
+   * @returns {number|null} Average RTT in milliseconds, or null if not measured
+   */
+  getAverageRtt() {
+    return this._avgRtt || null;
+  }
+  
+  /**
+   * Get RTT jitter (standard deviation) for this WebRTC connection
+   * Task 4.4: RTT jitter getter
+   * @returns {number|null} RTT jitter in milliseconds, or null if not enough samples
+   */
+  getRttJitter() {
+    return this._rttJitter || null;
+  }
+  
+  /**
+   * Get full RTT statistics for this WebRTC connection
+   * Task 4.4: Comprehensive RTT stats
+   * @returns {Object} RTT statistics { lastRtt, avgRtt, jitter, sampleCount }
+   */
+  getRttStats() {
+    return {
+      lastRtt: this._lastRtt || null,
+      avgRtt: this._avgRtt || null,
+      jitter: this._rttJitter || null,
+      sampleCount: this._rttHistory?.length || 0
+    };
   }
 
   /**
@@ -1410,5 +1820,290 @@ export class WebRTCConnectionManager extends ConnectionManager {
 
     // Call parent destroy
     super.destroy();
+  }
+
+  /**
+   * Restart ICE for the peer connection (Task 4.3: Coordinated ICE restart for hard NAT pairs)
+   * 
+   * This implements the coordinated ICE restart technique:
+   * 1. Both peers call pc.restartIce() at the same time (coordinated via bootstrap server)
+   * 2. Fresh NAT mappings are created
+   * 3. New ICE candidates are gathered and exchanged
+   * 4. Sometimes NAT state changes help establish direct connection
+   * 
+   * This is especially useful for hard NAT ↔ hard NAT pairs where initial ICE failed.
+   * 
+   * @param {Object} options - Restart options
+   * @param {string} options.peerId - The peer we're restarting ICE with
+   * @param {string} options.sessionId - Session ID for tracking
+   * @returns {Promise<boolean>} True if restart was initiated successfully
+   */
+  async restartIce(options = {}) {
+    const { peerId, sessionId } = options;
+    const pc = this.connection;
+    
+    if (!pc) {
+      console.warn(`❄️ [WebRTC] Cannot restart ICE - no peer connection`);
+      this.emit('iceRestartFailed', { peerId, reason: 'no_connection', sessionId });
+      return false;
+    }
+    
+    // Validate peer ID matches
+    if (this.peerId && peerId && this.peerId !== peerId) {
+      console.warn(`❄️ [WebRTC] Peer ID mismatch for ICE restart: expected ${this.peerId?.substring(0, 8)}..., got ${peerId?.substring(0, 8)}...`);
+      this.emit('iceRestartFailed', { peerId, reason: 'peer_mismatch', sessionId });
+      return false;
+    }
+    
+    const targetPeerId = peerId || this.peerId;
+    console.log(`❄️ [WebRTC] Initiating ICE restart for ${targetPeerId?.substring(0, 8)}... (session: ${sessionId?.substring(0, 12) || 'none'})`);
+    
+    try {
+      // Reset ICE-related state for fresh gathering
+      this.candidateTypes = { host: 0, srflx: 0, relay: 0 };
+      
+      // Track that we're doing an ICE restart
+      this._iceRestartInProgress = true;
+      this._iceRestartSessionId = sessionId;
+      
+      // Call the WebRTC API to restart ICE
+      // This triggers new ICE candidate gathering with fresh NAT mappings
+      pc.restartIce();
+      
+      console.log(`❄️ [WebRTC] ICE restart triggered, creating new offer...`);
+      
+      // Create a new offer with ICE restart flag
+      // The iceRestart option tells the browser to generate new ICE credentials
+      const offer = await pc.createOffer({ iceRestart: true });
+      // Task 6.1: Apply IPv6 prioritization before setting local description
+      // This boosts IPv6 host candidate priorities to prefer direct IPv6 connections
+      const modifiedOffer = await this._setLocalDescriptionWithIPv6Priority(pc, offer);
+      
+      console.log(`❄️ [WebRTC] New offer created after ICE restart for ${targetPeerId?.substring(0, 8)}... (IPv6 prioritized)`);
+      
+      // Reset remote description state since we're starting fresh
+      this.remoteDescriptionSet = false;
+      this.signalQueue = [];
+      
+      // Send the new offer through signaling
+      await this.sendSignal(targetPeerId, {
+        type: 'offer',
+        sdp: modifiedOffer.sdp,
+        iceRestart: true,  // Flag to indicate this is an ICE restart offer
+        sessionId
+      });
+      
+      console.log(`❄️ [WebRTC] ICE restart offer sent to ${targetPeerId?.substring(0, 8)}...`);
+      
+      // Emit success event
+      this.emit('iceRestartInitiated', {
+        peerId: targetPeerId,
+        sessionId,
+        timestamp: Date.now()
+      });
+      
+      return true;
+      
+    } catch (error) {
+      console.error(`❄️ [WebRTC] ICE restart failed for ${targetPeerId?.substring(0, 8)}...:`, error);
+      this._iceRestartInProgress = false;
+      this._iceRestartSessionId = null;
+      
+      this.emit('iceRestartFailed', {
+        peerId: targetPeerId,
+        reason: error.message,
+        sessionId
+      });
+      
+      return false;
+    }
+  }
+
+  /**
+   * Extract the selected ICE candidate pair from the RTCPeerConnection stats.
+   * This is used to track which candidate types actually resulted in successful connections.
+   * 
+   * Task 1.3: Track ICE candidate types used for successful connections
+   * 
+   * @param {RTCPeerConnection} pc - The peer connection to get stats from
+   * @returns {Promise<Object|null>} The selected candidate pair info or null
+   */
+  async _getSelectedCandidatePair(pc) {
+    if (!pc || pc.connectionState !== 'connected') {
+      return null;
+    }
+
+    try {
+      const stats = await pc.getStats();
+      let selectedPair = null;
+      const candidates = new Map();
+
+      // First pass: collect all candidate info
+      stats.forEach(report => {
+        if (report.type === 'local-candidate' || report.type === 'remote-candidate') {
+          candidates.set(report.id, {
+            type: report.candidateType, // host, srflx, prflx, relay
+            address: report.address || report.ip,
+            port: report.port,
+            protocol: report.protocol
+          });
+        }
+      });
+
+      // Second pass: find the selected candidate pair
+      stats.forEach(report => {
+        if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+          // This is the active candidate pair
+          const localCandidate = candidates.get(report.localCandidateId);
+          const remoteCandidate = candidates.get(report.remoteCandidateId);
+
+          if (localCandidate && remoteCandidate) {
+            selectedPair = {
+              localType: localCandidate.type,
+              remoteType: remoteCandidate.type,
+              localAddress: localCandidate.address,
+              remoteAddress: remoteCandidate.address,
+              protocol: localCandidate.protocol || remoteCandidate.protocol
+            };
+          }
+        }
+      });
+
+      if (selectedPair) {
+        console.log(`🧊 Selected ICE candidate pair: local=${selectedPair.localType} (${selectedPair.localAddress}), remote=${selectedPair.remoteType} (${selectedPair.remoteAddress}), protocol=${selectedPair.protocol}`);
+      }
+
+      return selectedPair;
+    } catch (error) {
+      console.warn(`Failed to get ICE stats: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Check if an address is a global IPv6 address
+   * Task 4.4: Used to detect IPv6 connections for path preference
+   * 
+   * Global unicast IPv6 addresses start with 2xxx: or 3xxx:
+   * This excludes link-local (fe80::), loopback (::1), and private addresses
+   * 
+   * @param {string} address - The IP address to check
+   * @returns {boolean} True if the address is a global IPv6 address
+   */
+  _isIPv6Address(address) {
+    if (!address) return false;
+    // Global unicast addresses start with 2 or 3
+    return /^[23][0-9a-f]{3}:/i.test(address);
+  }
+
+  /**
+   * Prioritize IPv6 host candidates over IPv4 in SDP
+   * Task 6.1: IPv6 bypasses NAT entirely, so it should be preferred
+   * 
+   * ICE candidate priorities in SDP are encoded in the 'a=candidate' lines.
+   * The priority is a 32-bit value where higher = more preferred.
+   * 
+   * Format: a=candidate:<foundation> <component> <protocol> <priority> <address> <port> typ <type> ...
+   * 
+   * This method boosts the priority of IPv6 host candidates by adding a large
+   * value to their existing priority, making them preferred over IPv4 candidates.
+   * 
+   * Why prioritize IPv6:
+   * - IPv6 addresses are globally routable (no NAT traversal needed)
+   * - Direct IPv6 connections have lower latency than STUN-discovered paths
+   * - IPv6 connections are more reliable (no NAT mapping timeouts)
+   * 
+   * @param {string} sdp - The SDP string to modify
+   * @returns {string} Modified SDP with boosted IPv6 candidate priorities
+   */
+  _prioritizeIPv6Candidates(sdp) {
+    if (!sdp) return sdp;
+
+    // Split SDP into lines for processing
+    const lines = sdp.split('\r\n');
+    const modifiedLines = [];
+    let ipv6CandidatesFound = 0;
+    let ipv4CandidatesFound = 0;
+
+    // Priority boost for IPv6 candidates
+    // ICE priority is a 32-bit unsigned integer (max ~4.3 billion)
+    // We add 2^24 (~16 million) to IPv6 host candidates to ensure they're preferred
+    // This is large enough to override type preference but not overflow
+    const IPV6_PRIORITY_BOOST = 16777216; // 2^24
+
+    for (const line of lines) {
+      // Check if this is a candidate line
+      if (line.startsWith('a=candidate:')) {
+        // Parse the candidate line
+        // Format: a=candidate:<foundation> <component> <protocol> <priority> <address> <port> typ <type> ...
+        const parts = line.split(' ');
+        
+        if (parts.length >= 8) {
+          const address = parts[4];
+          const candidateType = parts[7]; // 'host', 'srflx', 'relay'
+          
+          // Check if this is an IPv6 address (contains colons, not just port separator)
+          // IPv6 addresses contain multiple colons (e.g., 2001:db8::1)
+          // IPv4 addresses don't contain colons in the address part
+          const isIPv6 = address && address.includes(':') && this._isIPv6Address(address);
+          
+          if (isIPv6 && candidateType === 'host') {
+            // Boost priority for IPv6 host candidates
+            const currentPriority = parseInt(parts[3], 10);
+            if (!isNaN(currentPriority)) {
+              // Add boost but cap at max 32-bit unsigned value
+              const newPriority = Math.min(currentPriority + IPV6_PRIORITY_BOOST, 4294967295);
+              parts[3] = newPriority.toString();
+              
+              ipv6CandidatesFound++;
+              console.log(`🌐 IPv6 priority boost: ${address} (${candidateType}) ${currentPriority} → ${newPriority}`);
+            }
+            modifiedLines.push(parts.join(' '));
+          } else {
+            // Keep IPv4 and non-host candidates unchanged
+            if (!isIPv6 && candidateType === 'host') {
+              ipv4CandidatesFound++;
+            }
+            modifiedLines.push(line);
+          }
+        } else {
+          // Malformed candidate line, keep as-is
+          modifiedLines.push(line);
+        }
+      } else {
+        // Non-candidate line, keep as-is
+        modifiedLines.push(line);
+      }
+    }
+
+    if (ipv6CandidatesFound > 0) {
+      console.log(`🌐 IPv6 prioritization: boosted ${ipv6CandidatesFound} IPv6 host candidates over ${ipv4CandidatesFound} IPv4 host candidates`);
+    }
+
+    return modifiedLines.join('\r\n');
+  }
+
+  /**
+   * Create and set local description with IPv6 prioritization
+   * Task 6.1: Wrapper that applies IPv6 prioritization before setting local description
+   * 
+   * @param {RTCPeerConnection} pc - The peer connection
+   * @param {RTCSessionDescriptionInit} description - The offer or answer
+   * @returns {Promise<void>}
+   */
+  async _setLocalDescriptionWithIPv6Priority(pc, description) {
+    // Apply IPv6 prioritization to the SDP
+    const modifiedSdp = this._prioritizeIPv6Candidates(description.sdp);
+    
+    // Create modified description
+    const modifiedDescription = {
+      type: description.type,
+      sdp: modifiedSdp
+    };
+    
+    // Set the modified local description
+    await pc.setLocalDescription(modifiedDescription);
+    
+    return modifiedDescription;
   }
 }

@@ -1,5 +1,11 @@
 import { EventEmitter } from 'events';
 import Logger from '../utils/Logger.js';
+import { 
+  isRelayMessage, 
+  validateRelayMessage,
+  RelayMessageType,
+  describeRelayMessage
+} from './RelayProtocol.js';
 
 /**
  * Abstract base class for connection management
@@ -237,6 +243,33 @@ export class ConnectionManager extends EventEmitter {
           // Bootstrap server messages - emit to bridge handler
           this.emit('message', { peerId, message });
           break;
+        
+        // Relay protocol messages - emit to RelayManager for handling
+        case 'relay_request':
+        case 'relay_forward':
+        case 'relay_ack':
+        case 'relay_close':
+        case 'relay_ping':
+        case 'relay_pong': {
+          // Validate relay message format
+          const validation = validateRelayMessage(message);
+          if (!validation.valid) {
+            console.warn(`⚠️ Invalid relay message from ${peerId.substring(0, 8)}...: ${validation.error}`);
+            break;
+          }
+          
+          Logger.debug(`🔄 Relay message received: ${describeRelayMessage(message)} from ${peerId.substring(0, 8)}...`);
+          
+          // Emit relayMessage event for RelayManager to handle
+          // The RelayManager will be attached as a listener by the DHT or bridge node
+          const relayListenerCount = this.listenerCount('relayMessage');
+          if (relayListenerCount === 0) {
+            console.warn(`⚠️ NO RELAY MESSAGE LISTENERS: ${message.type} from ${peerId.substring(0, 8)}... will NOT be processed`);
+          }
+          this.emit('relayMessage', { peerId, message, sourceManager: this });
+          break;
+        }
+        
         default:
           console.warn(`Unknown message type from ${peerId}: ${message.type}`);
           this.emit('message', { peerId, message });

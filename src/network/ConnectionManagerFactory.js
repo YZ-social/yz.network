@@ -1,5 +1,7 @@
 import { WebRTCConnectionManager } from './WebRTCConnectionManager.js';
 import { WebSocketConnectionManager } from './WebSocketConnectionManager.js';
+import { HybridConnectionManager } from './HybridConnectionManager.js';
+import { RelayManager } from './RelayManager.js';
 
 /**
  * Factory for creating appropriate connection managers based on environment and peer types
@@ -9,6 +11,15 @@ export class ConnectionManagerFactory {
   static defaultOptions = {};
   static managerCache = new Map(); // Cache connection managers by peer ID
   static globalMetadata = new Map(); // Global metadata store for all managers
+  
+  // Shared RelayManager instance for browser-to-browser relay connections
+  static relayManager = null;
+  
+  // Bridge node ID for relay connections (set by BootstrapClient)
+  static bridgeNodeId = null;
+  
+  // Flag to enable/disable hybrid relay-first strategy
+  static useHybridStrategy = true;
 
   /**
    * Detect the current node type from environment
@@ -57,8 +68,44 @@ export class ConnectionManagerFactory {
   static initializeTransports(options = {}) {
     ConnectionManagerFactory.localNodeType = ConnectionManagerFactory.detectNodeType();
     ConnectionManagerFactory.defaultOptions = options;
+    
+    // Initialize shared RelayManager for browser-to-browser relay connections
+    if (ConnectionManagerFactory.localNodeType === 'browser' && !ConnectionManagerFactory.relayManager) {
+      ConnectionManagerFactory.relayManager = new RelayManager({
+        maxRelaySessions: 50, // Browser can handle fewer relay sessions
+        sessionTimeout: 5 * 60 * 1000 // 5 minutes
+      });
+      console.log('🔄 Initialized shared RelayManager for browser relay connections');
+    }
 
     console.log(`🏗️ ConnectionManagerFactory initialized for ${ConnectionManagerFactory.localNodeType} environment`);
+  }
+  
+  /**
+   * Set the bridge node ID for relay connections
+   * Called by BootstrapClient when connected to a bridge node
+   * @param {string} bridgeNodeId - Bridge node ID
+   */
+  static setBridgeNode(bridgeNodeId) {
+    ConnectionManagerFactory.bridgeNodeId = bridgeNodeId;
+    console.log(`🌉 ConnectionManagerFactory: Bridge node set to ${bridgeNodeId?.substring(0, 8) || 'null'}...`);
+  }
+  
+  /**
+   * Get the shared RelayManager instance
+   * @returns {RelayManager|null}
+   */
+  static getRelayManager() {
+    return ConnectionManagerFactory.relayManager;
+  }
+  
+  /**
+   * Enable or disable hybrid relay-first strategy
+   * @param {boolean} enabled - Whether to use hybrid strategy
+   */
+  static setHybridStrategy(enabled) {
+    ConnectionManagerFactory.useHybridStrategy = enabled;
+    console.log(`🔄 Hybrid relay-first strategy ${enabled ? 'enabled' : 'disabled'}`);
   }
 
   /**
@@ -134,13 +181,34 @@ export class ConnectionManagerFactory {
    */
   static createForConnection(localNodeType, targetNodeType, options = {}) {
     // Transport selection logic:
-    // Browser → Browser: WebRTC (peer-to-peer)
+    // Browser → Browser: HybridConnectionManager (relay-first with WebRTC upgrade) or WebRTC
     // Browser → Node.js: WebSocket (Node.js is server)
     // Node.js → Browser: WebSocket (Node.js is server)
     // Node.js → Node.js: WebSocket
     // Future: Add LoRa, Bluetooth, etc.
 
     if (localNodeType === 'browser' && targetNodeType === 'browser') {
+      // Use hybrid relay-first strategy if enabled and bridge node is available
+      if (ConnectionManagerFactory.useHybridStrategy && 
+          ConnectionManagerFactory.bridgeNodeId && 
+          ConnectionManagerFactory.relayManager) {
+        console.log('🚀 Creating HybridConnectionManager for Browser↔Browser (relay-first strategy)');
+        
+        // Task 6.1: Get local connection profile for IPv6 detection
+        // This allows HybridConnectionManager to skip relay when both peers have IPv6
+        const localConnectionProfile = ConnectionManagerFactory.getLocalConnectionProfile();
+        
+        return new HybridConnectionManager({
+          localNodeType,
+          targetNodeType,
+          relayManager: ConnectionManagerFactory.relayManager,
+          bridgeNodeId: ConnectionManagerFactory.bridgeNodeId,
+          localConnectionProfile, // Task 6.1: Pass local profile for IPv6 detection
+          ...options
+        });
+      }
+      
+      // Fallback to pure WebRTC if hybrid not available
       console.log('🚀 Creating WebRTCConnectionManager for Browser↔Browser');
       return new WebRTCConnectionManager({
         localNodeType,
@@ -157,6 +225,22 @@ export class ConnectionManagerFactory {
         ...options
       });
     }
+  }
+  
+  /**
+   * Get the local node's connection profile
+   * Task 6.1: Used to detect IPv6 availability for direct-only strategy
+   * @returns {Object|null} Connection profile or null if not available
+   */
+  static getLocalConnectionProfile() {
+    // The local connection profile is stored in the local node's metadata
+    // under the 'connectionProfile' key
+    for (const [peerId, metadata] of ConnectionManagerFactory.globalMetadata.entries()) {
+      if (metadata && metadata.connectionProfile) {
+        return metadata.connectionProfile;
+      }
+    }
+    return null;
   }
 
   /**

@@ -71,6 +71,15 @@ const Logger = {
     if (shouldLog('debug')) console.log(...args);
   },
   
+  // Convenience method for path upgrade/downgrade logging (debug level)
+  // Task 4.5: Log path upgrades for debugging
+  path: (...args) => {
+    if (shouldLog('debug')) {
+      const timestamp = new Date().toISOString();
+      console.log(`[PATH ${timestamp}]`, ...args);
+    }
+  },
+  
   // Get current log level name
   getLevel: () => {
     for (const [name, value] of Object.entries(LOG_LEVELS)) {

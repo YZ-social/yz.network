@@ -1,0 +1,62 @@
+# Test files
+test/
+tests/
+*.test.js
+*.spec.js
+
+# Development files
+.github/
+.vscode/
+.idea/
+coverage/
+playwright-report/
+test-results/
+
+# AI assistant settings (may contain permissions/credentials)
+.claude/
+
+# Kiro specs (development documentation)
+.kiro/
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Build/deployment scripts
+scripts/
+deployments/
+*.sh
+*.bat
+
+# Docker files
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+
+# Environment files
+.env*
+!.env.example
+
+# Private keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+
+# Secrets directories
+secrets/
+credentials/
+.secrets/
+.credentials/
+
+# Logs
+*.log
+
+# Debug files
+debug-*.js
+
+# Examples (optional - uncomment if you want to include)
+# examples/

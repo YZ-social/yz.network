@@ -1,6 +1,7 @@
 import { ConnectionManager } from './ConnectionManager.js';
 import { ConnectionManagerFactory } from './ConnectionManagerFactory.js';
 import Logger from '../utils/Logger.js';
+import { ConnectionMetricsTracker, ConnectionOutcome, ConnectionType } from './ConnectionMetricsTracker.js';
 
 /**
  * WebSocket-based connection manager for Node.js peers
@@ -483,10 +484,24 @@ export class WebSocketConnectionManager extends ConnectionManager {
 
     console.log(`🌐 Creating WebSocket connection to ${peerId.substring(0, 8)}... at ${wsAddress}`);
 
+    // Track connection start time for metrics (Task 1.3)
+    const connectionStartTime = Date.now();
+
     return new Promise((resolve, reject) => {
       try {
         const ws = new this.WebSocket(wsAddress);
         const connectionTimeout = setTimeout(() => {
+          // Track timeout failure (Task 1.3)
+          const connectionType = this._getConnectionType(localNodeType, finalTargetNodeType);
+          ConnectionMetricsTracker.recordAttempt({
+            connectionType,
+            outcome: ConnectionOutcome.FAILURE,
+            localNodeType,
+            remoteNodeType: finalTargetNodeType,
+            peerId,
+            duration: Date.now() - connectionStartTime,
+            failureReason: 'timeout'
+          });
           ws.close();
           reject(new Error('WebSocket connection timeout'));
         }, this.options.timeout);
@@ -529,11 +544,35 @@ export class WebSocketConnectionManager extends ConnectionManager {
 
                 console.log(`✅ Successfully connected to peer ${message.bridgeNodeId.substring(0, 8)}`);
 
+                // Track successful WebSocket connection (Task 1.3)
+                const connectionType = this._getConnectionType(localNodeType, finalTargetNodeType);
+                ConnectionMetricsTracker.recordAttempt({
+                  connectionType,
+                  outcome: ConnectionOutcome.WEBSOCKET_SUCCESS,
+                  localNodeType,
+                  remoteNodeType: finalTargetNodeType,
+                  peerId,
+                  duration: Date.now() - connectionStartTime
+                });
+
                 await this.setupConnection(peerId, ws, initiator, peerMetadata);
                 resolve();
 
               } else {
                 console.warn('WebSocket handshake failed - expected dht_peer_connected:', message.type);
+                
+                // Track handshake failure (Task 1.3)
+                const connectionType = this._getConnectionType(localNodeType, finalTargetNodeType);
+                ConnectionMetricsTracker.recordAttempt({
+                  connectionType,
+                  outcome: ConnectionOutcome.FAILURE,
+                  localNodeType,
+                  remoteNodeType: finalTargetNodeType,
+                  peerId,
+                  duration: Date.now() - connectionStartTime,
+                  failureReason: 'handshake_failed'
+                });
+                
                 ws.close();
                 reject(new Error('WebSocket handshake failed'));
               }
@@ -549,6 +588,19 @@ export class WebSocketConnectionManager extends ConnectionManager {
 
         ws.onerror = (error) => {
           clearTimeout(connectionTimeout);
+          
+          // Track connection error (Task 1.3)
+          const connectionType = this._getConnectionType(localNodeType, finalTargetNodeType);
+          ConnectionMetricsTracker.recordAttempt({
+            connectionType,
+            outcome: ConnectionOutcome.FAILURE,
+            localNodeType,
+            remoteNodeType: finalTargetNodeType,
+            peerId,
+            duration: Date.now() - connectionStartTime,
+            failureReason: `error: ${error.message || 'unknown'}`
+          });
+          
           reject(new Error(`WebSocket connection failed: ${error.message}`));
         };
 
@@ -1018,6 +1070,25 @@ export class WebSocketConnectionManager extends ConnectionManager {
       success: true,
       listeningAddress: this.getServerAddress()
     };
+  }
+
+  /**
+   * Get connection type for metrics tracking (Task 1.3)
+   * @param {string} localNodeType - Local node type ('browser' or 'nodejs')
+   * @param {string} remoteNodeType - Remote node type ('browser' or 'nodejs')
+   * @returns {string} Connection type constant
+   * @private
+   */
+  _getConnectionType(localNodeType, remoteNodeType) {
+    if (localNodeType === 'browser' && remoteNodeType === 'browser') {
+      return ConnectionType.BROWSER_TO_BROWSER;
+    } else if (localNodeType === 'browser' && remoteNodeType === 'nodejs') {
+      return ConnectionType.BROWSER_TO_NODEJS;
+    } else if (localNodeType === 'nodejs' && remoteNodeType === 'browser') {
+      return ConnectionType.NODEJS_TO_BROWSER;
+    } else {
+      return ConnectionType.NODEJS_TO_NODEJS;
+    }
   }
 
   /**

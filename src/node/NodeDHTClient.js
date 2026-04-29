@@ -126,6 +126,8 @@ export class NodeDHTClient extends DHTClient {
       publicWssAddress: externalAddress,    // Same address for consistency
       capabilities: ['websocket', 'relay'],
       canRelay: true,
+      relayLoad: 0,                         // Current relay utilization (0-1), updated by RelayManager
+      relayCapacity: 100,                   // Max simultaneous relay connections
       canAcceptConnections: true,
       canInitiateConnections: true
     };

@@ -13,7 +13,9 @@ export class OverlayNetwork extends EventEmitter {
     this.options = {
       maxDirectConnections: options.maxDirectConnections || 100,
       connectionTimeout: options.connectionTimeout || 30000,
-      keepAliveInterval: options.keepAliveInterval || 60000,
+      // Task 5.3: Keep-alive interval must be under typical 30s NAT timeout
+      // Using 25 seconds to keep NAT mappings alive for UDP connections
+      keepAliveInterval: options.keepAliveInterval || 25000,
       routingTableSize: options.routingTableSize || 50,
       ...options
     };
@@ -834,6 +836,15 @@ export class OverlayNetwork extends EventEmitter {
       }
     }
 
+    // Check if connection manager supports WebRTC signaling
+    // Node.js servers use WebSocketConnectionManager which doesn't have handleSignal
+    if (typeof peerNode.connectionManager.handleSignal !== 'function') {
+      console.warn(`⚠️ Connection manager for ${senderPeer.substring(0, 8)}... doesn't support WebRTC signaling (${peerNode.connectionManager.constructor.name})`);
+      console.warn(`   This node is likely a Node.js server that received a WebRTC offer meant for a browser`);
+      console.warn(`   Ignoring WebRTC offer - browsers should connect to Node.js via WebSocket, not WebRTC`);
+      return;
+    }
+
     // Delegate WebRTC offer processing to the connection manager
     await peerNode.connectionManager.handleSignal(senderPeer, {
       type: 'offer',
@@ -895,6 +906,15 @@ export class OverlayNetwork extends EventEmitter {
       }
     }
 
+    // Check if connection manager supports WebRTC signaling
+    // Node.js servers use WebSocketConnectionManager which doesn't have handleSignal
+    if (typeof peerNode.connectionManager.handleSignal !== 'function') {
+      console.warn(`⚠️ Connection manager for ${senderPeer.substring(0, 8)}... doesn't support WebRTC signaling (${peerNode.connectionManager.constructor.name})`);
+      console.warn(`   This node is likely a Node.js server that received a WebRTC answer meant for a browser`);
+      console.warn(`   Ignoring WebRTC answer - browsers should connect to Node.js via WebSocket, not WebRTC`);
+      return;
+    }
+
     // Delegate WebRTC answer processing to the connection manager
     await peerNode.connectionManager.handleSignal(senderPeer, {
       type: 'answer',
@@ -954,6 +974,15 @@ export class OverlayNetwork extends EventEmitter {
         console.error(`❌ Failed to create connection manager for sender ${senderPeer}`);
         return;
       }
+    }
+
+    // Check if connection manager supports WebRTC signaling
+    // Node.js servers use WebSocketConnectionManager which doesn't have handleSignal
+    if (typeof peerNode.connectionManager.handleSignal !== 'function') {
+      console.warn(`⚠️ Connection manager for ${senderPeer.substring(0, 8)}... doesn't support WebRTC signaling (${peerNode.connectionManager.constructor.name})`);
+      console.warn(`   This node is likely a Node.js server that received a WebRTC ICE candidate meant for a browser`);
+      console.warn(`   Ignoring WebRTC ICE candidate - browsers should connect to Node.js via WebSocket, not WebRTC`);
+      return;
     }
 
     // Delegate WebRTC ICE candidate processing to the connection manager

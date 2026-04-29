@@ -47,10 +47,13 @@ class App {
         useTabIdentity: useTabIdentity, // Enable tab-specific identities for testing multiple clients
         bootstrapServers: [bootstrapUrl],
         webrtc: {
+          // Multiple STUN servers for redundancy - if one fails, others provide NAT discovery
+          // See: .kiro/specs/symmetric-nat-relay/design.md for rationale
           iceServers: [
             { urls: 'stun:stun.l.google.com:19302' },
             { urls: 'stun:stun1.l.google.com:19302' },
-            { urls: 'stun:stun2.l.google.com:19302' }
+            { urls: 'stun:stun2.l.google.com:19302' },
+            { urls: 'stun:stun3.l.google.com:19302' }
           ],
           maxConnections: 50,
           timeout: 30000
@@ -535,14 +538,23 @@ class App {
 
       async testConnectivity() {
         console.log('Testing STUN server connectivity...');
-        // STUN servers only - no TURN servers (we use our own WebSocket relay)
+        // Multiple STUN servers for redundancy - if one fails, others provide NAT discovery
+        // See: .kiro/specs/symmetric-nat-relay/design.md for rationale
         const iceServers = [
           { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' }
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' },
+          { urls: 'stun:stun3.l.google.com:19302' }
         ];
 
         try {
-          const pc = new RTCPeerConnection({ iceServers });
+          const pc = new RTCPeerConnection({ 
+            iceServers,
+            iceTransportPolicy: 'all',
+            bundlePolicy: 'max-bundle',
+            rtcpMuxPolicy: 'require',
+            iceCandidatePoolSize: 10  // Pre-gather candidates for faster connection establishment
+          });
           const candidates = [];
 
           pc.onicecandidate = (event) => {

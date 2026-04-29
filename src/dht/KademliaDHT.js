@@ -647,6 +647,46 @@ export class KademliaDHT extends EventEmitter {
     this.bootstrap.on('sendInvitationRequest', (message) => {
       this.handleSendInvitationRequest(message);
     });
+
+    // Handle connection profile detection (NAT type, IPv6, etc.)
+    // Store profile in local node metadata for routing decisions
+    this.bootstrap.on('connectionProfileDetected', (profile) => {
+      this.handleConnectionProfileDetected(profile);
+    });
+
+    // ICE coordination events (Task 4.2: Coordinated ICE timing)
+    // These events are emitted by BootstrapClient when the bootstrap server
+    // coordinates ICE timing between two peers for synchronized NAT traversal
+    
+    this.bootstrap.on('iceCoordinatePending', (data) => {
+      // Bootstrap is holding our coordination request, waiting for peer
+      console.log(`❄️ [DHT] ICE coordination pending for ${data.target?.substring(0, 8)}...`);
+      this.emit('iceCoordinatePending', data);
+    });
+
+    this.bootstrap.on('iceStart', (data) => {
+      // Both peers ready! Bootstrap is telling us to start ICE probing at synchronized time
+      console.log(`❄️ [DHT] ICE start received for peer ${data.peer?.substring(0, 8)}...`);
+      this.handleIceStart(data);
+    });
+
+    this.bootstrap.on('iceCoordinateTimeout', (data) => {
+      // Peer didn't respond to coordination request in time
+      console.warn(`❄️ [DHT] ICE coordination timeout: ${data.message}`);
+      this.emit('iceCoordinateTimeout', data);
+    });
+
+    this.bootstrap.on('iceCoordinateError', (data) => {
+      // Error during ICE coordination
+      console.error(`❄️ [DHT] ICE coordination error: ${data.error}`);
+      this.emit('iceCoordinateError', data);
+    });
+
+    this.bootstrap.on('iceRestartGo', (data) => {
+      // Bootstrap is telling both peers to restart ICE simultaneously
+      console.log(`❄️ [DHT] ICE restart signal received for peer ${data.peer?.substring(0, 8)}...`);
+      this.handleIceRestartGo(data);
+    });
   }
 
 
@@ -691,6 +731,16 @@ export class KademliaDHT extends EventEmitter {
     };
 
     ConnectionManagerFactory.initializeTransports(transportOptionsWithBootstrap);
+
+    // Task 3.1: Initialize the shared RelayManager for browser-to-browser relay connections
+    // This must be done after initializeTransports creates the RelayManager
+    // and before any relay connections are attempted
+    const relayManager = ConnectionManagerFactory.getRelayManager();
+    if (relayManager && !relayManager._localNodeId) {
+      // Browser nodes can't relay (they're behind NAT), so canRelay = false
+      relayManager.initialize(this.localNodeId.toString(), false);
+      console.log(`🔄 Initialized browser RelayManager with localNodeId: ${this.localNodeId.toString().substring(0, 8)}...`);
+    }
 
     // Initialize local node metadata (use bootstrapMetadata if available, fallback to defaults)
     const localMetadata = {
@@ -1733,6 +1783,263 @@ export class KademliaDHT extends EventEmitter {
   }
 
   /**
+   * Handle connection profile detection from bootstrap client
+   * Stores the profile in local node metadata for routing decisions
+   * @param {Object} profile - Connection profile with NAT type, IPv6, etc.
+   */
+  handleConnectionProfileDetected(profile) {
+    if (!profile) {
+      console.warn('⚠️ Received empty connection profile');
+      return;
+    }
+
+    const localNodeIdStr = this.localNodeId.toString();
+    
+    // Get existing metadata
+    const existingMetadata = ConnectionManagerFactory.getPeerMetadata(localNodeIdStr) || {};
+    
+    // Merge connection profile into metadata
+    const updatedMetadata = {
+      ...existingMetadata,
+      connectionProfile: {
+        hasIPv6: profile.hasIPv6,
+        natType: profile.natType,
+        portPattern: profile.portPattern,
+        needsRelay: profile.needsRelay
+      }
+    };
+    
+    // Store updated metadata
+    ConnectionManagerFactory.setPeerMetadata(localNodeIdStr, updatedMetadata);
+    
+    console.log(`📊 Stored connection profile in local node metadata:`, {
+      hasIPv6: profile.hasIPv6,
+      natType: profile.natType,
+      portPattern: profile.portPattern,
+      needsRelay: profile.needsRelay
+    });
+    
+    // Emit event so other components can react
+    this.emit('connectionProfileStored', profile);
+  }
+
+  /**
+   * Handle ICE start signal from bootstrap server (Task 4.2: Coordinated ICE timing)
+   * 
+   * This is called when both peers have sent ice_coordinate requests and the
+   * bootstrap server is telling us to start ICE probing at a synchronized time.
+   * 
+   * @param {Object} data - ICE start data from bootstrap
+   * @param {string} data.sessionId - Session ID for tracking
+   * @param {number} data.timestamp - Synchronized timestamp to start ICE probing
+   * @param {string} data.peer - The peer we're coordinating with
+   * @param {Array} data.peerCandidates - Peer's ICE candidates
+   * @param {Object} data.peerProfile - Peer's connection profile
+   */
+  handleIceStart(data) {
+    const { sessionId, timestamp, peer, peerCandidates, peerProfile } = data;
+    
+    console.log(`❄️ [DHT] Processing ICE start for peer ${peer?.substring(0, 8)}...`);
+    console.log(`   Session: ${sessionId?.substring(0, 12)}...`);
+    console.log(`   Timestamp: ${timestamp} (in ${timestamp - Date.now()}ms)`);
+    console.log(`   Peer candidates: ${peerCandidates?.length || 0}`);
+    console.log(`   Peer NAT type: ${peerProfile?.natType || 'unknown'}`);
+    
+    // Find the connection manager for this peer
+    const peerNode = this.routingTable.getNode(peer);
+    if (!peerNode || !peerNode.connectionManager) {
+      console.warn(`❄️ [DHT] No connection manager found for peer ${peer?.substring(0, 8)}...`);
+      // Emit event anyway so other components can handle it
+      this.emit('iceStart', data);
+      return;
+    }
+    
+    // Calculate delay until synchronized start time
+    const now = Date.now();
+    const delay = Math.max(0, timestamp - now);
+    
+    if (delay > 0) {
+      console.log(`❄️ [DHT] Waiting ${delay}ms for synchronized ICE start...`);
+      setTimeout(() => {
+        this._triggerIceStart(peerNode, peer, peerCandidates, peerProfile, sessionId);
+      }, delay);
+    } else {
+      // Start immediately if timestamp is in the past
+      this._triggerIceStart(peerNode, peer, peerCandidates, peerProfile, sessionId);
+    }
+  }
+
+  /**
+   * Trigger ICE start on the connection manager
+   * @private
+   */
+  _triggerIceStart(peerNode, peerId, peerCandidates, peerProfile, sessionId) {
+    console.log(`❄️ [DHT] Triggering synchronized ICE start for ${peerId?.substring(0, 8)}...`);
+    
+    // If the connection manager supports ICE coordination, use it
+    if (peerNode.connectionManager.handleIceStart) {
+      peerNode.connectionManager.handleIceStart({
+        peerId,
+        peerCandidates,
+        peerProfile,
+        sessionId
+      });
+    } else if (peerNode.connectionManager.webrtcManager?.handleIceStart) {
+      // Try the WebRTC manager directly (for HybridConnectionManager)
+      peerNode.connectionManager.webrtcManager.handleIceStart({
+        peerId,
+        peerCandidates,
+        peerProfile,
+        sessionId
+      });
+    } else {
+      // Emit event for manual handling
+      console.log(`❄️ [DHT] Connection manager doesn't support handleIceStart, emitting event`);
+      this.emit('iceStart', {
+        peerId,
+        peerCandidates,
+        peerProfile,
+        sessionId
+      });
+    }
+  }
+
+  /**
+   * Handle ICE restart signal from bootstrap server (Task 4.3: Coordinated ICE restart)
+   * 
+   * This is called when both peers are behind hard NATs and initial ICE failed.
+   * The bootstrap server coordinates an ICE restart so both peers restart at the same time.
+   * 
+   * @param {Object} data - ICE restart data from bootstrap
+   * @param {string} data.sessionId - Session ID for tracking
+   * @param {number} data.timestamp - Synchronized timestamp to restart ICE
+   * @param {string} data.peer - The peer we're coordinating with
+   */
+  handleIceRestartGo(data) {
+    const { sessionId, timestamp, peer } = data;
+    
+    console.log(`❄️ [DHT] Processing ICE restart for peer ${peer?.substring(0, 8)}...`);
+    console.log(`   Session: ${sessionId?.substring(0, 12)}...`);
+    console.log(`   Timestamp: ${timestamp} (in ${timestamp - Date.now()}ms)`);
+    
+    // Find the connection manager for this peer
+    const peerNode = this.routingTable.getNode(peer);
+    if (!peerNode || !peerNode.connectionManager) {
+      console.warn(`❄️ [DHT] No connection manager found for peer ${peer?.substring(0, 8)}...`);
+      this.emit('iceRestartGo', data);
+      return;
+    }
+    
+    // Calculate delay until synchronized restart time
+    const now = Date.now();
+    const delay = Math.max(0, timestamp - now);
+    
+    if (delay > 0) {
+      console.log(`❄️ [DHT] Waiting ${delay}ms for synchronized ICE restart...`);
+      setTimeout(() => {
+        this._triggerIceRestart(peerNode, peer, sessionId);
+      }, delay);
+    } else {
+      this._triggerIceRestart(peerNode, peer, sessionId);
+    }
+  }
+
+  /**
+   * Trigger ICE restart on the connection manager
+   * @private
+   */
+  _triggerIceRestart(peerNode, peerId, sessionId) {
+    console.log(`❄️ [DHT] Triggering synchronized ICE restart for ${peerId?.substring(0, 8)}...`);
+    
+    // If the connection manager supports ICE restart, use it
+    if (peerNode.connectionManager.restartIce) {
+      peerNode.connectionManager.restartIce({ peerId, sessionId });
+    } else if (peerNode.connectionManager.webrtcManager?.restartIce) {
+      // Try the WebRTC manager directly (for HybridConnectionManager)
+      peerNode.connectionManager.webrtcManager.restartIce({ peerId, sessionId });
+    } else {
+      // Emit event for manual handling
+      console.log(`❄️ [DHT] Connection manager doesn't support restartIce, emitting event`);
+      this.emit('iceRestartGo', { peerId, sessionId });
+    }
+  }
+
+  /**
+   * Handle ICE coordination request from connection manager (Task 4.2)
+   * 
+   * When Browser A wants to connect to Browser B, the HybridConnectionManager
+   * emits an iceCoordinateRequest event. This method forwards the request to
+   * the bootstrap server, which coordinates timing between both peers.
+   * 
+   * @param {Object} data - ICE coordination request data
+   * @param {string} data.targetPeerId - The peer we want to coordinate with
+   * @param {string} [data.sessionId] - Optional session ID for tracking
+   * @private
+   */
+  _handleIceCoordinateRequest(data) {
+    const { targetPeerId, sessionId } = data;
+    
+    if (!targetPeerId) {
+      console.warn('❄️ [DHT] ICE coordinate request missing targetPeerId');
+      return;
+    }
+    
+    // Check if bootstrap client is available and connected
+    if (!this.bootstrap || !this.bootstrap.isBootstrapConnected()) {
+      console.warn(`❄️ [DHT] Cannot send ICE coordinate - bootstrap not connected`);
+      return;
+    }
+    
+    // Get ICE candidates from the WebRTC manager if available
+    // For now, we send an empty array - candidates will be exchanged via normal signaling
+    // The coordination is primarily about timing, not candidate exchange
+    const candidates = [];
+    
+    console.log(`❄️ [DHT] Forwarding ICE coordination request to bootstrap for ${targetPeerId.substring(0, 8)}...`);
+    
+    // Send the coordination request to the bootstrap server
+    this.bootstrap.sendIceCoordinate(targetPeerId, candidates, { sessionId });
+  }
+
+  /**
+   * Handle ICE restart request from connection manager (Task 4.3)
+   * 
+   * When initial ICE fails for a hard NAT pair, the HybridConnectionManager
+   * emits an iceRestartRequest event. This method forwards the request to
+   * the bootstrap server, which coordinates the restart between both peers.
+   * 
+   * @param {Object} data - ICE restart request data
+   * @param {string} data.targetPeerId - The peer we want to coordinate restart with
+   * @param {string} [data.sessionId] - Optional session ID for tracking
+   * @param {string} [data.reason] - Reason for the restart request
+   * @param {Object} [data.candidateTypes] - ICE candidate types that were tried
+   * @private
+   */
+  _handleIceRestartRequest(data) {
+    const { targetPeerId, sessionId, reason, candidateTypes } = data;
+    
+    if (!targetPeerId) {
+      console.warn('❄️ [DHT] ICE restart request missing targetPeerId');
+      return;
+    }
+    
+    // Check if bootstrap client is available and connected
+    if (!this.bootstrap || !this.bootstrap.isBootstrapConnected()) {
+      console.warn(`❄️ [DHT] Cannot send ICE restart coordinate - bootstrap not connected`);
+      return;
+    }
+    
+    console.log(`❄️ [DHT] Forwarding ICE restart request to bootstrap for ${targetPeerId.substring(0, 8)}...`);
+    console.log(`   Reason: ${reason || 'not specified'}`);
+    if (candidateTypes) {
+      console.log(`   Candidate types tried: host=${candidateTypes.host || 0}, srflx=${candidateTypes.srflx || 0}, relay=${candidateTypes.relay || 0}`);
+    }
+    
+    // Send the coordinated restart request to the bootstrap server
+    this.bootstrap.sendIceRestartCoordinate(targetPeerId, sessionId);
+  }
+
+  /**
    * Handle connect to bridge instruction from bootstrap server
    * Bootstrap tells genesis to connect to bridge's WebSocket server
    */
@@ -2418,6 +2725,16 @@ export class KademliaDHT extends EventEmitter {
   async handleIncomingSignal(fromPeer, signal) {
     // Use getOrCreatePeerNode to ensure connection manager exists
     const peerNode = this.getOrCreatePeerNode(fromPeer);
+    
+    // Check if connection manager supports WebRTC signaling
+    // Node.js servers use WebSocketConnectionManager which doesn't have handleSignal
+    if (typeof peerNode.connectionManager.handleSignal !== 'function') {
+      console.warn(`⚠️ handleIncomingSignal: Connection manager for ${fromPeer.substring(0, 8)}... doesn't support WebRTC signaling`);
+      console.warn(`   Manager type: ${peerNode.connectionManager.constructor.name}`);
+      console.warn(`   Ignoring WebRTC signal - this node doesn't support WebRTC`);
+      return;
+    }
+    
     await peerNode.connectionManager.handleSignal(fromPeer, signal);
   }
 
@@ -2451,6 +2768,13 @@ export class KademliaDHT extends EventEmitter {
       if (result) {
         // Use getOrCreatePeerNode to ensure connection manager exists
         const peerNode = this.getOrCreatePeerNode(peerId);
+        
+        // Check if connection manager supports WebRTC signaling
+        if (typeof peerNode.connectionManager.handleSignal !== 'function') {
+          console.warn(`⚠️ requestICECandidates: Connection manager for ${peerId.substring(0, 8)}... doesn't support WebRTC signaling`);
+          return;
+        }
+        
         await peerNode.connectionManager.handleSignal(peerId, result.signal);
       }
     } catch (error) {
@@ -2583,6 +2907,13 @@ export class KademliaDHT extends EventEmitter {
           console.log(`📥 Found answer from ${peerId} in DHT, applying...`);
           // Use getOrCreatePeerNode to ensure connection manager exists
           const peerNode = this.getOrCreatePeerNode(peerId);
+          
+          // Check if connection manager supports WebRTC signaling
+          if (typeof peerNode.connectionManager.handleSignal !== 'function') {
+            console.warn(`⚠️ pollForDHTAnswer: Connection manager for ${peerId.substring(0, 8)}... doesn't support WebRTC signaling`);
+            return false;
+          }
+          
           await peerNode.connectionManager.handleSignal(peerId, answerData.signal);
           return true;
         }
@@ -2836,12 +3167,30 @@ export class KademliaDHT extends EventEmitter {
         console.log(`🔄 Connection already exists for ${peerId}, using existing connection for offer`);
         // Use existing connection to handle the offer
         const existingPeerNode = this.getOrCreatePeerNode(peerId);
+        
+        // Check if connection manager supports WebRTC signaling
+        if (typeof existingPeerNode.connectionManager.handleSignal !== 'function') {
+          console.warn(`⚠️ respondToOffer: Connection manager for ${peerId.substring(0, 8)}... doesn't support WebRTC signaling`);
+          console.warn(`   Manager type: ${existingPeerNode.connectionManager.constructor.name}`);
+          console.warn(`   This node doesn't support WebRTC - ignoring offer`);
+          return;
+        }
+        
         await existingPeerNode.connectionManager.handleSignal(peerId, offerSignal);
         return;
       }
 
       // Create incoming connection to handle the offer
       const peerNode = this.getOrCreatePeerNode(peerId);
+      
+      // Check if connection manager supports WebRTC signaling
+      if (typeof peerNode.connectionManager.handleSignal !== 'function') {
+        console.warn(`⚠️ respondToOffer: Connection manager for ${peerId.substring(0, 8)}... doesn't support WebRTC signaling`);
+        console.warn(`   Manager type: ${peerNode.connectionManager.constructor.name}`);
+        console.warn(`   This node doesn't support WebRTC - ignoring offer`);
+        return;
+      }
+      
       // CRITICAL: Pass metadata from routing table node so connection manager has connection info
       await peerNode.connectionManager.createConnection(peerId, false, peerNode.metadata); // false = not initiator
 
@@ -2853,6 +3202,13 @@ export class KademliaDHT extends EventEmitter {
         console.log(`🔄 Race condition detected for ${peerId}, using existing connection`);
         try {
           const peerNode = this.getOrCreatePeerNode(peerId);
+          
+          // Check if connection manager supports WebRTC signaling
+          if (typeof peerNode.connectionManager.handleSignal !== 'function') {
+            console.warn(`⚠️ respondToOffer (race): Connection manager doesn't support WebRTC signaling`);
+            return;
+          }
+          
           await peerNode.connectionManager.handleSignal(peerId, offerSignal);
         } catch (signalError) {
           console.error(`❌ Failed to handle offer signal for existing connection ${peerId}:`, signalError);
@@ -2976,6 +3332,21 @@ export class KademliaDHT extends EventEmitter {
     try {
       // Use getOrCreatePeerNode to ensure connection manager exists
       const peerNode = this.getOrCreatePeerNode(peerId);
+      
+      // Check if connection manager supports WebRTC signaling
+      if (typeof peerNode.connectionManager.handleSignal !== 'function') {
+        console.warn(`⚠️ handleICECandidate: Connection manager for ${peerId.substring(0, 8)}... doesn't support WebRTC signaling`);
+        if (requestId) {
+          this.sendMessage(peerId, {
+            type: 'ice_response',
+            requestId,
+            success: false,
+            error: 'This node does not support WebRTC'
+          });
+        }
+        return;
+      }
+      
       await peerNode.connectionManager.handleSignal(peerId, signal);
 
       if (requestId) {
@@ -5390,6 +5761,10 @@ export class KademliaDHT extends EventEmitter {
         });
       }
       
+      // CRITICAL: Set up relay message handler for connections to relay-capable nodes
+      // This enables browser↔browser traffic routing through relay when direct WebRTC fails
+      this._setupRelayMessageHandler(peerNode, peerId);
+      
       return peerNode;
     }
 
@@ -5421,6 +5796,22 @@ export class KademliaDHT extends EventEmitter {
             console.log(`📋 Updated routing table: ${key}=${value} for ${event.peerId.substring(0, 8)}`);
           }
         }
+      });
+
+      // Task 4.2: Set up event handler for ICE coordination requests
+      // When HybridConnectionManager wants to coordinate ICE timing with a peer,
+      // it emits this event and we forward the request to the bootstrap server
+      peerNode.connectionManager.on('iceCoordinateRequest', (data) => {
+        console.log(`❄️ [DHT] ICE coordination request from connection manager for ${data.targetPeerId?.substring(0, 8)}...`);
+        this._handleIceCoordinateRequest(data);
+      });
+
+      // Task 4.3: Set up event handler for ICE restart requests
+      // When initial ICE fails for a hard NAT pair, HybridConnectionManager emits this event
+      // and we forward the coordinated restart request to the bootstrap server
+      peerNode.connectionManager.on('iceRestartRequest', (data) => {
+        console.log(`❄️ [DHT] ICE restart request from connection manager for ${data.targetPeerId?.substring(0, 8)}...`);
+        this._handleIceRestartRequest(data);
       });
 
       // Mark that event handlers are attached to prevent duplicates
@@ -5496,6 +5887,10 @@ export class KademliaDHT extends EventEmitter {
     if (peerNode.metadata && Object.keys(peerNode.metadata).length > 0 && peerNode.connectionManager.localMetadataStore) {
       peerNode.connectionManager.localMetadataStore.set(peerId, peerNode.metadata);
     }
+    
+    // CRITICAL: Set up relay message handler for connections to relay-capable nodes (bridge nodes)
+    // This enables browser↔browser traffic routing through relay when direct WebRTC fails
+    this._setupRelayMessageHandler(peerNode, peerId);
 
     return peerNode;
   }
@@ -7007,6 +7402,62 @@ export class KademliaDHT extends EventEmitter {
       internalMaps: this.getInternalMapSizes()
     };
   }
+  
+  /**
+   * Get connection statistics including aggregate path stats
+   * Task 5.4: Report aggregate statistics: % direct, % relay
+   * 
+   * This method provides detailed connection statistics including:
+   * - Connected peers count and list
+   * - Aggregate path statistics (% direct vs % relay) for browser-to-browser connections
+   * - Per-connection breakdown for detailed analysis
+   * 
+   * @returns {Object} Connection statistics
+   */
+  getConnectionStats() {
+    const connectedPeers = this.getConnectedPeers();
+    
+    // Get aggregate path stats from RelayManager if available (browser-to-browser connections)
+    let aggregatePathStats = null;
+    const relayManager = ConnectionManagerFactory.getRelayManager();
+    if (relayManager && typeof relayManager.getAggregatePathStats === 'function') {
+      aggregatePathStats = relayManager.getAggregatePathStats();
+    }
+    
+    return {
+      // Basic connection info
+      connectedPeers: connectedPeers.map(p => p.substring(0, 8) + '...'),
+      connectedPeerCount: connectedPeers.length,
+      
+      // Aggregate path statistics for browser-to-browser connections
+      // Task 5.4: Report aggregate statistics: % direct, % relay
+      pathStats: aggregatePathStats ? {
+        // Summary
+        totalBrowserConnections: aggregatePathStats.totalConnections,
+        totalConnectionTime: aggregatePathStats.totalConnectionTime,
+        
+        // Time-based percentages (how much time spent on each path type)
+        relayTimePercentage: aggregatePathStats.relayPercentage,
+        directTimePercentage: aggregatePathStats.directPercentage,
+        meetsDirectTarget: aggregatePathStats.meetsDirectTarget,
+        
+        // Current snapshot (how many connections are currently on each path type)
+        currentlyOnRelay: aggregatePathStats.currentlyOnRelay,
+        currentlyOnDirect: aggregatePathStats.currentlyOnDirect,
+        currentRelayPercentage: aggregatePathStats.currentRelayPercentage,
+        currentDirectPercentage: aggregatePathStats.currentDirectPercentage,
+        
+        // Per-connection breakdown (for detailed analysis)
+        perConnection: aggregatePathStats.perConnection,
+        
+        // Timestamp
+        timestamp: aggregatePathStats.timestamp
+      } : null,
+      
+      // Relay manager metrics (if available)
+      relayMetrics: relayManager ? relayManager.getMetrics() : null
+    };
+  }
 
   /**
    * Get sizes of all internal Maps for memory leak detection
@@ -8273,6 +8724,285 @@ export class KademliaDHT extends EventEmitter {
       console.error(`❌ Error verifying bridge node auth:`, error);
       return false;
     }
+  }
+  
+  /**
+   * Set up relay message handler for connections to relay-capable nodes
+   * This enables browser↔browser traffic routing through relay when direct WebRTC fails
+   * 
+   * When a browser connects to a bridge node (which has canRelay: true), we set up
+   * a relay message handler so that:
+   * 1. Incoming relay_forward messages are routed to the RelayManager
+   * 2. The RelayManager emits relayForwardReceived events
+   * 3. HybridConnectionManager delivers the payload to the DHT
+   * 
+   * @param {DHTNode} peerNode - The peer node with connection manager
+   * @param {string} peerId - The peer ID
+   * @private
+   */
+  _setupRelayMessageHandler(peerNode, peerId) {
+    // Only set up relay handlers for browser nodes connecting to relay-capable nodes
+    if (this.nodeType !== 'browser') {
+      return; // Node.js nodes handle relay differently (via PassiveBridgeNode)
+    }
+    
+    // Check if peer is relay-capable (bridge node or DHT node with canRelay)
+    const isRelayCapable = peerNode.metadata?.canRelay || peerNode.metadata?.isBridgeNode;
+    if (!isRelayCapable) {
+      return; // Not a relay-capable node
+    }
+    
+    // Check if relay handler already attached
+    if (peerNode.connectionManager._relayMessageHandlerAttached) {
+      return; // Already set up
+    }
+    
+    // Get the shared RelayManager from ConnectionManagerFactory
+    const { ConnectionManagerFactory } = require('../network/ConnectionManagerFactory.js');
+    const relayManager = ConnectionManagerFactory.getRelayManager();
+    
+    if (!relayManager) {
+      console.warn(`⚠️ No RelayManager available for relay message handling`);
+      return;
+    }
+    
+    // Task 3.1: Register this relay-capable node with the RelayManager
+    // This enables the RelayManager to select this node for relay sessions
+    // The bridge node's metadata should include canRelay, publicAddress, etc.
+    const relayNodeInfo = {
+      nodeId: peerId,
+      metadata: {
+        canRelay: true,
+        publicAddress: peerNode.metadata?.publicAddress || peerNode.metadata?.listeningAddress,
+        relayLoad: peerNode.metadata?.relayLoad || 0,
+        relayCapacity: peerNode.metadata?.relayCapacity || 100,
+        isBridgeNode: peerNode.metadata?.isBridgeNode || false
+      }
+    };
+    
+    if (relayNodeInfo.metadata.publicAddress) {
+      relayManager.updateRelayNodes([relayNodeInfo]);
+      console.log(`🔄 Registered relay node ${peerId.substring(0, 8)}... with RelayManager (address: ${relayNodeInfo.metadata.publicAddress})`);
+    } else {
+      console.warn(`⚠️ Relay node ${peerId.substring(0, 8)}... has no public address, cannot use for relay`);
+    }
+    
+    console.log(`🔄 Setting up relay message handler for connection to ${peerId.substring(0, 8)}... (relay-capable node)`);
+    
+    // Set up relay message event listener
+    peerNode.connectionManager.on('relayMessage', ({ peerId: msgPeerId, message, sourceManager }) => {
+      console.log(`🔄 Browser received relay message: ${message.type} from ${msgPeerId.substring(0, 8)}...`);
+      
+      // Route to RelayManager based on message type
+      switch (message.type) {
+        case 'relay_forward':
+          // This is a message forwarded through the relay - deliver to local handlers
+          relayManager.handleRelayForward(msgPeerId, message);
+          break;
+          
+        case 'relay_ack':
+          // Relay session acknowledgment
+          relayManager.handleRelayAck(msgPeerId, message);
+          break;
+          
+        case 'relay_close':
+          // Relay session close
+          relayManager.handleRelayClose(msgPeerId, message);
+          break;
+          
+        case 'relay_ping':
+          // Health check ping
+          relayManager.handleRelayPing(msgPeerId, message);
+          break;
+          
+        case 'relay_pong':
+          // Health check pong
+          relayManager.handleRelayPong(msgPeerId, message);
+          break;
+          
+        default:
+          console.warn(`⚠️ Unknown relay message type: ${message.type}`);
+      }
+    });
+    
+    peerNode.connectionManager._relayMessageHandlerAttached = true;
+    
+    // Also set up RelayManager event handlers for sending messages through this connection
+    if (!relayManager._dhtSendHandlersAttached) {
+      // Handle sending relay requests
+      relayManager.on('sendRelayRequest', async ({ toPeerId, message }) => {
+        try {
+          const targetNode = this.routingTable.getNode(toPeerId);
+          if (targetNode?.connectionManager) {
+            await targetNode.connectionManager.sendMessage(toPeerId, message);
+            console.log(`🔄 Sent relay request to ${toPeerId.substring(0, 8)}...`);
+          }
+        } catch (err) {
+          console.error(`❌ Failed to send relay request: ${err.message}`);
+        }
+      });
+      
+      // Handle sending relay forward messages
+      relayManager.on('sendRelayForward', async ({ toPeerId, message }) => {
+        try {
+          const targetNode = this.routingTable.getNode(toPeerId);
+          if (targetNode?.connectionManager) {
+            await targetNode.connectionManager.sendMessage(toPeerId, message);
+          }
+        } catch (err) {
+          console.error(`❌ Failed to send relay forward: ${err.message}`);
+        }
+      });
+      
+      // Handle sending relay ack
+      relayManager.on('sendRelayAck', async ({ toPeerId, sessionId, success, error }) => {
+        try {
+          const targetNode = this.routingTable.getNode(toPeerId);
+          if (targetNode?.connectionManager) {
+            await targetNode.connectionManager.sendMessage(toPeerId, {
+              type: 'relay_ack',
+              sessionId,
+              success,
+              error,
+              timestamp: Date.now()
+            });
+          }
+        } catch (err) {
+          console.error(`❌ Failed to send relay ack: ${err.message}`);
+        }
+      });
+      
+      // Handle sending relay close
+      relayManager.on('sendRelayClose', async ({ toPeerId, sessionId, reason }) => {
+        try {
+          const targetNode = this.routingTable.getNode(toPeerId);
+          if (targetNode?.connectionManager) {
+            await targetNode.connectionManager.sendMessage(toPeerId, {
+              type: 'relay_close',
+              sessionId,
+              reason,
+              timestamp: Date.now()
+            });
+          }
+        } catch (err) {
+          console.error(`❌ Failed to send relay close: ${err.message}`);
+        }
+      });
+      
+      // Handle sending relay ping
+      relayManager.on('sendRelayPing', async ({ toPeerId, message }) => {
+        try {
+          const targetNode = this.routingTable.getNode(toPeerId);
+          if (targetNode?.connectionManager) {
+            await targetNode.connectionManager.sendMessage(toPeerId, message);
+          }
+        } catch (err) {
+          console.error(`❌ Failed to send relay ping: ${err.message}`);
+        }
+      });
+      
+      // Handle sending relay pong
+      relayManager.on('sendRelayPong', async ({ toPeerId, message }) => {
+        try {
+          const targetNode = this.routingTable.getNode(toPeerId);
+          if (targetNode?.connectionManager) {
+            await targetNode.connectionManager.sendMessage(toPeerId, message);
+          }
+        } catch (err) {
+          console.error(`❌ Failed to send relay pong: ${err.message}`);
+        }
+      });
+      
+      // Handle incoming relay sessions (when we're the target of a relay connection)
+      // This creates a HybridConnectionManager for the peer so we can receive their messages
+      // NOTE: This handler MUST be synchronous to ensure the HybridConnectionManager is created
+      // before the relay message is delivered
+      relayManager.on('incomingRelaySession', ({ sessionId, fromPeerId, relayNodeId }) => {
+        console.log(`🔄 Incoming relay session from ${fromPeerId.substring(0, 8)}... via ${relayNodeId.substring(0, 8)}...`);
+        
+        // Check if we already have a connection manager for this peer
+        let peerNode = this.routingTable.getNode(fromPeerId);
+        
+        if (!peerNode) {
+          // Create a new peer node with HybridConnectionManager
+          console.log(`🔄 Creating peer node for incoming relay peer ${fromPeerId.substring(0, 8)}...`);
+          
+          // Get or create a HybridConnectionManager for this peer
+          const manager = ConnectionManagerFactory.getManagerForPeer(fromPeerId, { nodeType: 'browser' });
+          
+          // Set the relay session on the manager if it's a HybridConnectionManager
+          if (manager.relaySession === undefined) {
+            // It's a HybridConnectionManager - set up the relay session
+            manager.relaySession = { 
+              sessionId, 
+              relayNodeId,
+              state: 'active',
+              createdAt: Date.now(),
+              lastActivity: Date.now()
+            };
+            manager.relayConnected = true;
+            manager.activeTransport = 'relay';
+            manager.connectionState = 'connected';
+            manager.peerId = fromPeerId;
+            
+            // Register with RelayManager for message routing
+            if (manager.relayManager) {
+              manager.relayManager.registerPeerManager(fromPeerId, manager);
+            } else {
+              // Use the shared RelayManager
+              relayManager.registerPeerManager(fromPeerId, manager);
+              manager.relayManager = relayManager;
+            }
+          }
+          
+          // Attach DHT message handler to the manager
+          if (!manager._dhtMessageHandlerAttached) {
+            manager.on('dhtMessage', ({ peerId: msgPeerId, message, sourceManager }) => {
+              console.log(`📥 DHT MESSAGE (via incoming relay): ${message.type} from ${msgPeerId.substring(0, 8)}`);
+              this.handlePeerMessage(msgPeerId, message, sourceManager);
+            });
+            manager._dhtMessageHandlerAttached = true;
+          }
+          
+          // Add to routing table
+          this.routingTable.handlePeerConnected(fromPeerId, null, manager, false, { nodeType: 'browser' });
+          
+          console.log(`✅ Peer node created for incoming relay peer ${fromPeerId.substring(0, 8)}...`);
+        } else if (peerNode.connectionManager) {
+          // Update existing connection manager with relay session info
+          const manager = peerNode.connectionManager;
+          if (manager.relaySession === undefined) {
+            manager.relaySession = { 
+              sessionId, 
+              relayNodeId,
+              state: 'active',
+              createdAt: Date.now(),
+              lastActivity: Date.now()
+            };
+            manager.relayConnected = true;
+            manager.activeTransport = 'relay';
+            manager.connectionState = 'connected';
+            
+            // Register with RelayManager for message routing
+            if (manager.relayManager) {
+              manager.relayManager.registerPeerManager(fromPeerId, manager);
+            } else {
+              relayManager.registerPeerManager(fromPeerId, manager);
+              manager.relayManager = relayManager;
+            }
+          }
+          console.log(`✅ Updated existing peer node with relay session for ${fromPeerId.substring(0, 8)}...`);
+        }
+      });
+      
+      relayManager._dhtSendHandlersAttached = true;
+      console.log(`✅ RelayManager send handlers attached to DHT`);
+    }
+    
+    // Set the bridge node ID in ConnectionManagerFactory for HybridConnectionManager
+    ConnectionManagerFactory.setBridgeNode(peerId);
+    
+    console.log(`✅ Relay message handler set up for ${peerId.substring(0, 8)}...`);
   }
 }
 

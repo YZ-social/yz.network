@@ -257,7 +257,8 @@ describe('Connection Manager Hierarchy', () => {
     });
 
     test('should track keep-alive state', () => {
-      expect(rtcManager.keepAliveInterval).toBe(30000);
+      // Task 5.1: Keep-alive interval reduced from 30s to 25s to stay under NAT mapping timeout
+      expect(rtcManager.keepAliveInterval).toBe(25000);
       expect(rtcManager.keepAliveIntervalHidden).toBe(10000);
       expect(rtcManager.keepAliveTimeout).toBe(60000);
     });
@@ -473,4 +474,201 @@ describe('Connection Manager Hierarchy', () => {
       manager.destroy();
     });
   });
+
+  describe('Relay Message Handling (Task 2.3)', () => {
+    let manager;
+
+    beforeEach(() => {
+      manager = new WebSocketConnectionManager({
+        localNodeType: 'nodejs',
+        targetNodeType: 'nodejs',
+        enableServer: false
+      });
+      manager.initialize('test-node');
+    });
+
+    afterEach(() => {
+      if (manager && !manager.isDestroyed) {
+        manager.destroy();
+      }
+    });
+
+    test('should emit relayMessage for relay_request messages', (done) => {
+      manager.on('relayMessage', ({ peerId, message, sourceManager }) => {
+        expect(peerId).toBe('peer-123');
+        expect(message.type).toBe('relay_request');
+        expect(message.targetPeerId).toBe('target-456');
+        expect(message.sessionId).toBe('session-789');
+        expect(sourceManager).toBe(manager);
+        done();
+      });
+
+      manager.handleMessage('peer-123', {
+        type: 'relay_request',
+        targetPeerId: 'target-456',
+        sessionId: 'session-789',
+        timestamp: Date.now()
+      });
+    });
+
+    test('should emit relayMessage for relay_forward messages', (done) => {
+      manager.on('relayMessage', ({ peerId, message }) => {
+        expect(peerId).toBe('peer-123');
+        expect(message.type).toBe('relay_forward');
+        expect(message.sessionId).toBe('session-789');
+        expect(message.payload).toEqual({ data: 'test' });
+        done();
+      });
+
+      manager.handleMessage('peer-123', {
+        type: 'relay_forward',
+        sessionId: 'session-789',
+        to: 'target-456',
+        payload: { data: 'test' }
+      });
+    });
+
+    test('should emit relayMessage for relay_ack messages', (done) => {
+      manager.on('relayMessage', ({ peerId, message }) => {
+        expect(peerId).toBe('peer-123');
+        expect(message.type).toBe('relay_ack');
+        expect(message.sessionId).toBe('session-789');
+        expect(message.success).toBe(true);
+        done();
+      });
+
+      manager.handleMessage('peer-123', {
+        type: 'relay_ack',
+        sessionId: 'session-789',
+        success: true,
+        timestamp: Date.now()
+      });
+    });
+
+    test('should emit relayMessage for relay_close messages', (done) => {
+      manager.on('relayMessage', ({ peerId, message }) => {
+        expect(peerId).toBe('peer-123');
+        expect(message.type).toBe('relay_close');
+        expect(message.sessionId).toBe('session-789');
+        expect(message.reason).toBe('manual');
+        done();
+      });
+
+      manager.handleMessage('peer-123', {
+        type: 'relay_close',
+        sessionId: 'session-789',
+        reason: 'manual',
+        timestamp: Date.now()
+      });
+    });
+
+    test('should emit relayMessage for relay_ping messages', (done) => {
+      manager.on('relayMessage', ({ peerId, message }) => {
+        expect(peerId).toBe('peer-123');
+        expect(message.type).toBe('relay_ping');
+        expect(message.sessionId).toBe('session-789');
+        expect(message.pingId).toBe('ping-123');
+        done();
+      });
+
+      manager.handleMessage('peer-123', {
+        type: 'relay_ping',
+        sessionId: 'session-789',
+        pingId: 'ping-123',
+        timestamp: Date.now()
+      });
+    });
+
+    test('should emit relayMessage for relay_pong messages', (done) => {
+      manager.on('relayMessage', ({ peerId, message }) => {
+        expect(peerId).toBe('peer-123');
+        expect(message.type).toBe('relay_pong');
+        expect(message.sessionId).toBe('session-789');
+        expect(message.pingId).toBe('ping-123');
+        done();
+      });
+
+      manager.handleMessage('peer-123', {
+        type: 'relay_pong',
+        sessionId: 'session-789',
+        pingId: 'ping-123',
+        timestamp: Date.now(),
+        respondedAt: Date.now()
+      });
+    });
+
+    test('should reject invalid relay_request messages (missing targetPeerId)', () => {
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+      
+      manager.on('relayMessage', () => {
+        throw new Error('Should not emit relayMessage for invalid message');
+      });
+
+      manager.handleMessage('peer-123', {
+        type: 'relay_request',
+        sessionId: 'session-789'
+        // Missing targetPeerId
+      });
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Invalid relay message')
+      );
+      
+      warnSpy.mockRestore();
+    });
+
+    test('should reject invalid relay_request messages (missing sessionId)', () => {
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+      
+      manager.on('relayMessage', () => {
+        throw new Error('Should not emit relayMessage for invalid message');
+      });
+
+      manager.handleMessage('peer-123', {
+        type: 'relay_request',
+        targetPeerId: 'target-456'
+        // Missing sessionId
+      });
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Invalid relay message')
+      );
+      
+      warnSpy.mockRestore();
+    });
+
+    test('should warn when no relay message listeners are attached', () => {
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+      
+      // Don't attach any relayMessage listener
+      manager.handleMessage('peer-123', {
+        type: 'relay_request',
+        targetPeerId: 'target-456',
+        sessionId: 'session-789',
+        timestamp: Date.now()
+      });
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('NO RELAY MESSAGE LISTENERS')
+      );
+      
+      warnSpy.mockRestore();
+    });
+
+    test('should include sourceManager in relayMessage event for response routing', (done) => {
+      manager.on('relayMessage', ({ sourceManager }) => {
+        expect(sourceManager).toBe(manager);
+        expect(typeof sourceManager.sendMessage).toBe('function');
+        done();
+      });
+
+      manager.handleMessage('peer-123', {
+        type: 'relay_request',
+        targetPeerId: 'target-456',
+        sessionId: 'session-789',
+        timestamp: Date.now()
+      });
+    });
+  });
+
 });

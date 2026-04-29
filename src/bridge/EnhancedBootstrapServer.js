@@ -7,6 +7,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { PROTOCOL_VERSION, BUILD_ID, checkVersionCompatibility } from '../version.js';
 import { BridgeConnectionPool } from './BridgeConnectionPool.js';
+import { RelayManager } from '../network/RelayManager.js';
+import { RelayMessageType, createRelayAck, isRelayMessage } from '../network/RelayProtocol.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -75,6 +77,123 @@ export class EnhancedBootstrapServer extends EventEmitter {
     // Server state
     this.isStarted = false;
     this.totalConnections = 0;
+    
+    // Server metadata - advertise relay capability for symmetric NAT relay system
+    // Bootstrap server can relay WebSocket traffic between browsers that can't establish direct WebRTC
+    this.serverMetadata = {
+      nodeType: 'bootstrap',
+      canRelay: true,
+      relayLoad: 0,                         // Current relay utilization (0-1), updated by RelayManager
+      relayCapacity: 500,                   // Bootstrap server has highest capacity
+      capabilities: ['websocket', 'relay', 'coordination']
+    };
+    
+    // Connection profile metrics for network-wide NAT analysis
+    this.connectionProfileMetrics = {
+      totalReports: 0,
+      natTypes: { open: 0, easy: 0, hard: 0, unknown: 0 },
+      portPatterns: { sequential: 0, random: 0, unknown: 0 },
+      ipv6Capable: 0,
+      needsRelay: 0,
+      lastUpdated: null,
+      // Task 6.2: Track IPv6 availability by platform
+      ipv6ByPlatform: {
+        // Format: platform -> { total: count, ipv6Capable: count }
+        // Platforms: 'windows', 'macos', 'linux', 'android', 'ios', 'chromeos', 'nodejs', 'unknown'
+      },
+      // Task 6.2: Track IPv6 availability by browser
+      ipv6ByBrowser: {
+        // Format: browser -> { total: count, ipv6Capable: count }
+        // Browsers: 'chrome', 'firefox', 'safari', 'edge', 'opera', 'ie', 'nodejs', 'unknown'
+      },
+      // Task 6.2: Track IPv6 availability by platform category (aggregated)
+      ipv6ByCategory: {
+        // Format: category -> { total: count, ipv6Capable: count }
+        // Categories: 'mobile-android', 'mobile-ios', 'mobile-other', 
+        //             'desktop-windows', 'desktop-macos', 'desktop-linux', 'desktop-chromeos',
+        //             'server-nodejs', 'unknown'
+      }
+    };
+    // Track individual peer profiles for detailed analysis
+    this.peerProfiles = new Map(); // nodeId -> { profile, timestamp }
+    
+    // Connection success rate metrics (Task 1.3: Add metrics endpoint)
+    // Tracks connection attempt outcomes for network-wide success rate analysis
+    this.connectionMetrics = {
+      // Total counts
+      totalAttempts: 0,
+      totalSuccesses: 0,
+      totalFailures: 0,
+      
+      // By connection type
+      byType: {
+        webrtc: { attempts: 0, successes: 0, failures: 0 },
+        websocket: { attempts: 0, successes: 0, failures: 0 },
+        relay: { attempts: 0, successes: 0, failures: 0 }
+      },
+      
+      // By NAT type combination (for browser-to-browser WebRTC)
+      byNatPair: {
+        // Format: 'localNat-remoteNat' -> { attempts, successes, failures }
+        // e.g., 'easy-easy', 'hard-hard', 'easy-hard'
+      },
+      
+      // ICE candidate types used in successful connections
+      iceCandidateTypes: {
+        host: 0,      // Direct LAN connection
+        srflx: 0,     // Server reflexive (STUN)
+        prflx: 0,     // Peer reflexive
+        relay: 0      // Relay (our WebSocket relay, not TURN)
+      },
+      
+      // Time-based metrics (rolling window)
+      recentAttempts: [],  // Array of { timestamp, success, type, natPair }
+      windowSize: 3600000, // 1 hour window for recent metrics
+      
+      lastUpdated: null
+    };
+
+    // Task 6.2: IPv6 adoption trend tracking over time
+    // Stores periodic snapshots of IPv6 metrics for trend analysis
+    this.ipv6TrendData = {
+      // Hourly snapshots (keep last 24 hours)
+      hourlySnapshots: [],
+      maxHourlySnapshots: 24,
+      
+      // Daily snapshots (keep last 30 days)
+      dailySnapshots: [],
+      maxDailySnapshots: 30,
+      
+      // Weekly snapshots (keep last 12 weeks)
+      weeklySnapshots: [],
+      maxWeeklySnapshots: 12,
+      
+      // Snapshot interval timers
+      lastHourlySnapshot: null,
+      lastDailySnapshot: null,
+      lastWeeklySnapshot: null,
+      
+      // Trend calculation cache
+      trendCache: null,
+      trendCacheExpiry: null
+    };
+    
+    // Start IPv6 trend snapshot timer (every hour)
+    this._startIPv6TrendTracking();
+
+    // Relay manager for symmetric NAT relay system
+    // Bootstrap server can relay WebSocket traffic between browsers that can't establish direct WebRTC
+    this.relayManager = new RelayManager({
+      maxRelaySessions: options.maxRelaySessions || 500,  // Bootstrap server has highest capacity
+      sessionTimeout: options.relaySessionTimeout || 5 * 60 * 1000,  // 5 minutes
+      healthCheckInterval: options.relayHealthCheckInterval || 30000  // 30 seconds
+    });
+
+    // ICE coordination for synchronized NAT traversal (Tailscale technique)
+    // When both peers send ice_coordinate targeting each other, we send ice_start to both simultaneously
+    // This helps packets cross in flight, opening both firewalls at the same time
+    this.pendingIceCoordinations = new Map(); // 'peerA:peerB' (sorted) -> { peerA: {...}, peerB: {...}, timestamp }
+    this.iceCoordinationTimeout = options.iceCoordinationTimeout || 10000; // 10 seconds to wait for peer
   }
 
   /**
@@ -167,6 +286,18 @@ export class EnhancedBootstrapServer extends EventEmitter {
       console.log('   Will rely on bridge nodes connecting to bootstrap server');
     }
 
+    // Initialize RelayManager for symmetric NAT relay system
+    // Bootstrap server can relay WebSocket traffic between browsers that can't establish direct WebRTC
+    // Generate a unique node ID for the bootstrap server (used for relay session tracking)
+    this.bootstrapNodeId = `bootstrap_${crypto.randomBytes(16).toString('hex')}`;
+    this.relayManager.initialize(this.bootstrapNodeId, true);  // canRelay = true for bootstrap server
+    
+    // Set up connection checker so RelayManager can verify peer connectivity
+    this.relayManager.setConnectionChecker((peerId) => this.isPeerConnected(peerId));
+    
+    this.setupRelayManagerEventHandlers();
+    console.log(`🔄 RelayManager initialized for bootstrap server`);
+
     this.isStarted = true;
 
     console.log(`🌟 Enhanced Bootstrap Server started`);
@@ -222,6 +353,10 @@ export class EnhancedBootstrapServer extends EventEmitter {
         // Stats endpoint
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(this.getStats()));
+      } else if (url === '/metrics') {
+        // Connection success rate metrics endpoint (Task 1.3)
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(this.getConnectionMetrics()));
       } else if (url === '/bridge-health') {
         // IMPROVEMENT: Bridge availability endpoint for monitoring (stateless)
         (async () => {
@@ -248,7 +383,7 @@ export class EnhancedBootstrapServer extends EventEmitter {
       } else {
         // Not found
         res.writeHead(404, { 'Content-Type': 'text/plain' });
-        res.end('Not Found\n\nAvailable endpoints:\n  /           - Installation info\n  /install.sh - Linux/Mac installer\n  /install.ps1 - Windows installer\n  /health     - Health check\n  /stats      - Server statistics');
+        res.end('Not Found\n\nAvailable endpoints:\n  /           - Installation info\n  /install.sh - Linux/Mac installer\n  /install.ps1 - Windows installer\n  /health     - Health check\n  /stats      - Server statistics\n  /metrics    - Connection success rate metrics');
       }
     } catch (error) {
       console.error('❌ Critical error in handleHttpRequest:', error);
@@ -648,6 +783,9 @@ export class EnhancedBootstrapServer extends EventEmitter {
 
     console.log('🛑 Stopping Enhanced Bootstrap Server');
 
+    // Stop IPv6 trend tracking
+    this._stopIPv6TrendTracking();
+
     // Close all client connections
     for (const [nodeId, peer] of this.peers) {
       if (peer.ws && peer.ws.readyState === WebSocket.OPEN) {
@@ -655,6 +793,12 @@ export class EnhancedBootstrapServer extends EventEmitter {
       }
     }
     this.peers.clear();
+
+    // Destroy RelayManager
+    if (this.relayManager) {
+      this.relayManager.destroy();
+      console.log('🔄 RelayManager destroyed');
+    }
 
     // Shutdown bridge connection pool
     if (this.bridgePool) {
@@ -1132,6 +1276,12 @@ export class EnhancedBootstrapServer extends EventEmitter {
         this.handleInvitationAccepted(ws, message);
       } else if (message.type === 'announce_independent') {
         this.handleAnnounceIndependent(ws, message);
+      } else if (message.type === 'profile_update') {
+        // Handle connection profile update from browsers for network-wide metrics
+        this.handleProfileUpdate(ws, message);
+      } else if (message.type === 'connection_outcome') {
+        // Handle connection outcome report for success rate metrics (Task 1.3)
+        this.handleConnectionOutcome(ws, message);
       } else if (message.type === 'onboarding_peer_response') {
         console.log(`📥 Received onboarding_peer_response from bridge (requestId: ${message.requestId?.substring(0, 16)}...)`);
         this.handleBridgeResponse(ws, message);
@@ -1149,6 +1299,19 @@ export class EnhancedBootstrapServer extends EventEmitter {
         // Just log for debugging
         const nodeId = ws.nodeId || 'unknown';
         console.log(`🏓 Received pong from ${nodeId.substring(0, 8)}... (keepalive acknowledged)`);
+      } else if (message.type === 'ice_coordinate') {
+        // Handle ICE coordination request for synchronized NAT traversal (Tailscale technique)
+        // When both peers send ice_coordinate targeting each other, we send ice_start to both simultaneously
+        this.handleIceCoordinate(ws, message);
+      } else if (message.type === 'ice_restart_coordinate') {
+        // Handle coordinated ICE restart for hard NAT pairs
+        this.handleIceRestartCoordinate(ws, message);
+      } else if (isRelayMessage(message)) {
+        // Handle relay protocol messages for symmetric NAT relay system
+        // Bootstrap server can relay WebSocket traffic between browsers that can't establish direct WebRTC
+        const peerId = ws.nodeId || 'unknown';
+        console.log(`🔄 Bootstrap received relay message: ${message.type} from ${peerId.substring(0, 8)}...`);
+        this.handleRelayMessage(peerId, message, ws);
       } else {
         console.warn('Unknown message type from client:', message.type);
       }
@@ -2951,6 +3114,422 @@ export class EnhancedBootstrapServer extends EventEmitter {
   }
 
   /**
+   * Handle ICE coordination request for synchronized NAT traversal (Tailscale technique)
+   * 
+   * When Browser A wants to connect to Browser B:
+   * 1. A sends: { type: 'ice_coordinate', target: B, candidates: [...], profile: {...} }
+   * 2. Bootstrap holds A's request, waits for B to be ready
+   * 3. B sends: { type: 'ice_coordinate', target: A, candidates: [...], profile: {...} }
+   * 4. Bootstrap sends BOTH peers: { type: 'ice_start', timestamp: T, peerCandidates: [...], peerProfile: {...} }
+   * 5. Both peers start ICE probing at exactly time T
+   * 6. Packets cross in flight, opening both firewalls simultaneously
+   * 
+   * This is especially useful for symmetric NAT ↔ cone NAT pairs where timing matters.
+   */
+  handleIceCoordinate(ws, message) {
+    const fromPeer = ws.nodeId;
+    const { target, candidates, profile, sessionId } = message;
+
+    if (!fromPeer) {
+      console.warn('❄️ ICE coordinate from unregistered peer');
+      ws.send(JSON.stringify({
+        type: 'ice_coordinate_error',
+        error: 'Not registered',
+        sessionId
+      }));
+      return;
+    }
+
+    if (!target) {
+      console.warn(`❄️ ICE coordinate from ${fromPeer.substring(0, 8)} missing target`);
+      ws.send(JSON.stringify({
+        type: 'ice_coordinate_error',
+        error: 'Missing target peer',
+        sessionId
+      }));
+      return;
+    }
+
+    // Create a canonical key for this peer pair (sorted to ensure same key regardless of who initiates)
+    const peerPair = [fromPeer, target].sort().join(':');
+    
+    console.log(`❄️ ICE coordinate: ${fromPeer.substring(0, 8)} → ${target.substring(0, 8)} (pair: ${peerPair.substring(0, 20)}...)`);
+
+    // Check if we already have a pending coordination for this pair
+    let coordination = this.pendingIceCoordinations.get(peerPair);
+    
+    if (!coordination) {
+      // First peer to request coordination - create pending entry and wait for the other peer
+      coordination = {
+        timestamp: Date.now(),
+        sessionId: sessionId || `ice-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+        peers: {}
+      };
+      this.pendingIceCoordinations.set(peerPair, coordination);
+      
+      // Set timeout to clean up if the other peer doesn't respond
+      coordination.timeoutId = setTimeout(() => {
+        this._handleIceCoordinationTimeout(peerPair, fromPeer);
+      }, this.iceCoordinationTimeout);
+    }
+
+    // Store this peer's data
+    coordination.peers[fromPeer] = {
+      ws,
+      candidates: candidates || [],
+      profile: profile || {},
+      timestamp: Date.now()
+    };
+
+    // Check if both peers are now ready
+    const peerIds = Object.keys(coordination.peers);
+    if (peerIds.length === 2 && peerIds.includes(fromPeer) && peerIds.includes(target)) {
+      // Both peers ready! Clear timeout and send ice_start to both simultaneously
+      if (coordination.timeoutId) {
+        clearTimeout(coordination.timeoutId);
+      }
+      
+      this._sendIceStart(peerPair, coordination);
+    } else {
+      // Still waiting for the other peer
+      console.log(`❄️ Waiting for ${target.substring(0, 8)} to coordinate ICE with ${fromPeer.substring(0, 8)}`);
+      
+      // Acknowledge receipt to the requesting peer
+      ws.send(JSON.stringify({
+        type: 'ice_coordinate_pending',
+        sessionId: coordination.sessionId,
+        target,
+        message: 'Waiting for peer to coordinate'
+      }));
+    }
+  }
+
+  /**
+   * Detect if both peers have hard NAT (symmetric NAT) from their connection profiles
+   * Task 4.3: This detection is used to determine if coordinated ICE restart should be attempted
+   * 
+   * @param {Object} profileA - Connection profile of peer A
+   * @param {Object} profileB - Connection profile of peer B
+   * @returns {Object} Detection result with flags and recommendation
+   */
+  _detectHardNatPair(profileA, profileB) {
+    const result = {
+      bothHardNat: false,
+      peerAHardNat: false,
+      peerBHardNat: false,
+      shouldAttemptCoordinatedRestart: false,
+      estimatedSuccessRate: 0.8,
+      reason: ''
+    };
+
+    // Check if profiles are available
+    if (!profileA || !profileB) {
+      result.reason = 'Missing connection profile(s)';
+      return result;
+    }
+
+    // Detect hard NAT for each peer
+    // Hard NAT = symmetric NAT with endpoint-dependent mapping
+    result.peerAHardNat = profileA.natType === 'hard';
+    result.peerBHardNat = profileB.natType === 'hard';
+    result.bothHardNat = result.peerAHardNat && result.peerBHardNat;
+
+    if (result.bothHardNat) {
+      // Both peers have hard NAT - direct connection is very difficult
+      // Check port allocation patterns to estimate success rate
+      const peerASequential = profileA.portPattern === 'sequential';
+      const peerBSequential = profileB.portPattern === 'sequential';
+
+      if (peerASequential && peerBSequential) {
+        // Sequential port allocation on both sides gives some hope
+        // Port prediction may work, coordinated restart is worth trying
+        result.shouldAttemptCoordinatedRestart = true;
+        result.estimatedSuccessRate = 0.3;
+        result.reason = 'Both hard NAT with sequential ports - coordinated restart recommended';
+        console.log(`🔒 Hard NAT pair detected: Both peers have symmetric NAT with sequential port allocation`);
+        console.log(`   → Coordinated ICE restart recommended if initial ICE fails`);
+      } else if (profileA.portPattern === 'random' || profileB.portPattern === 'random') {
+        // Random port allocation makes direct connection nearly impossible
+        // Coordinated restart unlikely to help, but worth one try
+        result.shouldAttemptCoordinatedRestart = true;
+        result.estimatedSuccessRate = 0.05;
+        result.reason = 'Both hard NAT with random ports - relay strongly recommended';
+        console.log(`🔒 Hard NAT pair detected: Both peers have symmetric NAT with random port allocation`);
+        console.log(`   → Direct connection very unlikely, relay recommended`);
+      } else {
+        // Unknown port pattern - try coordinated restart
+        result.shouldAttemptCoordinatedRestart = true;
+        result.estimatedSuccessRate = 0.2;
+        result.reason = 'Both hard NAT with unknown port pattern - coordinated restart may help';
+        console.log(`🔒 Hard NAT pair detected: Both peers have symmetric NAT`);
+        console.log(`   → Coordinated ICE restart recommended if initial ICE fails`);
+      }
+    } else if (result.peerAHardNat || result.peerBHardNat) {
+      // One peer has hard NAT, the other has easy/open NAT
+      // Direct connection has a reasonable chance
+      result.estimatedSuccessRate = 0.6;
+      result.reason = 'One hard NAT, one easy/open NAT - direct connection may work';
+      console.log(`🔓 Mixed NAT pair: One peer has hard NAT, other has ${result.peerAHardNat ? profileB.natType : profileA.natType}`);
+    } else {
+      // Neither peer has hard NAT - direct connection should work
+      result.estimatedSuccessRate = 0.85;
+      result.reason = 'No hard NAT detected - direct connection likely';
+    }
+
+    // Check for IPv6 availability which bypasses NAT entirely
+    if (profileA.hasIPv6 && profileB.hasIPv6) {
+      result.estimatedSuccessRate = Math.max(result.estimatedSuccessRate, 0.9);
+      result.reason += ' (IPv6 available on both peers)';
+      console.log(`🌐 IPv6 available on both peers - NAT traversal may not be needed`);
+    }
+
+    return result;
+  }
+
+  /**
+   * Send ice_start to both peers simultaneously for coordinated NAT traversal
+   */
+  _sendIceStart(peerPair, coordination) {
+    const peerIds = Object.keys(coordination.peers);
+    const [peerA, peerB] = peerIds;
+    const peerAData = coordination.peers[peerA];
+    const peerBData = coordination.peers[peerB];
+
+    // Task 4.3: Detect if both peers have hard NAT
+    const hardNatDetection = this._detectHardNatPair(peerAData.profile, peerBData.profile);
+
+    // Use a synchronized timestamp slightly in the future to account for network latency
+    // Both peers will start ICE probing at this exact time
+    const startTimestamp = Date.now() + 100; // 100ms in the future
+
+    console.log(`❄️ ICE coordination complete! Sending ice_start to both peers: ${peerA.substring(0, 8)} ↔ ${peerB.substring(0, 8)}`);
+    if (hardNatDetection.bothHardNat) {
+      console.log(`   ⚠️ Both peers have hard NAT - ${hardNatDetection.reason}`);
+    }
+
+    // Send to peer A with peer B's candidates and profile
+    if (peerAData.ws && peerAData.ws.readyState === 1) { // WebSocket.OPEN = 1
+      peerAData.ws.send(JSON.stringify({
+        type: 'ice_start',
+        sessionId: coordination.sessionId,
+        timestamp: startTimestamp,
+        peer: peerB,
+        peerCandidates: peerBData.candidates,
+        peerProfile: peerBData.profile,
+        // Task 4.3: Include hard NAT detection result so peers know to prepare for coordinated restart
+        hardNatPair: hardNatDetection.bothHardNat,
+        shouldAttemptCoordinatedRestart: hardNatDetection.shouldAttemptCoordinatedRestart,
+        estimatedSuccessRate: hardNatDetection.estimatedSuccessRate
+      }));
+    }
+
+    // Send to peer B with peer A's candidates and profile
+    if (peerBData.ws && peerBData.ws.readyState === 1) { // WebSocket.OPEN = 1
+      peerBData.ws.send(JSON.stringify({
+        type: 'ice_start',
+        sessionId: coordination.sessionId,
+        timestamp: startTimestamp,
+        peer: peerA,
+        peerCandidates: peerAData.candidates,
+        peerProfile: peerAData.profile,
+        // Task 4.3: Include hard NAT detection result so peers know to prepare for coordinated restart
+        hardNatPair: hardNatDetection.bothHardNat,
+        shouldAttemptCoordinatedRestart: hardNatDetection.shouldAttemptCoordinatedRestart,
+        estimatedSuccessRate: hardNatDetection.estimatedSuccessRate
+      }));
+    }
+
+    // Clean up the pending coordination
+    this.pendingIceCoordinations.delete(peerPair);
+  }
+
+  /**
+   * Handle ICE coordination timeout - notify the waiting peer
+   */
+  _handleIceCoordinationTimeout(peerPair, waitingPeer) {
+    const coordination = this.pendingIceCoordinations.get(peerPair);
+    if (!coordination) return;
+
+    console.log(`❄️ ICE coordination timeout for pair: ${peerPair.substring(0, 20)}...`);
+
+    // Notify the waiting peer that coordination timed out
+    const peerData = coordination.peers[waitingPeer];
+    if (peerData && peerData.ws && peerData.ws.readyState === 1) {
+      peerData.ws.send(JSON.stringify({
+        type: 'ice_coordinate_timeout',
+        sessionId: coordination.sessionId,
+        message: 'Peer did not respond to coordination request'
+      }));
+    }
+
+    // Clean up
+    this.pendingIceCoordinations.delete(peerPair);
+  }
+
+  /**
+   * Handle coordinated ICE restart for hard NAT pairs
+   * 
+   * When both peers are behind hard NATs and initial ICE fails:
+   * 1. Detect the situation via connection profile exchange
+   * 2. Coordinate ICE restart via bootstrap server
+   * 3. Time the restart so both peers gather new candidates simultaneously
+   * 4. Retry with fresh NAT mappings - sometimes NAT state changes help
+   */
+  handleIceRestartCoordinate(ws, message) {
+    const fromPeer = ws.nodeId;
+    const { target, myProfile, sessionId } = message;
+
+    if (!fromPeer) {
+      console.warn('🔄 ICE restart coordinate from unregistered peer');
+      ws.send(JSON.stringify({
+        type: 'ice_restart_error',
+        error: 'Not registered',
+        sessionId
+      }));
+      return;
+    }
+
+    if (!target) {
+      console.warn(`🔄 ICE restart coordinate from ${fromPeer.substring(0, 8)} missing target`);
+      ws.send(JSON.stringify({
+        type: 'ice_restart_error',
+        error: 'Missing target peer',
+        sessionId
+      }));
+      return;
+    }
+
+    // Create a canonical key for this peer pair
+    const peerPair = [fromPeer, target].sort().join(':');
+    const restartKey = `restart:${peerPair}`;
+    
+    console.log(`🔄 ICE restart coordinate: ${fromPeer.substring(0, 8)} → ${target.substring(0, 8)}`);
+
+    // Check if we already have a pending restart coordination for this pair
+    let coordination = this.pendingIceCoordinations.get(restartKey);
+    
+    if (!coordination) {
+      // First peer to request restart - create pending entry
+      coordination = {
+        timestamp: Date.now(),
+        sessionId: sessionId || `restart-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+        isRestart: true,
+        peers: {}
+      };
+      this.pendingIceCoordinations.set(restartKey, coordination);
+      
+      // Set timeout
+      coordination.timeoutId = setTimeout(() => {
+        this._handleIceRestartTimeout(restartKey, fromPeer);
+      }, this.iceCoordinationTimeout);
+    }
+
+    // Store this peer's data
+    coordination.peers[fromPeer] = {
+      ws,
+      profile: myProfile || {},
+      timestamp: Date.now()
+    };
+
+    // Check if both peers are now ready for restart
+    const peerIds = Object.keys(coordination.peers);
+    if (peerIds.length === 2 && peerIds.includes(fromPeer) && peerIds.includes(target)) {
+      // Both peers ready! Clear timeout and send ice_restart_go to both simultaneously
+      if (coordination.timeoutId) {
+        clearTimeout(coordination.timeoutId);
+      }
+      
+      this._sendIceRestartGo(restartKey, coordination);
+    } else {
+      // Still waiting for the other peer
+      console.log(`🔄 Waiting for ${target.substring(0, 8)} to coordinate ICE restart with ${fromPeer.substring(0, 8)}`);
+      
+      // Acknowledge receipt
+      ws.send(JSON.stringify({
+        type: 'ice_restart_pending',
+        sessionId: coordination.sessionId,
+        target,
+        message: 'Waiting for peer to coordinate restart'
+      }));
+    }
+  }
+
+  /**
+   * Send ice_restart_go to both peers simultaneously
+   */
+  _sendIceRestartGo(restartKey, coordination) {
+    const peerIds = Object.keys(coordination.peers);
+    const [peerA, peerB] = peerIds;
+    const peerAData = coordination.peers[peerA];
+    const peerBData = coordination.peers[peerB];
+
+    // Task 4.3: Detect if both peers have hard NAT (reuse the detection method)
+    const hardNatDetection = this._detectHardNatPair(peerAData.profile, peerBData.profile);
+
+    // Use a synchronized timestamp slightly in the future
+    const restartTimestamp = Date.now() + 100; // 100ms in the future
+
+    console.log(`🔄 ICE restart coordination complete! Sending ice_restart_go to both peers: ${peerA.substring(0, 8)} ↔ ${peerB.substring(0, 8)}`);
+    if (hardNatDetection.bothHardNat) {
+      console.log(`   ⚠️ Both peers have hard NAT - estimated success rate: ${(hardNatDetection.estimatedSuccessRate * 100).toFixed(0)}%`);
+    }
+
+    // Send to peer A
+    if (peerAData.ws && peerAData.ws.readyState === 1) {
+      peerAData.ws.send(JSON.stringify({
+        type: 'ice_restart_go',
+        sessionId: coordination.sessionId,
+        timestamp: restartTimestamp,
+        peer: peerB,
+        peerProfile: peerBData.profile,
+        // Task 4.3: Include hard NAT detection result
+        hardNatPair: hardNatDetection.bothHardNat,
+        estimatedSuccessRate: hardNatDetection.estimatedSuccessRate
+      }));
+    }
+
+    // Send to peer B
+    if (peerBData.ws && peerBData.ws.readyState === 1) {
+      peerBData.ws.send(JSON.stringify({
+        type: 'ice_restart_go',
+        sessionId: coordination.sessionId,
+        timestamp: restartTimestamp,
+        peer: peerA,
+        peerProfile: peerAData.profile,
+        // Task 4.3: Include hard NAT detection result
+        hardNatPair: hardNatDetection.bothHardNat,
+        estimatedSuccessRate: hardNatDetection.estimatedSuccessRate
+      }));
+    }
+
+    // Clean up
+    this.pendingIceCoordinations.delete(restartKey);
+  }
+
+  /**
+   * Handle ICE restart coordination timeout
+   */
+  _handleIceRestartTimeout(restartKey, waitingPeer) {
+    const coordination = this.pendingIceCoordinations.get(restartKey);
+    if (!coordination) return;
+
+    console.log(`🔄 ICE restart coordination timeout for: ${restartKey.substring(0, 30)}...`);
+
+    // Notify the waiting peer
+    const peerData = coordination.peers[waitingPeer];
+    if (peerData && peerData.ws && peerData.ws.readyState === 1) {
+      peerData.ws.send(JSON.stringify({
+        type: 'ice_restart_timeout',
+        sessionId: coordination.sessionId,
+        message: 'Peer did not respond to restart coordination request'
+      }));
+    }
+
+    // Clean up
+    this.pendingIceCoordinations.delete(restartKey);
+  }
+
+  /**
    * Handle client disconnection
    */
   handleClientDisconnection(ws) {
@@ -2959,6 +3538,9 @@ export class EnhancedBootstrapServer extends EventEmitter {
       if (peer.ws === ws) {
         console.log(`🔌 Peer disconnected: ${nodeId.substring(0, 8)}...`);
         this.peers.delete(nodeId);
+        
+        // Clean up connection profile metrics for this peer
+        this._removeProfileMetrics(nodeId);
         break;
       }
     }
@@ -2970,9 +3552,81 @@ export class EnhancedBootstrapServer extends EventEmitter {
         const isBridge = client.metadata?.isBridgeNode || client.metadata?.nodeType === 'bridge';
         console.log(`🔌 Client disconnected: ${nodeId.substring(0, 8)}...${isBridge ? ' (bridge node)' : ''}`);
         this.connectedClients.delete(nodeId);
+        
+        // Clean up connection profile metrics for this peer (if not already done above)
+        this._removeProfileMetrics(nodeId);
+        
+        // Clean up any pending ICE coordinations involving this peer
+        this._cleanupPendingIceCoordinations(nodeId);
         break;
       }
     }
+  }
+
+  /**
+   * Clean up pending ICE coordinations when a peer disconnects
+   * @private
+   */
+  _cleanupPendingIceCoordinations(nodeId) {
+    for (const [peerPair, coordination] of this.pendingIceCoordinations) {
+      // Check if this peer is involved in the coordination
+      if (coordination.peers && coordination.peers[nodeId]) {
+        console.log(`❄️ Cleaning up ICE coordination for disconnected peer: ${nodeId.substring(0, 8)}`);
+        
+        // Clear the timeout if set
+        if (coordination.timeoutId) {
+          clearTimeout(coordination.timeoutId);
+        }
+        
+        // Notify the other peer that coordination failed due to disconnect
+        for (const [peerId, peerData] of Object.entries(coordination.peers)) {
+          if (peerId !== nodeId && peerData.ws && peerData.ws.readyState === 1) {
+            peerData.ws.send(JSON.stringify({
+              type: coordination.isRestart ? 'ice_restart_error' : 'ice_coordinate_error',
+              sessionId: coordination.sessionId,
+              error: 'Peer disconnected',
+              peer: nodeId
+            }));
+          }
+        }
+        
+        // Remove the coordination
+        this.pendingIceCoordinations.delete(peerPair);
+      }
+    }
+  }
+  
+  /**
+   * Remove a peer's profile from the metrics
+   * @private
+   */
+  _removeProfileMetrics(nodeId) {
+    const existingProfile = this.peerProfiles.get(nodeId);
+    if (!existingProfile) return;
+    
+    const profile = existingProfile.profile;
+    
+    // Decrement counts
+    if (profile.natType && this.connectionProfileMetrics.natTypes[profile.natType] !== undefined) {
+      this.connectionProfileMetrics.natTypes[profile.natType]--;
+    }
+    if (profile.portPattern && this.connectionProfileMetrics.portPatterns[profile.portPattern] !== undefined) {
+      this.connectionProfileMetrics.portPatterns[profile.portPattern]--;
+    }
+    if (profile.hasIPv6) {
+      this.connectionProfileMetrics.ipv6Capable--;
+    }
+    if (profile.needsRelay) {
+      this.connectionProfileMetrics.needsRelay--;
+    }
+    
+    // Task 6.2: Decrement platform/browser metrics
+    this._decrementPlatformMetrics(profile);
+    
+    // Note: We don't decrement totalReports - it's a cumulative count
+    
+    this.peerProfiles.delete(nodeId);
+    console.log(`📊 Removed profile metrics for ${nodeId.substring(0, 8)}...`);
   }
 
   /**
@@ -2988,6 +3642,12 @@ export class EnhancedBootstrapServer extends EventEmitter {
     setInterval(() => {
       this.cleanupStaleBridgeRequests();
     }, 60000);
+
+    // Clean up stale ICE coordinations every 30 seconds
+    // ICE coordinations have a 10 second timeout, so this catches any that slip through
+    setInterval(() => {
+      this.cleanupStaleIceCoordinations();
+    }, 30000);
 
     // CRITICAL FIX: Send keepalive pings to bridge nodes every 2 minutes
     // This prevents bridge node connections from timing out (5 minute timeout)
@@ -3045,6 +3705,38 @@ export class EnhancedBootstrapServer extends EventEmitter {
 
     if (staleRequests.length > 0) {
       console.log(`🧹 Cleaned up ${staleRequests.length} stale bridge requests`);
+    }
+  }
+
+  /**
+   * Clean up stale ICE coordinations that have exceeded their timeout
+   * This catches any coordinations that weren't cleaned up by the normal timeout mechanism
+   */
+  cleanupStaleIceCoordinations() {
+    const now = Date.now();
+    const staleCoordinations = [];
+
+    for (const [peerPair, coordination] of this.pendingIceCoordinations) {
+      // Use 2x the coordination timeout as the stale threshold
+      if (now - coordination.timestamp > this.iceCoordinationTimeout * 2) {
+        staleCoordinations.push(peerPair);
+      }
+    }
+
+    for (const peerPair of staleCoordinations) {
+      const coordination = this.pendingIceCoordinations.get(peerPair);
+      if (coordination) {
+        // Clear the timeout if set
+        if (coordination.timeoutId) {
+          clearTimeout(coordination.timeoutId);
+        }
+        this.pendingIceCoordinations.delete(peerPair);
+        console.log(`🧹 Cleaned up stale ICE coordination: ${peerPair.substring(0, 20)}...`);
+      }
+    }
+
+    if (staleCoordinations.length > 0) {
+      console.log(`🧹 Cleaned up ${staleCoordinations.length} stale ICE coordinations`);
     }
   }
 
@@ -3139,6 +3831,53 @@ export class EnhancedBootstrapServer extends EventEmitter {
     }
 
     console.log(`📊 Server Status - Peers: ${this.peers.size}/${this.options.maxPeers} | Bridge: ${bridgeCount}/${this.options.bridgeNodes.length} | New: ${peerTypes.new} | Reconnecting: ${peerTypes.reconnecting} | Genesis: ${peerTypes.genesis}`);
+    
+    // Log NAT type distribution across connected browsers (Task 1.3)
+    this.logNatTypeDistribution();
+  }
+  
+  /**
+   * Log NAT type distribution across connected browsers
+   * Provides visibility into network-wide NAT characteristics for relay planning
+   */
+  logNatTypeDistribution() {
+    const metrics = this.connectionProfileMetrics;
+    const totalProfiles = this.peerProfiles.size; // Currently connected browsers with profiles
+    
+    if (totalProfiles === 0) {
+      console.log(`📊 NAT Distribution: No browser profiles reported yet`);
+      return;
+    }
+    
+    // Calculate current distribution from connected peers
+    const currentDistribution = { open: 0, easy: 0, hard: 0, unknown: 0 };
+    for (const [nodeId, data] of this.peerProfiles.entries()) {
+      const natType = data.profile?.natType || 'unknown';
+      if (currentDistribution[natType] !== undefined) {
+        currentDistribution[natType]++;
+      } else {
+        currentDistribution.unknown++;
+      }
+    }
+    
+    // Calculate percentages
+    const pct = (count) => totalProfiles > 0 ? ((count / totalProfiles) * 100).toFixed(1) : '0.0';
+    
+    // Count browsers that need relay (hard NAT without IPv6)
+    let needsRelayCount = 0;
+    for (const [nodeId, data] of this.peerProfiles.entries()) {
+      if (data.profile?.needsRelay) {
+        needsRelayCount++;
+      }
+    }
+    
+    console.log(`📊 NAT Distribution (${totalProfiles} browsers): Open=${currentDistribution.open} (${pct(currentDistribution.open)}%) | Easy=${currentDistribution.easy} (${pct(currentDistribution.easy)}%) | Hard=${currentDistribution.hard} (${pct(currentDistribution.hard)}%) | Unknown=${currentDistribution.unknown} (${pct(currentDistribution.unknown)}%) | NeedsRelay=${needsRelayCount}`);
+    
+    // Log warning if high percentage of hard NAT (indicates relay infrastructure needed)
+    const hardNatPct = parseFloat(pct(currentDistribution.hard));
+    if (hardNatPct > 30 && totalProfiles >= 3) {
+      console.log(`⚠️ High hard NAT percentage (${hardNatPct}%) - relay infrastructure recommended`);
+    }
   }
 
   /**
@@ -3218,6 +3957,28 @@ export class EnhancedBootstrapServer extends EventEmitter {
       readyState: 'stateless'
     }));
 
+    // Calculate connection profile percentages
+    const totalProfiles = this.connectionProfileMetrics.totalReports;
+    const profileStats = totalProfiles > 0 ? {
+      totalReports: totalProfiles,
+      natTypes: this.connectionProfileMetrics.natTypes,
+      portPatterns: this.connectionProfileMetrics.portPatterns,
+      ipv6Capable: this.connectionProfileMetrics.ipv6Capable,
+      needsRelay: this.connectionProfileMetrics.needsRelay,
+      percentages: {
+        hardNat: Math.round((this.connectionProfileMetrics.natTypes.hard / totalProfiles) * 100),
+        easyNat: Math.round((this.connectionProfileMetrics.natTypes.easy / totalProfiles) * 100),
+        openNat: Math.round((this.connectionProfileMetrics.natTypes.open / totalProfiles) * 100),
+        ipv6: Math.round((this.connectionProfileMetrics.ipv6Capable / totalProfiles) * 100),
+        needsRelay: Math.round((this.connectionProfileMetrics.needsRelay / totalProfiles) * 100)
+      },
+      lastUpdated: this.connectionProfileMetrics.lastUpdated,
+      // Task 6.2: IPv6 availability by platform/browser
+      ipv6ByPlatform: this._calculateIPv6Percentages(this.connectionProfileMetrics.ipv6ByPlatform),
+      ipv6ByBrowser: this._calculateIPv6Percentages(this.connectionProfileMetrics.ipv6ByBrowser),
+      ipv6ByCategory: this._calculateIPv6Percentages(this.connectionProfileMetrics.ipv6ByCategory)
+    } : null;
+
     return {
       isStarted: this.isStarted,
       totalPeers: this.peers.size,
@@ -3225,8 +3986,645 @@ export class EnhancedBootstrapServer extends EventEmitter {
       totalConnections: this.totalConnections,
       bridgeNodes: bridgeStats,
       createNewDHT: this.options.createNewDHT,
-      pendingReconnections: this.pendingReconnections.size
+      pendingReconnections: this.pendingReconnections.size,
+      connectionProfiles: profileStats,
+      // Relay capability metadata for symmetric NAT relay system
+      canRelay: this.serverMetadata.canRelay,
+      capabilities: this.serverMetadata.capabilities
     };
+  }
+
+  /**
+   * Task 6.2: Calculate IPv6 percentages for platform/browser metrics
+   * @private
+   */
+  _calculateIPv6Percentages(metricsMap) {
+    const result = {};
+    for (const [key, data] of Object.entries(metricsMap)) {
+      if (data.total > 0) {
+        result[key] = {
+          total: data.total,
+          ipv6Capable: data.ipv6Capable,
+          ipv6Percentage: Math.round((data.ipv6Capable / data.total) * 100)
+        };
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Task 6.2: Start IPv6 trend tracking with periodic snapshots
+   * Takes hourly snapshots of IPv6 adoption metrics for trend analysis
+   * @private
+   */
+  _startIPv6TrendTracking() {
+    // Take initial snapshot
+    this._takeIPv6Snapshot('hourly');
+    
+    // Schedule hourly snapshots
+    this._ipv6HourlyTimer = setInterval(() => {
+      this._takeIPv6Snapshot('hourly');
+      
+      // Check if we need daily/weekly snapshots
+      const now = new Date();
+      const lastDaily = this.ipv6TrendData.lastDailySnapshot;
+      const lastWeekly = this.ipv6TrendData.lastWeeklySnapshot;
+      
+      // Daily snapshot at midnight (or if 24+ hours since last)
+      if (!lastDaily || (now - lastDaily) >= 24 * 60 * 60 * 1000) {
+        this._takeIPv6Snapshot('daily');
+      }
+      
+      // Weekly snapshot on Sunday midnight (or if 7+ days since last)
+      if (!lastWeekly || (now - lastWeekly) >= 7 * 24 * 60 * 60 * 1000) {
+        this._takeIPv6Snapshot('weekly');
+      }
+    }, 60 * 60 * 1000); // Every hour
+    
+    console.log('📊 IPv6 trend tracking started (hourly snapshots)');
+  }
+
+  /**
+   * Task 6.2: Stop IPv6 trend tracking (for cleanup)
+   * @private
+   */
+  _stopIPv6TrendTracking() {
+    if (this._ipv6HourlyTimer) {
+      clearInterval(this._ipv6HourlyTimer);
+      this._ipv6HourlyTimer = null;
+    }
+  }
+
+  /**
+   * Task 6.2: Take a snapshot of current IPv6 adoption metrics
+   * @param {string} type - 'hourly', 'daily', or 'weekly'
+   * @private
+   */
+  _takeIPv6Snapshot(type) {
+    const now = Date.now();
+    const metrics = this.connectionProfileMetrics;
+    const totalProfiles = metrics.totalReports;
+    
+    // Don't take snapshot if no data
+    if (totalProfiles === 0) {
+      return;
+    }
+    
+    const snapshot = {
+      timestamp: now,
+      timestampISO: new Date(now).toISOString(),
+      
+      // Overall IPv6 adoption
+      totalPeers: totalProfiles,
+      ipv6Capable: metrics.ipv6Capable,
+      ipv6Percentage: Math.round((metrics.ipv6Capable / totalProfiles) * 100),
+      
+      // By platform category (aggregated for trend analysis)
+      byCategory: {},
+      
+      // By browser (aggregated for trend analysis)
+      byBrowser: {},
+      
+      // NAT type distribution (for correlation analysis)
+      natTypes: { ...metrics.natTypes },
+      
+      // Relay needs (inverse correlation with IPv6)
+      needsRelay: metrics.needsRelay,
+      needsRelayPercentage: Math.round((metrics.needsRelay / totalProfiles) * 100)
+    };
+    
+    // Aggregate category data
+    for (const [category, data] of Object.entries(metrics.ipv6ByCategory)) {
+      if (data.total > 0) {
+        snapshot.byCategory[category] = {
+          total: data.total,
+          ipv6Capable: data.ipv6Capable,
+          ipv6Percentage: Math.round((data.ipv6Capable / data.total) * 100)
+        };
+      }
+    }
+    
+    // Aggregate browser data
+    for (const [browser, data] of Object.entries(metrics.ipv6ByBrowser)) {
+      if (data.total > 0) {
+        snapshot.byBrowser[browser] = {
+          total: data.total,
+          ipv6Capable: data.ipv6Capable,
+          ipv6Percentage: Math.round((data.ipv6Capable / data.total) * 100)
+        };
+      }
+    }
+    
+    // Add to appropriate snapshot array
+    switch (type) {
+      case 'hourly':
+        this.ipv6TrendData.hourlySnapshots.push(snapshot);
+        if (this.ipv6TrendData.hourlySnapshots.length > this.ipv6TrendData.maxHourlySnapshots) {
+          this.ipv6TrendData.hourlySnapshots.shift();
+        }
+        this.ipv6TrendData.lastHourlySnapshot = now;
+        break;
+        
+      case 'daily':
+        this.ipv6TrendData.dailySnapshots.push(snapshot);
+        if (this.ipv6TrendData.dailySnapshots.length > this.ipv6TrendData.maxDailySnapshots) {
+          this.ipv6TrendData.dailySnapshots.shift();
+        }
+        this.ipv6TrendData.lastDailySnapshot = now;
+        console.log(`📊 IPv6 daily snapshot: ${snapshot.ipv6Percentage}% adoption (${snapshot.ipv6Capable}/${snapshot.totalPeers} peers)`);
+        break;
+        
+      case 'weekly':
+        this.ipv6TrendData.weeklySnapshots.push(snapshot);
+        if (this.ipv6TrendData.weeklySnapshots.length > this.ipv6TrendData.maxWeeklySnapshots) {
+          this.ipv6TrendData.weeklySnapshots.shift();
+        }
+        this.ipv6TrendData.lastWeeklySnapshot = now;
+        console.log(`📊 IPv6 weekly snapshot: ${snapshot.ipv6Percentage}% adoption (${snapshot.ipv6Capable}/${snapshot.totalPeers} peers)`);
+        break;
+    }
+    
+    // Invalidate trend cache
+    this.ipv6TrendData.trendCache = null;
+    this.ipv6TrendData.trendCacheExpiry = null;
+  }
+
+  /**
+   * Task 6.2: Calculate IPv6 adoption trends from historical snapshots
+   * @returns {Object} Trend analysis with direction, rate of change, and predictions
+   */
+  getIPv6AdoptionTrends() {
+    const now = Date.now();
+    
+    // Return cached trends if still valid (5 minute cache)
+    if (this.ipv6TrendData.trendCache && 
+        this.ipv6TrendData.trendCacheExpiry && 
+        now < this.ipv6TrendData.trendCacheExpiry) {
+      return this.ipv6TrendData.trendCache;
+    }
+    
+    const hourly = this.ipv6TrendData.hourlySnapshots;
+    const daily = this.ipv6TrendData.dailySnapshots;
+    const weekly = this.ipv6TrendData.weeklySnapshots;
+    
+    const trends = {
+      timestamp: now,
+      timestampISO: new Date(now).toISOString(),
+      
+      // Current state
+      current: this._getCurrentIPv6State(),
+      
+      // Short-term trend (last 24 hours from hourly snapshots)
+      shortTerm: this._calculateTrend(hourly, '24 hours'),
+      
+      // Medium-term trend (last 30 days from daily snapshots)
+      mediumTerm: this._calculateTrend(daily, '30 days'),
+      
+      // Long-term trend (last 12 weeks from weekly snapshots)
+      longTerm: this._calculateTrend(weekly, '12 weeks'),
+      
+      // Platform-specific trends
+      platformTrends: this._calculatePlatformTrends(daily),
+      
+      // Browser-specific trends
+      browserTrends: this._calculateBrowserTrends(daily),
+      
+      // Insights and recommendations
+      insights: this._generateIPv6Insights(hourly, daily, weekly),
+      
+      // Raw data for visualization
+      snapshots: {
+        hourly: hourly.slice(-24),  // Last 24 hourly snapshots
+        daily: daily.slice(-30),    // Last 30 daily snapshots
+        weekly: weekly.slice(-12)   // Last 12 weekly snapshots
+      }
+    };
+    
+    // Cache the result
+    this.ipv6TrendData.trendCache = trends;
+    this.ipv6TrendData.trendCacheExpiry = now + 5 * 60 * 1000; // 5 minute cache
+    
+    return trends;
+  }
+
+  /**
+   * Task 6.2: Get current IPv6 adoption state
+   * @private
+   */
+  _getCurrentIPv6State() {
+    const metrics = this.connectionProfileMetrics;
+    const totalProfiles = metrics.totalReports;
+    
+    if (totalProfiles === 0) {
+      return {
+        totalPeers: 0,
+        ipv6Capable: 0,
+        ipv6Percentage: 0,
+        needsRelay: 0,
+        needsRelayPercentage: 0
+      };
+    }
+    
+    return {
+      totalPeers: totalProfiles,
+      ipv6Capable: metrics.ipv6Capable,
+      ipv6Percentage: Math.round((metrics.ipv6Capable / totalProfiles) * 100),
+      needsRelay: metrics.needsRelay,
+      needsRelayPercentage: Math.round((metrics.needsRelay / totalProfiles) * 100),
+      byCategory: this._calculateIPv6Percentages(metrics.ipv6ByCategory),
+      byBrowser: this._calculateIPv6Percentages(metrics.ipv6ByBrowser),
+      byPlatform: this._calculateIPv6Percentages(metrics.ipv6ByPlatform)
+    };
+  }
+
+  /**
+   * Task 6.2: Calculate trend from snapshot array
+   * @param {Array} snapshots - Array of snapshots
+   * @param {string} period - Human-readable period description
+   * @returns {Object} Trend analysis
+   * @private
+   */
+  _calculateTrend(snapshots, period) {
+    if (!snapshots || snapshots.length < 2) {
+      return {
+        period,
+        dataPoints: snapshots ? snapshots.length : 0,
+        trend: 'insufficient_data',
+        direction: 'unknown',
+        changePercentagePoints: 0,
+        changeRate: 0,
+        startValue: null,
+        endValue: null,
+        minValue: null,
+        maxValue: null,
+        avgValue: null
+      };
+    }
+    
+    const first = snapshots[0];
+    const last = snapshots[snapshots.length - 1];
+    const values = snapshots.map(s => s.ipv6Percentage);
+    
+    const minValue = Math.min(...values);
+    const maxValue = Math.max(...values);
+    const avgValue = Math.round(values.reduce((a, b) => a + b, 0) / values.length);
+    
+    // Calculate change in percentage points
+    const changePercentagePoints = last.ipv6Percentage - first.ipv6Percentage;
+    
+    // Calculate rate of change (percentage points per day)
+    const timeDiffDays = (last.timestamp - first.timestamp) / (24 * 60 * 60 * 1000);
+    const changeRate = timeDiffDays > 0 
+      ? Math.round((changePercentagePoints / timeDiffDays) * 100) / 100 
+      : 0;
+    
+    // Determine trend direction
+    let direction = 'stable';
+    let trend = 'stable';
+    if (changePercentagePoints > 2) {
+      direction = 'increasing';
+      trend = changePercentagePoints > 5 ? 'strong_increase' : 'moderate_increase';
+    } else if (changePercentagePoints < -2) {
+      direction = 'decreasing';
+      trend = changePercentagePoints < -5 ? 'strong_decrease' : 'moderate_decrease';
+    }
+    
+    // Calculate linear regression for prediction
+    const regression = this._linearRegression(snapshots.map((s, i) => [i, s.ipv6Percentage]));
+    
+    return {
+      period,
+      dataPoints: snapshots.length,
+      trend,
+      direction,
+      changePercentagePoints,
+      changeRate, // Percentage points per day
+      startValue: first.ipv6Percentage,
+      endValue: last.ipv6Percentage,
+      startTimestamp: first.timestamp,
+      endTimestamp: last.timestamp,
+      minValue,
+      maxValue,
+      avgValue,
+      regression: {
+        slope: Math.round(regression.slope * 1000) / 1000,
+        intercept: Math.round(regression.intercept * 100) / 100,
+        r2: Math.round(regression.r2 * 1000) / 1000 // Coefficient of determination
+      }
+    };
+  }
+
+  /**
+   * Task 6.2: Calculate platform-specific IPv6 trends
+   * @param {Array} dailySnapshots - Daily snapshots for trend analysis
+   * @returns {Object} Platform trends
+   * @private
+   */
+  _calculatePlatformTrends(dailySnapshots) {
+    if (!dailySnapshots || dailySnapshots.length < 2) {
+      return {};
+    }
+    
+    const platformTrends = {};
+    const categories = new Set();
+    
+    // Collect all categories seen
+    for (const snapshot of dailySnapshots) {
+      for (const category of Object.keys(snapshot.byCategory || {})) {
+        categories.add(category);
+      }
+    }
+    
+    // Calculate trend for each category
+    for (const category of categories) {
+      const categorySnapshots = dailySnapshots
+        .filter(s => s.byCategory && s.byCategory[category])
+        .map(s => ({
+          timestamp: s.timestamp,
+          ipv6Percentage: s.byCategory[category].ipv6Percentage,
+          total: s.byCategory[category].total
+        }));
+      
+      if (categorySnapshots.length >= 2) {
+        const first = categorySnapshots[0];
+        const last = categorySnapshots[categorySnapshots.length - 1];
+        const change = last.ipv6Percentage - first.ipv6Percentage;
+        
+        platformTrends[category] = {
+          dataPoints: categorySnapshots.length,
+          startValue: first.ipv6Percentage,
+          endValue: last.ipv6Percentage,
+          changePercentagePoints: change,
+          direction: change > 2 ? 'increasing' : (change < -2 ? 'decreasing' : 'stable'),
+          avgSampleSize: Math.round(categorySnapshots.reduce((a, s) => a + s.total, 0) / categorySnapshots.length)
+        };
+      }
+    }
+    
+    return platformTrends;
+  }
+
+  /**
+   * Task 6.2: Calculate browser-specific IPv6 trends
+   * @param {Array} dailySnapshots - Daily snapshots for trend analysis
+   * @returns {Object} Browser trends
+   * @private
+   */
+  _calculateBrowserTrends(dailySnapshots) {
+    if (!dailySnapshots || dailySnapshots.length < 2) {
+      return {};
+    }
+    
+    const browserTrends = {};
+    const browsers = new Set();
+    
+    // Collect all browsers seen
+    for (const snapshot of dailySnapshots) {
+      for (const browser of Object.keys(snapshot.byBrowser || {})) {
+        browsers.add(browser);
+      }
+    }
+    
+    // Calculate trend for each browser
+    for (const browser of browsers) {
+      const browserSnapshots = dailySnapshots
+        .filter(s => s.byBrowser && s.byBrowser[browser])
+        .map(s => ({
+          timestamp: s.timestamp,
+          ipv6Percentage: s.byBrowser[browser].ipv6Percentage,
+          total: s.byBrowser[browser].total
+        }));
+      
+      if (browserSnapshots.length >= 2) {
+        const first = browserSnapshots[0];
+        const last = browserSnapshots[browserSnapshots.length - 1];
+        const change = last.ipv6Percentage - first.ipv6Percentage;
+        
+        browserTrends[browser] = {
+          dataPoints: browserSnapshots.length,
+          startValue: first.ipv6Percentage,
+          endValue: last.ipv6Percentage,
+          changePercentagePoints: change,
+          direction: change > 2 ? 'increasing' : (change < -2 ? 'decreasing' : 'stable'),
+          avgSampleSize: Math.round(browserSnapshots.reduce((a, s) => a + s.total, 0) / browserSnapshots.length)
+        };
+      }
+    }
+    
+    return browserTrends;
+  }
+
+  /**
+   * Task 6.2: Generate insights from IPv6 trend data
+   * @param {Array} hourly - Hourly snapshots
+   * @param {Array} daily - Daily snapshots
+   * @param {Array} weekly - Weekly snapshots
+   * @returns {Array} Array of insight objects
+   * @private
+   */
+  _generateIPv6Insights(hourly, daily, weekly) {
+    const insights = [];
+    const current = this._getCurrentIPv6State();
+    
+    // Insight: Overall IPv6 adoption level
+    if (current.ipv6Percentage >= 50) {
+      insights.push({
+        type: 'positive',
+        category: 'adoption',
+        message: `Strong IPv6 adoption at ${current.ipv6Percentage}% - NAT traversal bypassed for many connections`,
+        recommendation: 'Continue prioritizing IPv6 paths for optimal performance'
+      });
+    } else if (current.ipv6Percentage >= 30) {
+      insights.push({
+        type: 'neutral',
+        category: 'adoption',
+        message: `Moderate IPv6 adoption at ${current.ipv6Percentage}%`,
+        recommendation: 'IPv6 provides benefits for a significant portion of users'
+      });
+    } else if (current.ipv6Percentage > 0) {
+      insights.push({
+        type: 'info',
+        category: 'adoption',
+        message: `Low IPv6 adoption at ${current.ipv6Percentage}% - most connections require NAT traversal`,
+        recommendation: 'Relay infrastructure remains important for connectivity'
+      });
+    }
+    
+    // Insight: Trend direction
+    if (daily.length >= 7) {
+      const weekAgo = daily[Math.max(0, daily.length - 7)];
+      const now = daily[daily.length - 1];
+      const weekChange = now.ipv6Percentage - weekAgo.ipv6Percentage;
+      
+      if (weekChange > 5) {
+        insights.push({
+          type: 'positive',
+          category: 'trend',
+          message: `IPv6 adoption increased ${weekChange} percentage points in the last week`,
+          recommendation: 'Positive trend - IPv6 infrastructure investments are paying off'
+        });
+      } else if (weekChange < -5) {
+        insights.push({
+          type: 'warning',
+          category: 'trend',
+          message: `IPv6 adoption decreased ${Math.abs(weekChange)} percentage points in the last week`,
+          recommendation: 'Investigate potential IPv6 connectivity issues'
+        });
+      }
+    }
+    
+    // Insight: Mobile vs Desktop comparison
+    const mobileCategories = ['mobile-android', 'mobile-ios', 'mobile-other'];
+    const desktopCategories = ['desktop-windows', 'desktop-macos', 'desktop-linux', 'desktop-chromeos'];
+    
+    let mobileTotal = 0, mobileIPv6 = 0;
+    let desktopTotal = 0, desktopIPv6 = 0;
+    
+    for (const [category, data] of Object.entries(current.byCategory || {})) {
+      if (mobileCategories.includes(category)) {
+        mobileTotal += data.total;
+        mobileIPv6 += data.ipv6Capable;
+      } else if (desktopCategories.includes(category)) {
+        desktopTotal += data.total;
+        desktopIPv6 += data.ipv6Capable;
+      }
+    }
+    
+    if (mobileTotal > 0 && desktopTotal > 0) {
+      const mobilePct = Math.round((mobileIPv6 / mobileTotal) * 100);
+      const desktopPct = Math.round((desktopIPv6 / desktopTotal) * 100);
+      
+      if (mobilePct > desktopPct + 10) {
+        insights.push({
+          type: 'info',
+          category: 'platform',
+          message: `Mobile users have higher IPv6 adoption (${mobilePct}%) than desktop (${desktopPct}%)`,
+          recommendation: 'Mobile carriers often provide better IPv6 support'
+        });
+      } else if (desktopPct > mobilePct + 10) {
+        insights.push({
+          type: 'info',
+          category: 'platform',
+          message: `Desktop users have higher IPv6 adoption (${desktopPct}%) than mobile (${mobilePct}%)`,
+          recommendation: 'Consider mobile-specific relay optimizations'
+        });
+      }
+    }
+    
+    // Insight: Relay correlation
+    if (current.totalPeers > 10) {
+      const relayPct = current.needsRelayPercentage;
+      const ipv6Pct = current.ipv6Percentage;
+      
+      // IPv6 users typically don't need relay (no NAT)
+      if (relayPct > 30 && ipv6Pct < 30) {
+        insights.push({
+          type: 'info',
+          category: 'relay',
+          message: `${relayPct}% of peers need relay, correlating with low IPv6 adoption (${ipv6Pct}%)`,
+          recommendation: 'Increasing IPv6 adoption would reduce relay load'
+        });
+      }
+    }
+    
+    return insights;
+  }
+
+  /**
+   * Task 6.2: Simple linear regression for trend prediction
+   * @param {Array} points - Array of [x, y] points
+   * @returns {Object} Regression parameters (slope, intercept, r2)
+   * @private
+   */
+  _linearRegression(points) {
+    if (points.length < 2) {
+      return { slope: 0, intercept: 0, r2: 0 };
+    }
+    
+    const n = points.length;
+    let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0, sumY2 = 0;
+    
+    for (const [x, y] of points) {
+      sumX += x;
+      sumY += y;
+      sumXY += x * y;
+      sumX2 += x * x;
+      sumY2 += y * y;
+    }
+    
+    const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+    const intercept = (sumY - slope * sumX) / n;
+    
+    // Calculate R² (coefficient of determination)
+    const yMean = sumY / n;
+    let ssTotal = 0, ssResidual = 0;
+    
+    for (const [x, y] of points) {
+      const yPredicted = slope * x + intercept;
+      ssTotal += (y - yMean) ** 2;
+      ssResidual += (y - yPredicted) ** 2;
+    }
+    
+    const r2 = ssTotal > 0 ? 1 - (ssResidual / ssTotal) : 0;
+    
+    return { slope, intercept, r2 };
+  }
+
+  /**
+   * Task 6.2: Log IPv6 adoption trends to console
+   * Useful for monitoring and debugging
+   */
+  logIPv6AdoptionTrends() {
+    const trends = this.getIPv6AdoptionTrends();
+    
+    console.log('\n📊 IPv6 Adoption Trends Report');
+    console.log('═══════════════════════════════════════════════════════════');
+    
+    // Current state
+    const current = trends.current;
+    console.log(`\n📍 Current State:`);
+    console.log(`   Total Peers: ${current.totalPeers}`);
+    console.log(`   IPv6 Capable: ${current.ipv6Capable} (${current.ipv6Percentage}%)`);
+    console.log(`   Needs Relay: ${current.needsRelay} (${current.needsRelayPercentage}%)`);
+    
+    // Short-term trend
+    const shortTerm = trends.shortTerm;
+    if (shortTerm.dataPoints >= 2) {
+      console.log(`\n📈 Short-term (${shortTerm.period}):`);
+      console.log(`   Direction: ${shortTerm.direction} (${shortTerm.trend})`);
+      console.log(`   Change: ${shortTerm.changePercentagePoints > 0 ? '+' : ''}${shortTerm.changePercentagePoints} percentage points`);
+      console.log(`   Range: ${shortTerm.minValue}% - ${shortTerm.maxValue}% (avg: ${shortTerm.avgValue}%)`);
+    }
+    
+    // Medium-term trend
+    const mediumTerm = trends.mediumTerm;
+    if (mediumTerm.dataPoints >= 2) {
+      console.log(`\n📈 Medium-term (${mediumTerm.period}):`);
+      console.log(`   Direction: ${mediumTerm.direction} (${mediumTerm.trend})`);
+      console.log(`   Change: ${mediumTerm.changePercentagePoints > 0 ? '+' : ''}${mediumTerm.changePercentagePoints} percentage points`);
+      console.log(`   Rate: ${mediumTerm.changeRate > 0 ? '+' : ''}${mediumTerm.changeRate} pp/day`);
+    }
+    
+    // Long-term trend
+    const longTerm = trends.longTerm;
+    if (longTerm.dataPoints >= 2) {
+      console.log(`\n📈 Long-term (${longTerm.period}):`);
+      console.log(`   Direction: ${longTerm.direction} (${longTerm.trend})`);
+      console.log(`   Change: ${longTerm.changePercentagePoints > 0 ? '+' : ''}${longTerm.changePercentagePoints} percentage points`);
+    }
+    
+    // Insights
+    if (trends.insights.length > 0) {
+      console.log(`\n💡 Insights:`);
+      for (const insight of trends.insights) {
+        const icon = insight.type === 'positive' ? '✅' : 
+                     insight.type === 'warning' ? '⚠️' : 
+                     insight.type === 'info' ? 'ℹ️' : '📌';
+        console.log(`   ${icon} ${insight.message}`);
+      }
+    }
+    
+    console.log('\n═══════════════════════════════════════════════════════════\n');
   }
 
   /**
@@ -3395,6 +4793,387 @@ export class EnhancedBootstrapServer extends EventEmitter {
   }
 
   /**
+   * Handle profile_update message from client
+   * Tracks connection profile metrics for network-wide NAT analysis
+   */
+  handleProfileUpdate(ws, message) {
+    const { nodeId, connectionProfile } = message;
+    
+    if (!nodeId || !connectionProfile) {
+      console.warn('⚠️ Invalid profile_update message - missing nodeId or connectionProfile');
+      return;
+    }
+    
+    const shortId = nodeId.substring(0, 8);
+    
+    // Check if this is an update to an existing profile
+    const existingProfile = this.peerProfiles.get(nodeId);
+    
+    if (existingProfile) {
+      // Decrement old counts before updating
+      const old = existingProfile.profile;
+      if (old.natType && this.connectionProfileMetrics.natTypes[old.natType] !== undefined) {
+        this.connectionProfileMetrics.natTypes[old.natType]--;
+      }
+      if (old.portPattern && this.connectionProfileMetrics.portPatterns[old.portPattern] !== undefined) {
+        this.connectionProfileMetrics.portPatterns[old.portPattern]--;
+      }
+      if (old.hasIPv6) {
+        this.connectionProfileMetrics.ipv6Capable--;
+      }
+      if (old.needsRelay) {
+        this.connectionProfileMetrics.needsRelay--;
+      }
+      // Task 6.2: Decrement old platform/browser counts
+      this._decrementPlatformMetrics(old);
+    } else {
+      // New profile report
+      this.connectionProfileMetrics.totalReports++;
+    }
+    
+    // Update counts with new profile
+    const natType = connectionProfile.natType || 'unknown';
+    const portPattern = connectionProfile.portPattern || 'unknown';
+    
+    if (this.connectionProfileMetrics.natTypes[natType] !== undefined) {
+      this.connectionProfileMetrics.natTypes[natType]++;
+    } else {
+      this.connectionProfileMetrics.natTypes.unknown++;
+    }
+    
+    if (this.connectionProfileMetrics.portPatterns[portPattern] !== undefined) {
+      this.connectionProfileMetrics.portPatterns[portPattern]++;
+    } else {
+      this.connectionProfileMetrics.portPatterns.unknown++;
+    }
+    
+    if (connectionProfile.hasIPv6) {
+      this.connectionProfileMetrics.ipv6Capable++;
+    }
+    
+    if (connectionProfile.needsRelay) {
+      this.connectionProfileMetrics.needsRelay++;
+    }
+    
+    // Task 6.2: Update platform/browser IPv6 metrics
+    this._incrementPlatformMetrics(connectionProfile);
+    
+    // Store the profile for this peer
+    this.peerProfiles.set(nodeId, {
+      profile: connectionProfile,
+      timestamp: Date.now()
+    });
+    
+    this.connectionProfileMetrics.lastUpdated = Date.now();
+    
+    // Task 6.2: Include platform info in log
+    const platform = connectionProfile.platform || 'unknown';
+    const browser = connectionProfile.browser || 'unknown';
+    console.log(`📊 Profile update from ${shortId}...: NAT=${natType}, port=${portPattern}, IPv6=${connectionProfile.hasIPv6}, needsRelay=${connectionProfile.needsRelay}, platform=${platform}, browser=${browser}`);
+  }
+
+  /**
+   * Task 6.2: Increment platform/browser IPv6 metrics
+   * @private
+   */
+  _incrementPlatformMetrics(profile) {
+    const platform = profile.platform || 'unknown';
+    const browser = profile.browser || 'unknown';
+    const isMobile = profile.isMobile || false;
+    const hasIPv6 = profile.hasIPv6 || false;
+    
+    // Get platform category
+    const category = this._getPlatformCategory(platform, isMobile);
+    
+    // Initialize platform entry if needed
+    if (!this.connectionProfileMetrics.ipv6ByPlatform[platform]) {
+      this.connectionProfileMetrics.ipv6ByPlatform[platform] = { total: 0, ipv6Capable: 0 };
+    }
+    this.connectionProfileMetrics.ipv6ByPlatform[platform].total++;
+    if (hasIPv6) {
+      this.connectionProfileMetrics.ipv6ByPlatform[platform].ipv6Capable++;
+    }
+    
+    // Initialize browser entry if needed
+    if (!this.connectionProfileMetrics.ipv6ByBrowser[browser]) {
+      this.connectionProfileMetrics.ipv6ByBrowser[browser] = { total: 0, ipv6Capable: 0 };
+    }
+    this.connectionProfileMetrics.ipv6ByBrowser[browser].total++;
+    if (hasIPv6) {
+      this.connectionProfileMetrics.ipv6ByBrowser[browser].ipv6Capable++;
+    }
+    
+    // Initialize category entry if needed
+    if (!this.connectionProfileMetrics.ipv6ByCategory[category]) {
+      this.connectionProfileMetrics.ipv6ByCategory[category] = { total: 0, ipv6Capable: 0 };
+    }
+    this.connectionProfileMetrics.ipv6ByCategory[category].total++;
+    if (hasIPv6) {
+      this.connectionProfileMetrics.ipv6ByCategory[category].ipv6Capable++;
+    }
+  }
+
+  /**
+   * Task 6.2: Decrement platform/browser IPv6 metrics when profile is updated
+   * @private
+   */
+  _decrementPlatformMetrics(profile) {
+    const platform = profile.platform || 'unknown';
+    const browser = profile.browser || 'unknown';
+    const isMobile = profile.isMobile || false;
+    const hasIPv6 = profile.hasIPv6 || false;
+    
+    // Get platform category
+    const category = this._getPlatformCategory(platform, isMobile);
+    
+    // Decrement platform counts
+    if (this.connectionProfileMetrics.ipv6ByPlatform[platform]) {
+      this.connectionProfileMetrics.ipv6ByPlatform[platform].total = 
+        Math.max(0, this.connectionProfileMetrics.ipv6ByPlatform[platform].total - 1);
+      if (hasIPv6) {
+        this.connectionProfileMetrics.ipv6ByPlatform[platform].ipv6Capable = 
+          Math.max(0, this.connectionProfileMetrics.ipv6ByPlatform[platform].ipv6Capable - 1);
+      }
+    }
+    
+    // Decrement browser counts
+    if (this.connectionProfileMetrics.ipv6ByBrowser[browser]) {
+      this.connectionProfileMetrics.ipv6ByBrowser[browser].total = 
+        Math.max(0, this.connectionProfileMetrics.ipv6ByBrowser[browser].total - 1);
+      if (hasIPv6) {
+        this.connectionProfileMetrics.ipv6ByBrowser[browser].ipv6Capable = 
+          Math.max(0, this.connectionProfileMetrics.ipv6ByBrowser[browser].ipv6Capable - 1);
+      }
+    }
+    
+    // Decrement category counts
+    if (this.connectionProfileMetrics.ipv6ByCategory[category]) {
+      this.connectionProfileMetrics.ipv6ByCategory[category].total = 
+        Math.max(0, this.connectionProfileMetrics.ipv6ByCategory[category].total - 1);
+      if (hasIPv6) {
+        this.connectionProfileMetrics.ipv6ByCategory[category].ipv6Capable = 
+          Math.max(0, this.connectionProfileMetrics.ipv6ByCategory[category].ipv6Capable - 1);
+      }
+    }
+  }
+
+  /**
+   * Task 6.2: Get platform category for aggregated metrics
+   * @private
+   */
+  _getPlatformCategory(platform, isMobile) {
+    if (isMobile) {
+      if (platform === 'android') return 'mobile-android';
+      if (platform === 'ios') return 'mobile-ios';
+      return 'mobile-other';
+    }
+    
+    if (platform === 'windows') return 'desktop-windows';
+    if (platform === 'macos') return 'desktop-macos';
+    if (platform === 'linux') return 'desktop-linux';
+    if (platform === 'chromeos') return 'desktop-chromeos';
+    if (platform === 'nodejs') return 'server-nodejs';
+    
+    return 'unknown';
+  }
+
+  /**
+   * Handle connection outcome report from clients (Task 1.3)
+   * Tracks connection success/failure rates for network-wide metrics
+   * 
+   * @param {WebSocket} ws - The WebSocket connection
+   * @param {Object} message - The connection outcome message
+   * @param {string} message.nodeId - The reporting node's ID
+   * @param {boolean} message.success - Whether the connection succeeded
+   * @param {string} message.connectionType - 'webrtc', 'websocket', or 'relay'
+   * @param {string} [message.localNatType] - Local peer's NAT type
+   * @param {string} [message.remoteNatType] - Remote peer's NAT type
+   * @param {string} [message.iceCandidateType] - ICE candidate type used (for successful WebRTC)
+   * @param {string} [message.failureReason] - Reason for failure (if applicable)
+   */
+  handleConnectionOutcome(ws, message) {
+    const { nodeId, success, connectionType, localNatType, remoteNatType, iceCandidateType, failureReason } = message;
+    
+    if (!nodeId || typeof success !== 'boolean' || !connectionType) {
+      console.warn('⚠️ Invalid connection_outcome message - missing required fields');
+      return;
+    }
+    
+    const shortId = nodeId.substring(0, 8);
+    const now = Date.now();
+    
+    // Update total counts
+    this.connectionMetrics.totalAttempts++;
+    if (success) {
+      this.connectionMetrics.totalSuccesses++;
+    } else {
+      this.connectionMetrics.totalFailures++;
+    }
+    
+    // Update by connection type
+    const validTypes = ['webrtc', 'websocket', 'relay'];
+    const type = validTypes.includes(connectionType) ? connectionType : 'websocket';
+    
+    this.connectionMetrics.byType[type].attempts++;
+    if (success) {
+      this.connectionMetrics.byType[type].successes++;
+    } else {
+      this.connectionMetrics.byType[type].failures++;
+    }
+    
+    // Update by NAT pair (for browser-to-browser WebRTC connections)
+    if (connectionType === 'webrtc' && localNatType && remoteNatType) {
+      // Normalize NAT pair key (alphabetically sorted to avoid duplicates like 'easy-hard' vs 'hard-easy')
+      const natPair = [localNatType, remoteNatType].sort().join('-');
+      
+      if (!this.connectionMetrics.byNatPair[natPair]) {
+        this.connectionMetrics.byNatPair[natPair] = { attempts: 0, successes: 0, failures: 0 };
+      }
+      
+      this.connectionMetrics.byNatPair[natPair].attempts++;
+      if (success) {
+        this.connectionMetrics.byNatPair[natPair].successes++;
+      } else {
+        this.connectionMetrics.byNatPair[natPair].failures++;
+      }
+    }
+    
+    // Track ICE candidate types for successful WebRTC connections
+    if (success && connectionType === 'webrtc' && iceCandidateType) {
+      const validCandidateTypes = ['host', 'srflx', 'prflx', 'relay'];
+      if (validCandidateTypes.includes(iceCandidateType)) {
+        this.connectionMetrics.iceCandidateTypes[iceCandidateType]++;
+      }
+    }
+    
+    // Add to recent attempts (rolling window)
+    this.connectionMetrics.recentAttempts.push({
+      timestamp: now,
+      success,
+      type: connectionType,
+      natPair: localNatType && remoteNatType ? `${localNatType}-${remoteNatType}` : null,
+      failureReason: success ? null : failureReason
+    });
+    
+    // Prune old entries from rolling window
+    const windowStart = now - this.connectionMetrics.windowSize;
+    this.connectionMetrics.recentAttempts = this.connectionMetrics.recentAttempts.filter(
+      entry => entry.timestamp >= windowStart
+    );
+    
+    this.connectionMetrics.lastUpdated = now;
+    
+    const outcomeStr = success ? '✅ SUCCESS' : `❌ FAILURE (${failureReason || 'unknown'})`;
+    console.log(`📊 Connection outcome from ${shortId}...: ${connectionType} ${outcomeStr}${iceCandidateType ? ` [${iceCandidateType}]` : ''}`);
+  }
+
+  /**
+   * Get connection success rate metrics (Task 1.3)
+   * Returns comprehensive metrics for the /metrics endpoint
+   * 
+   * @returns {Object} Connection metrics with success rates and breakdowns
+   */
+  getConnectionMetrics() {
+    const metrics = this.connectionMetrics;
+    const now = Date.now();
+    
+    // Calculate overall success rate
+    const overallSuccessRate = metrics.totalAttempts > 0
+      ? Math.round((metrics.totalSuccesses / metrics.totalAttempts) * 100)
+      : 0;
+    
+    // Calculate success rates by type
+    const byTypeRates = {};
+    for (const [type, data] of Object.entries(metrics.byType)) {
+      byTypeRates[type] = {
+        attempts: data.attempts,
+        successes: data.successes,
+        failures: data.failures,
+        successRate: data.attempts > 0
+          ? Math.round((data.successes / data.attempts) * 100)
+          : 0
+      };
+    }
+    
+    // Calculate success rates by NAT pair
+    const byNatPairRates = {};
+    for (const [pair, data] of Object.entries(metrics.byNatPair)) {
+      byNatPairRates[pair] = {
+        attempts: data.attempts,
+        successes: data.successes,
+        failures: data.failures,
+        successRate: data.attempts > 0
+          ? Math.round((data.successes / data.attempts) * 100)
+          : 0
+      };
+    }
+    
+    // Calculate recent success rate (last hour)
+    const recentAttempts = metrics.recentAttempts;
+    const recentSuccesses = recentAttempts.filter(a => a.success).length;
+    const recentSuccessRate = recentAttempts.length > 0
+      ? Math.round((recentSuccesses / recentAttempts.length) * 100)
+      : 0;
+    
+    // Calculate ICE candidate type distribution
+    const totalIceCandidates = Object.values(metrics.iceCandidateTypes).reduce((a, b) => a + b, 0);
+    const iceCandidateDistribution = {};
+    for (const [type, count] of Object.entries(metrics.iceCandidateTypes)) {
+      iceCandidateDistribution[type] = {
+        count,
+        percentage: totalIceCandidates > 0
+          ? Math.round((count / totalIceCandidates) * 100)
+          : 0
+      };
+    }
+    
+    // Get failure reasons from recent attempts
+    const failureReasons = {};
+    for (const attempt of recentAttempts) {
+      if (!attempt.success && attempt.failureReason) {
+        failureReasons[attempt.failureReason] = (failureReasons[attempt.failureReason] || 0) + 1;
+      }
+    }
+    
+    return {
+      summary: {
+        totalAttempts: metrics.totalAttempts,
+        totalSuccesses: metrics.totalSuccesses,
+        totalFailures: metrics.totalFailures,
+        overallSuccessRate,
+        targetSuccessRate: 95, // From requirements: 95%+ connection success rate
+        meetsTarget: overallSuccessRate >= 95
+      },
+      byConnectionType: byTypeRates,
+      byNatPair: byNatPairRates,
+      iceCandidateTypes: iceCandidateDistribution,
+      recentMetrics: {
+        windowSizeMs: metrics.windowSize,
+        windowSizeHuman: '1 hour',
+        attempts: recentAttempts.length,
+        successes: recentSuccesses,
+        successRate: recentSuccessRate,
+        failureReasons
+      },
+      connectionProfiles: {
+        totalReports: this.connectionProfileMetrics.totalReports,
+        natTypes: this.connectionProfileMetrics.natTypes,
+        portPatterns: this.connectionProfileMetrics.portPatterns,
+        ipv6Capable: this.connectionProfileMetrics.ipv6Capable,
+        needsRelay: this.connectionProfileMetrics.needsRelay,
+        // Task 6.2: IPv6 availability by platform/browser
+        ipv6ByPlatform: this._calculateIPv6Percentages(this.connectionProfileMetrics.ipv6ByPlatform),
+        ipv6ByBrowser: this._calculateIPv6Percentages(this.connectionProfileMetrics.ipv6ByBrowser),
+        ipv6ByCategory: this._calculateIPv6Percentages(this.connectionProfileMetrics.ipv6ByCategory)
+      },
+      // Task 6.2: IPv6 adoption trends over time
+      ipv6Trends: this.getIPv6AdoptionTrends(),
+      lastUpdated: metrics.lastUpdated,
+      timestamp: now
+    };
+  }
+
+  /**
    * Handle ping message from client (bridge nodes or any connected client)
    * Responds with pong to keep the WebSocket connection alive
    */
@@ -3524,5 +5303,218 @@ export class EnhancedBootstrapServer extends EventEmitter {
         error: error.message
       }));
     }
+  }
+
+  // ============================================================================
+  // Relay Message Handling for Symmetric NAT Relay System
+  // ============================================================================
+
+  /**
+   * Setup RelayManager event handlers
+   * RelayManager emits events when it needs to send messages to peers
+   */
+  setupRelayManagerEventHandlers() {
+    // Handle relay acknowledgment - send ack to requesting peer
+    this.relayManager.on('sendRelayAck', async ({ toPeerId, sessionId, success, error }) => {
+      try {
+        const ackMessage = createRelayAck(sessionId, success, error);
+        const ws = this.getWebSocketForPeer(toPeerId);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify(ackMessage));
+          console.log(`🔄 Sent relay ack to ${toPeerId.substring(0, 8)}... (success: ${success})`);
+        } else {
+          console.warn(`⚠️ Cannot send relay ack - peer ${toPeerId.substring(0, 8)}... not connected`);
+        }
+      } catch (err) {
+        console.error(`❌ Failed to send relay ack to ${toPeerId.substring(0, 8)}...:`, err.message);
+      }
+    });
+
+    // Handle relay request rejection - send rejection ack
+    this.relayManager.on('relayRequestRejected', async ({ fromPeerId, sessionId, reason }) => {
+      try {
+        const ackMessage = createRelayAck(sessionId, false, reason);
+        const ws = this.getWebSocketForPeer(fromPeerId);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify(ackMessage));
+          console.log(`🔄 Sent relay rejection to ${fromPeerId.substring(0, 8)}... (reason: ${reason})`);
+        }
+      } catch (err) {
+        console.error(`❌ Failed to send relay rejection to ${fromPeerId.substring(0, 8)}...:`, err.message);
+      }
+    });
+
+    // Handle relay forward - forward message to target peer
+    this.relayManager.on('forwardRelayMessage', async ({ toPeerId, message }) => {
+      try {
+        const ws = this.getWebSocketForPeer(toPeerId);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify(message));
+          console.log(`🔄 Forwarded relay message to ${toPeerId.substring(0, 8)}... (session: ${message.sessionId?.substring(0, 8)}...)`);
+        } else {
+          console.warn(`⚠️ Cannot forward relay message - peer ${toPeerId.substring(0, 8)}... not connected`);
+        }
+      } catch (err) {
+        console.error(`❌ Failed to forward relay message to ${toPeerId.substring(0, 8)}...:`, err.message);
+      }
+    });
+
+    // Handle relay pong - send pong response
+    this.relayManager.on('sendRelayPong', async ({ toPeerId, message }) => {
+      try {
+        const ws = this.getWebSocketForPeer(toPeerId);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify(message));
+        }
+      } catch (err) {
+        console.error(`❌ Failed to send relay pong to ${toPeerId.substring(0, 8)}...:`, err.message);
+      }
+    });
+
+    // Handle relay ping - send ping for health check
+    this.relayManager.on('sendRelayPing', async ({ toPeerId, message }) => {
+      try {
+        const ws = this.getWebSocketForPeer(toPeerId);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify(message));
+        }
+      } catch (err) {
+        console.error(`❌ Failed to send relay ping to ${toPeerId.substring(0, 8)}...:`, err.message);
+      }
+    });
+
+    // Handle relay close - send close message
+    this.relayManager.on('sendRelayClose', async ({ toPeerId, sessionId, reason }) => {
+      try {
+        const ws = this.getWebSocketForPeer(toPeerId);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: RelayMessageType.CLOSE,
+            sessionId,
+            reason,
+            timestamp: Date.now()
+          }));
+          console.log(`🔄 Sent relay close to ${toPeerId.substring(0, 8)}... (session: ${sessionId.substring(0, 8)}...)`);
+        }
+      } catch (err) {
+        console.error(`❌ Failed to send relay close to ${toPeerId.substring(0, 8)}...:`, err.message);
+      }
+    });
+
+    // Handle relay request (for failover) - send request to new relay
+    this.relayManager.on('sendRelayRequest', async ({ toPeerId, message }) => {
+      try {
+        const ws = this.getWebSocketForPeer(toPeerId);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify(message));
+          console.log(`🔄 Sent relay request to ${toPeerId.substring(0, 8)}...`);
+        }
+      } catch (err) {
+        console.error(`❌ Failed to send relay request to ${toPeerId.substring(0, 8)}...:`, err.message);
+      }
+    });
+
+    // Handle relay forward (outgoing) - send forward message through relay
+    this.relayManager.on('sendRelayForward', async ({ toPeerId, message }) => {
+      try {
+        const ws = this.getWebSocketForPeer(toPeerId);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify(message));
+        }
+      } catch (err) {
+        console.error(`❌ Failed to send relay forward to ${toPeerId.substring(0, 8)}...:`, err.message);
+      }
+    });
+
+    // Log relay session events for monitoring
+    this.relayManager.on('relaySessionEstablished', ({ session }) => {
+      console.log(`✅ Relay session established: ${session.fromPeerId.substring(0, 8)}... ↔ ${session.toPeerId.substring(0, 8)}... (session: ${session.sessionId.substring(0, 8)}...)`);
+      // Update relay load in server metadata
+      this.serverMetadata.relayLoad = this.relayManager.getRelayLoad();
+    });
+
+    this.relayManager.on('sessionClosed', ({ session, reason }) => {
+      console.log(`🔄 Relay session closed: ${session.sessionId.substring(0, 8)}... (reason: ${reason})`);
+      // Update relay load in server metadata
+      this.serverMetadata.relayLoad = this.relayManager.getRelayLoad();
+    });
+
+    console.log(`✅ RelayManager event handlers set up successfully`);
+  }
+
+  /**
+   * Handle incoming relay messages from clients
+   * Routes messages to the appropriate RelayManager handler
+   * @param {string} peerId - Peer that sent the message
+   * @param {Object} message - Relay protocol message
+   * @param {WebSocket} ws - WebSocket connection that received the message
+   */
+  handleRelayMessage(peerId, message, ws) {
+    switch (message.type) {
+      case RelayMessageType.REQUEST:
+        // Browser requesting relay session through this bootstrap server
+        this.relayManager.handleRelayRequest(peerId, message);
+        break;
+
+      case RelayMessageType.FORWARD:
+        // Forward message to target peer
+        this.relayManager.handleRelayForward(peerId, message);
+        break;
+
+      case RelayMessageType.ACK:
+        // Relay acknowledgment (when this node requested a relay)
+        this.relayManager.handleRelayAck(peerId, message);
+        break;
+
+      case RelayMessageType.CLOSE:
+        // Relay session close request
+        this.relayManager.handleRelayClose(peerId, message);
+        break;
+
+      case RelayMessageType.PING:
+        // Health check ping
+        this.relayManager.handleRelayPing(peerId, message);
+        break;
+
+      case RelayMessageType.PONG:
+        // Health check pong response
+        this.relayManager.handleRelayPong(peerId, message);
+        break;
+
+      default:
+        console.warn(`⚠️ Unknown relay message type: ${message.type} from ${peerId.substring(0, 8)}...`);
+    }
+  }
+
+  /**
+   * Get WebSocket connection for a peer
+   * Looks up the peer in connectedClients or peers maps
+   * @param {string} peerId - Peer ID to look up
+   * @returns {WebSocket|null} WebSocket connection or null if not found
+   */
+  getWebSocketForPeer(peerId) {
+    // First check connectedClients (primary source)
+    const client = this.connectedClients.get(peerId);
+    if (client && client.ws && client.ws.readyState === WebSocket.OPEN) {
+      return client.ws;
+    }
+
+    // Fall back to peers map
+    const peer = this.peers.get(peerId);
+    if (peer && peer.ws && peer.ws.readyState === WebSocket.OPEN) {
+      return peer.ws;
+    }
+
+    return null;
+  }
+
+  /**
+   * Check if a peer is connected to this bootstrap server
+   * Used by RelayManager to verify peer connectivity
+   * @param {string} peerId - Peer ID to check
+   * @returns {boolean} True if peer is connected
+   */
+  isPeerConnected(peerId) {
+    return this.getWebSocketForPeer(peerId) !== null;
   }
 }

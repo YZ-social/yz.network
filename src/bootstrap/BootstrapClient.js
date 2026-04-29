@@ -1,9 +1,12 @@
 import { EventEmitter } from 'events';
 import { PROTOCOL_VERSION, BUILD_ID } from '../version.js';
+import { ConnectionProfileDetector } from '../network/ConnectionProfileDetector.js';
 
 // Polyfill WebSocket for Node.js environment
 let WebSocketImpl;
-if (typeof process !== 'undefined' && process.versions && process.versions.node) {
+const isBrowser = typeof process === 'undefined' || !process.versions || !process.versions.node;
+
+if (!isBrowser) {
   // Node.js environment - always use 'ws' package
   const wsModule = await import('ws');
   WebSocketImpl = wsModule.default || wsModule.WebSocket || wsModule;
@@ -39,6 +42,10 @@ export class BootstrapClient extends EventEmitter {
     this.isDestroyed = false;
     this.deliberateDisconnect = false; // Track if disconnect was intentional
     this.autoReconnectEnabled = true; // NEW: Control auto-reconnect behavior
+    
+    // Connection profile detection (browser only)
+    this.connectionProfile = null;
+    this.connectionProfileDetector = isBrowser ? new ConnectionProfileDetector() : null;
   }
 
   /**
@@ -52,7 +59,82 @@ export class BootstrapClient extends EventEmitter {
     }
 
     this.metadata = metadata; // Store metadata (e.g., public key) to send during registration
+    
+    // Start connection profile detection in parallel (browser only)
+    // This runs alongside the WebSocket connection to avoid blocking
+    if (this.connectionProfileDetector) {
+      this._detectConnectionProfile();
+    }
+    
     return this.attemptConnection();
+  }
+  
+  /**
+   * Detect connection profile (NAT type, IPv6, etc.) in the background
+   * @private
+   */
+  async _detectConnectionProfile() {
+    try {
+      console.log('🔍 Starting connection profile detection...');
+      this.connectionProfile = await this.connectionProfileDetector.getConnectionProfile();
+      
+      console.log('📊 Connection profile detected:', {
+        hasIPv6: this.connectionProfile.hasIPv6,
+        natType: this.connectionProfile.natType,
+        portPattern: this.connectionProfile.portPattern,
+        needsRelay: this.connectionProfile.needsRelay
+      });
+      
+      // Emit event so other components can react to the profile
+      this.emit('connectionProfileDetected', this.connectionProfile);
+      
+      // If we're already registered, send profile update to bootstrap server
+      if (this.isRegistered) {
+        this._sendProfileUpdate();
+      }
+    } catch (error) {
+      console.error('❌ Connection profile detection failed:', error);
+      // Non-fatal - we can still operate without profile info
+    }
+  }
+  
+  /**
+   * Send connection profile update to bootstrap server
+   * @private
+   */
+  _sendProfileUpdate() {
+    if (!this.isBootstrapConnected() || !this.connectionProfile) {
+      return;
+    }
+    
+    try {
+      this.sendMessage({
+        type: 'profile_update',
+        nodeId: this.localNodeId,
+        connectionProfile: {
+          hasIPv6: this.connectionProfile.hasIPv6,
+          natType: this.connectionProfile.natType,
+          portPattern: this.connectionProfile.portPattern,
+          needsRelay: this.connectionProfile.needsRelay,
+          // Task 6.2: Include platform info for IPv6 tracking by user agent/platform
+          platform: this.connectionProfile.platform,
+          browser: this.connectionProfile.browser,
+          browserVersion: this.connectionProfile.browserVersion,
+          isMobile: this.connectionProfile.isMobile
+        }
+      });
+      console.log('📤 Sent connection profile update to bootstrap server');
+    } catch (error) {
+      console.warn('⚠️ Failed to send profile update:', error.message);
+    }
+  }
+  
+  /**
+   * Get the detected connection profile
+   * @returns {Object|null} The connection profile or null if not yet detected
+   */
+  getConnectionProfile() {
+    return this.connectionProfile;
   }
 
   /**
@@ -253,6 +335,10 @@ export class BootstrapClient extends EventEmitter {
         case 'registered':
           this.isRegistered = true; // Mark as registered when confirmation received
           this.emit('registered', message);
+          // Send connection profile if already detected
+          if (this.connectionProfile) {
+            this._sendProfileUpdate();
+          }
           break;
 
         case 'peer_list':
@@ -379,6 +465,57 @@ export class BootstrapClient extends EventEmitter {
         case 'auth_failure':
           console.error('❌ Bootstrap authentication failed:', message.reason);
           this.emit('authFailure', message);
+          break;
+
+        // ICE coordination messages (Task 4.2: Coordinated ICE timing)
+        case 'ice_coordinate_pending':
+          // Bootstrap is holding our coordination request, waiting for peer
+          console.log(`❄️ ICE coordination pending for ${message.target?.substring(0, 8)}... (waiting for peer)`);
+          this.emit('iceCoordinatePending', {
+            sessionId: message.sessionId,
+            target: message.target,
+            message: message.message
+          });
+          break;
+
+        case 'ice_start':
+          // Both peers ready! Bootstrap is telling us to start ICE probing at synchronized time
+          console.log(`❄️ ICE start received! Peer: ${message.peer?.substring(0, 8)}..., timestamp: ${message.timestamp}`);
+          this.emit('iceStart', {
+            sessionId: message.sessionId,
+            timestamp: message.timestamp,
+            peer: message.peer,
+            peerCandidates: message.peerCandidates || [],
+            peerProfile: message.peerProfile || {}
+          });
+          break;
+
+        case 'ice_coordinate_timeout':
+          // Peer didn't respond to coordination request in time
+          console.warn(`❄️ ICE coordination timeout: ${message.message}`);
+          this.emit('iceCoordinateTimeout', {
+            sessionId: message.sessionId,
+            message: message.message
+          });
+          break;
+
+        case 'ice_coordinate_error':
+          // Error during ICE coordination
+          console.error(`❄️ ICE coordination error: ${message.error}`);
+          this.emit('iceCoordinateError', {
+            sessionId: message.sessionId,
+            error: message.error
+          });
+          break;
+
+        case 'ice_restart_go':
+          // Bootstrap is telling both peers to restart ICE simultaneously
+          console.log(`❄️ ICE restart signal received for peer ${message.peer?.substring(0, 8)}...`);
+          this.emit('iceRestartGo', {
+            sessionId: message.sessionId,
+            timestamp: message.timestamp,
+            peer: message.peer
+          });
           break;
 
         default:
@@ -574,6 +711,98 @@ export class BootstrapClient extends EventEmitter {
   }
 
   /**
+   * Send ICE coordination request to bootstrap server (Task 4.2: Coordinated ICE timing)
+   * 
+   * This implements the Tailscale technique for synchronized NAT traversal:
+   * 1. Browser A sends ice_coordinate targeting Browser B
+   * 2. Bootstrap holds the request until B also sends ice_coordinate targeting A
+   * 3. Bootstrap sends ice_start to BOTH peers simultaneously with synchronized timestamp
+   * 4. Both peers start ICE probing at exactly the same time
+   * 5. Packets cross in flight, opening both firewalls simultaneously
+   * 
+   * @param {string} targetPeerId - The peer we want to connect to
+   * @param {Array} candidates - Our ICE candidates to share with the peer
+   * @param {Object} [options] - Additional options
+   * @param {string} [options.sessionId] - Optional session ID for tracking
+   * @returns {Promise<boolean>} - True if request was sent successfully
+   */
+  async sendIceCoordinate(targetPeerId, candidates = [], options = {}) {
+    if (!this.isBootstrapConnected()) {
+      console.warn('❄️ Cannot send ICE coordinate - not connected to bootstrap');
+      return false;
+    }
+
+    if (!targetPeerId) {
+      console.warn('❄️ Cannot send ICE coordinate - no target peer specified');
+      return false;
+    }
+
+    try {
+      const sessionId = options.sessionId || `ice-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+      
+      console.log(`❄️ Sending ICE coordination request for ${targetPeerId.substring(0, 8)}...`);
+      
+      this.sendMessage({
+        type: 'ice_coordinate',
+        target: targetPeerId,
+        candidates: candidates,
+        profile: this.connectionProfile || {},
+        sessionId: sessionId
+      });
+      
+      console.log(`❄️ ICE coordinate sent to bootstrap (session: ${sessionId.substring(0, 12)}...)`);
+      return true;
+    } catch (error) {
+      console.error('❄️ Error sending ICE coordinate:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Request coordinated ICE restart for hard NAT pairs (Task 4.3)
+   * 
+   * When both peers are behind hard NATs and initial ICE fails:
+   * 1. Request coordinated ICE restart via bootstrap server
+   * 2. Bootstrap sends ice_restart_go to both peers simultaneously
+   * 3. Both peers call pc.restartIce() at the same time
+   * 4. Fresh NAT mappings may succeed where old ones failed
+   * 
+   * @param {string} targetPeerId - The peer to coordinate restart with
+   * @param {string} [sessionId] - Optional session ID for tracking
+   * @returns {Promise<boolean>} - True if request was sent successfully
+   */
+  async sendIceRestartCoordinate(targetPeerId, sessionId = null) {
+    if (!this.isBootstrapConnected()) {
+      console.warn('❄️ Cannot send ICE restart coordinate - not connected to bootstrap');
+      return false;
+    }
+
+    if (!targetPeerId) {
+      console.warn('❄️ Cannot send ICE restart coordinate - no target peer specified');
+      return false;
+    }
+
+    try {
+      const restartSessionId = sessionId || `ice-restart-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+      
+      console.log(`❄️ Sending ICE restart coordination request for ${targetPeerId.substring(0, 8)}...`);
+      
+      this.sendMessage({
+        type: 'ice_restart_coordinate',
+        target: targetPeerId,
+        profile: this.connectionProfile || {},
+        sessionId: restartSessionId
+      });
+      
+      console.log(`❄️ ICE restart coordinate sent to bootstrap (session: ${restartSessionId.substring(0, 12)}...)`);
+      return true;
+    } catch (error) {
+      console.error('❄️ Error sending ICE restart coordinate:', error);
+      return false;
+    }
+  }
+
+  /**
    * Announce that we no longer need bootstrap server
    */
   async announceIndependent() {
@@ -585,6 +814,42 @@ export class BootstrapClient extends EventEmitter {
       console.log('Announced independence from bootstrap server');
     } catch (error) {
       console.warn('Error announcing independence:', error);
+    }
+  }
+
+  /**
+   * Report connection outcome to bootstrap server for metrics tracking (Task 1.3)
+   * 
+   * @param {Object} outcome - Connection outcome details
+   * @param {boolean} outcome.success - Whether the connection succeeded
+   * @param {string} outcome.connectionType - 'webrtc', 'websocket', or 'relay'
+   * @param {string} [outcome.localNatType] - Local peer's NAT type
+   * @param {string} [outcome.remoteNatType] - Remote peer's NAT type
+   * @param {string} [outcome.iceCandidateType] - ICE candidate type used (for successful WebRTC)
+   * @param {string} [outcome.failureReason] - Reason for failure (if applicable)
+   */
+  reportConnectionOutcome(outcome) {
+    if (!this.isBootstrapConnected()) {
+      console.log('📊 Cannot report connection outcome - not connected to bootstrap');
+      return;
+    }
+    
+    try {
+      this.sendMessage({
+        type: 'connection_outcome',
+        nodeId: this.localNodeId,
+        success: outcome.success,
+        connectionType: outcome.connectionType,
+        localNatType: outcome.localNatType || (this.connectionProfile?.natType),
+        remoteNatType: outcome.remoteNatType,
+        iceCandidateType: outcome.iceCandidateType,
+        failureReason: outcome.failureReason
+      });
+      
+      const outcomeStr = outcome.success ? 'success' : `failure (${outcome.failureReason || 'unknown'})`;
+      console.log(`📊 Reported ${outcome.connectionType} connection ${outcomeStr} to bootstrap`);
+    } catch (error) {
+      console.warn('⚠️ Failed to report connection outcome:', error.message);
     }
   }
 

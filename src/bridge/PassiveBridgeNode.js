@@ -1,6 +1,8 @@
 import { NodeDHTClient } from '../node/NodeDHTClient.js';
 import { DHTNodeId } from '../core/DHTNodeId.js';
 import http from 'http';
+import { RelayManager } from '../network/RelayManager.js';
+import { RelayMessageType, createRelayAck, RelayRejectionReason, isRelayMessage } from '../network/RelayProtocol.js';
 
 /**
  * Passive Bridge Node - DHT Observer for Reconnection Services
@@ -62,6 +64,14 @@ export class PassiveBridgeNode extends NodeDHTClient {
     this.hasBootstrapped = false;           // True once we've connected to at least one DHT peer
     this.peakPeerCount = 0;                 // Highest number of peers we've had
     this.lastHealthReport = 0;              // Timestamp of last health report to bootstrap
+
+    // Relay manager for symmetric NAT relay system
+    // Bridge nodes can relay WebSocket traffic between browsers that can't establish direct WebRTC
+    this.relayManager = new RelayManager({
+      maxRelaySessions: options.maxRelaySessions || 200,  // Bridge nodes have higher capacity
+      sessionTimeout: options.relaySessionTimeout || 5 * 60 * 1000,  // 5 minutes
+      healthCheckInterval: options.relayHealthCheckInterval || 30000  // 30 seconds
+    });
 
     // Note: DHT event handlers will be set up after DHT is created in start() method
   }
@@ -136,11 +146,20 @@ export class PassiveBridgeNode extends NodeDHTClient {
    * Override bootstrap metadata to identify as bridge node
    */
   getBootstrapMetadata() {
+    // Get relay metrics from RelayManager if initialized
+    const relayLoad = this.relayManager?.getRelayLoad() || 0;
+    const relayCapacity = this.relayManager?.getRelayCapacity() || 200;
+    
     return {
       ...super.getBootstrapMetadata(),
       isBridgeNode: true,
       nodeType: 'bridge',
-      bridgeAuthToken: this.bridgeAuth
+      bridgeAuthToken: this.bridgeAuth,
+      // Explicitly advertise relay capability for symmetric NAT relay system
+      // Bridge nodes can relay WebSocket traffic between browsers that can't establish direct WebRTC
+      canRelay: true,
+      relayLoad,                            // Current relay utilization (0-1), from RelayManager
+      relayCapacity                         // Bridge nodes have higher capacity than regular DHT nodes
     };
   }
 
@@ -295,6 +314,169 @@ export class PassiveBridgeNode extends NodeDHTClient {
       }
     });
     console.log(`✅ dhtMessage event handler set up successfully`);
+
+    // Handle relay messages for symmetric NAT relay system
+    // Bridge nodes can relay WebSocket traffic between browsers that can't establish direct WebRTC
+    console.log(`🔧 Setting up relayMessage event handler on bridge connection manager`);
+    this.connectionManager.on('relayMessage', (data) => {
+      const { peerId, message, sourceManager } = data;
+      console.log(`🔄 Bridge received relay message: ${message.type} from ${peerId.substring(0, 8)}...`);
+      this.handleRelayMessage(peerId, message, sourceManager);
+    });
+    console.log(`✅ relayMessage event handler set up successfully`);
+  }
+
+  /**
+   * Setup RelayManager event handlers
+   * RelayManager emits events when it needs to send messages to peers
+   */
+  setupRelayManagerEventHandlers() {
+    // Handle relay acknowledgment - send ack to requesting peer
+    this.relayManager.on('sendRelayAck', async ({ toPeerId, sessionId, success, error }) => {
+      try {
+        const ackMessage = createRelayAck(sessionId, success, error);
+        const manager = this.getManagerForPeer(toPeerId);
+        await manager.sendMessage(toPeerId, ackMessage);
+        console.log(`🔄 Sent relay ack to ${toPeerId.substring(0, 8)}... (success: ${success})`);
+      } catch (err) {
+        console.error(`❌ Failed to send relay ack to ${toPeerId.substring(0, 8)}...:`, err.message);
+      }
+    });
+
+    // Handle relay request rejection - send rejection ack
+    this.relayManager.on('relayRequestRejected', async ({ fromPeerId, sessionId, reason }) => {
+      try {
+        const ackMessage = createRelayAck(sessionId, false, reason);
+        const manager = this.getManagerForPeer(fromPeerId);
+        await manager.sendMessage(fromPeerId, ackMessage);
+        console.log(`🔄 Sent relay rejection to ${fromPeerId.substring(0, 8)}... (reason: ${reason})`);
+      } catch (err) {
+        console.error(`❌ Failed to send relay rejection to ${fromPeerId.substring(0, 8)}...:`, err.message);
+      }
+    });
+
+    // Handle relay forward - forward message to target peer
+    this.relayManager.on('forwardRelayMessage', async ({ toPeerId, message }) => {
+      try {
+        const manager = this.getManagerForPeer(toPeerId);
+        await manager.sendMessage(toPeerId, message);
+        console.log(`🔄 Forwarded relay message to ${toPeerId.substring(0, 8)}... (session: ${message.sessionId?.substring(0, 8)}...)`);
+      } catch (err) {
+        console.error(`❌ Failed to forward relay message to ${toPeerId.substring(0, 8)}...:`, err.message);
+      }
+    });
+
+    // Handle relay pong - send pong response
+    this.relayManager.on('sendRelayPong', async ({ toPeerId, message }) => {
+      try {
+        const manager = this.getManagerForPeer(toPeerId);
+        await manager.sendMessage(toPeerId, message);
+      } catch (err) {
+        console.error(`❌ Failed to send relay pong to ${toPeerId.substring(0, 8)}...:`, err.message);
+      }
+    });
+
+    // Handle relay ping - send ping for health check
+    this.relayManager.on('sendRelayPing', async ({ toPeerId, message }) => {
+      try {
+        const manager = this.getManagerForPeer(toPeerId);
+        await manager.sendMessage(toPeerId, message);
+      } catch (err) {
+        console.error(`❌ Failed to send relay ping to ${toPeerId.substring(0, 8)}...:`, err.message);
+      }
+    });
+
+    // Handle relay close - send close message
+    this.relayManager.on('sendRelayClose', async ({ toPeerId, sessionId, reason }) => {
+      try {
+        const manager = this.getManagerForPeer(toPeerId);
+        await manager.sendMessage(toPeerId, {
+          type: RelayMessageType.CLOSE,
+          sessionId,
+          reason,
+          timestamp: Date.now()
+        });
+        console.log(`🔄 Sent relay close to ${toPeerId.substring(0, 8)}... (session: ${sessionId.substring(0, 8)}...)`);
+      } catch (err) {
+        console.error(`❌ Failed to send relay close to ${toPeerId.substring(0, 8)}...:`, err.message);
+      }
+    });
+
+    // Handle relay request (for failover) - send request to new relay
+    this.relayManager.on('sendRelayRequest', async ({ toPeerId, message }) => {
+      try {
+        const manager = this.getManagerForPeer(toPeerId);
+        await manager.sendMessage(toPeerId, message);
+        console.log(`🔄 Sent relay request to ${toPeerId.substring(0, 8)}...`);
+      } catch (err) {
+        console.error(`❌ Failed to send relay request to ${toPeerId.substring(0, 8)}...:`, err.message);
+      }
+    });
+
+    // Handle relay forward (outgoing) - send forward message through relay
+    this.relayManager.on('sendRelayForward', async ({ toPeerId, message }) => {
+      try {
+        const manager = this.getManagerForPeer(toPeerId);
+        await manager.sendMessage(toPeerId, message);
+      } catch (err) {
+        console.error(`❌ Failed to send relay forward to ${toPeerId.substring(0, 8)}...:`, err.message);
+      }
+    });
+
+    // Log relay session events for monitoring
+    this.relayManager.on('relaySessionEstablished', ({ session }) => {
+      console.log(`✅ Relay session established: ${session.fromPeerId.substring(0, 8)}... ↔ ${session.toPeerId.substring(0, 8)}... (session: ${session.sessionId.substring(0, 8)}...)`);
+    });
+
+    this.relayManager.on('sessionClosed', ({ session, reason }) => {
+      console.log(`🔄 Relay session closed: ${session.sessionId.substring(0, 8)}... (reason: ${reason})`);
+    });
+
+    console.log(`✅ RelayManager event handlers set up successfully`);
+  }
+
+  /**
+   * Handle incoming relay messages from connection manager
+   * Routes messages to the appropriate RelayManager handler
+   * @param {string} peerId - Peer that sent the message
+   * @param {Object} message - Relay protocol message
+   * @param {Object} sourceManager - Connection manager that received the message
+   */
+  handleRelayMessage(peerId, message, sourceManager) {
+    switch (message.type) {
+      case RelayMessageType.REQUEST:
+        // Browser requesting relay session through this bridge node
+        this.relayManager.handleRelayRequest(peerId, message);
+        break;
+
+      case RelayMessageType.FORWARD:
+        // Forward message to target peer
+        this.relayManager.handleRelayForward(peerId, message);
+        break;
+
+      case RelayMessageType.ACK:
+        // Relay acknowledgment (when this node requested a relay)
+        this.relayManager.handleRelayAck(peerId, message);
+        break;
+
+      case RelayMessageType.CLOSE:
+        // Relay session close request
+        this.relayManager.handleRelayClose(peerId, message);
+        break;
+
+      case RelayMessageType.PING:
+        // Health check ping
+        this.relayManager.handleRelayPing(peerId, message);
+        break;
+
+      case RelayMessageType.PONG:
+        // Health check pong response
+        this.relayManager.handleRelayPong(peerId, message);
+        break;
+
+      default:
+        console.warn(`⚠️ Unknown relay message type: ${message.type} from ${peerId.substring(0, 8)}...`);
+    }
   }
 
   /**
@@ -317,6 +499,12 @@ export class PassiveBridgeNode extends NodeDHTClient {
     // Now set up bridge-specific event handlers after DHT is created
     this.setupDHTEventHandlers();
     this.setupConnectionManagerEventHandlers();
+
+    // Initialize RelayManager for symmetric NAT relay system
+    // Bridge nodes can relay WebSocket traffic between browsers that can't establish direct WebRTC
+    this.relayManager.initialize(this.dht.localNodeId.toString(), true);  // canRelay = true for bridge nodes
+    this.setupRelayManagerEventHandlers();
+    console.log(`🔄 RelayManager initialized for bridge node`);
 
     // NodeDHTClient already initialized connection manager and started WebSocket server
     // this.connectionManager is now set and ready
@@ -431,6 +619,12 @@ export class PassiveBridgeNode extends NodeDHTClient {
     if (this.fingerprintUpdateInterval) {
       clearInterval(this.fingerprintUpdateInterval);
       this.fingerprintUpdateInterval = null;
+    }
+
+    // Destroy RelayManager
+    if (this.relayManager) {
+      this.relayManager.destroy();
+      console.log('🔄 RelayManager destroyed');
     }
 
     // Destroy connection manager
@@ -1540,6 +1734,13 @@ export class PassiveBridgeNode extends NodeDHTClient {
       return; // Return early - bootstrap_auth is handled, don't route to handleBootstrapMessage
     }
 
+    // Check if this is a relay message - route to RelayManager
+    if (isRelayMessage(message)) {
+      console.log(`🔄 Routing relay message ${message.type} from ${peerId.substring(0, 8)}... to RelayManager`);
+      this.handleRelayMessage(peerId, message, this.connectionManager);
+      return;
+    }
+
     // Check if this is a bootstrap server peer (either by ID prefix or if it's in authorized list)
     if (peerId.startsWith('bootstrap_') || this.authorizedBootstrap.has(peerId)) {
       console.log(`🔍 Routing to handleBootstrapMessage: ${message.type} from ${peerId.substring(0, 8)}...`);
@@ -1657,6 +1858,11 @@ export class PassiveBridgeNode extends NodeDHTClient {
       this.connectedPeers.get(peerId).isActive = false;
     }
 
+    // Notify RelayManager about peer disconnection to clean up relay sessions
+    if (this.relayManager) {
+      this.relayManager.handlePeerDisconnected(peerId);
+    }
+
     // Emit peer disconnected event for DHT
     this.dht.emit('peerDisconnected', peerId);
 
@@ -1747,6 +1953,10 @@ export class PassiveBridgeNode extends NodeDHTClient {
    * Get bridge node status
    */
   getStatus() {
+    // Get relay metrics if RelayManager is initialized
+    const relayMetrics = this.relayManager?.getMetrics() || {};
+    const relayMetadata = this.relayManager?.getRelayMetadata() || {};
+    
     return {
       isStarted: this.isStarted,
       nodeId: this.dht.localNodeId.toString(),
@@ -1756,7 +1966,15 @@ export class PassiveBridgeNode extends NodeDHTClient {
       networkFingerprint: this.networkFingerprint,
       lastFingerprintUpdate: this.lastFingerprintUpdate,
       authorizedBootstrapConnections: this.authorizedBootstrap.size,
-      networkHealth: this.assessNetworkHealth()
+      networkHealth: this.assessNetworkHealth(),
+      // Relay system metrics
+      relay: {
+        canRelay: this.relayManager?.canRelay() || false,
+        activeSessions: this.relayManager?.getActiveSessionCount() || 0,
+        load: relayMetadata.relayLoad || 0,
+        capacity: relayMetadata.relayCapacity || 0,
+        metrics: relayMetrics
+      }
     };
   }
 

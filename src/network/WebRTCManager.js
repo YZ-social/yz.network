@@ -34,12 +34,16 @@ export class WebRTCManager extends EventEmitter {
     this.isInitialized = false;
 
     // Keep-alive system for browser tab visibility
+    // Task 5.3: Keep-alive interval must be UNDER the NAT timeout to prevent mapping expiration
+    // Most NATs have a 30-second UDP mapping timeout, some aggressive NATs use 20 seconds
+    // Using 25 seconds for active tabs (under typical 30s NAT timeout)
+    // Using 10 seconds for inactive tabs (more aggressive to maintain connection)
     this.keepAliveIntervals = new Map(); // peerId -> intervalId
     this.keepAlivePings = new Map(); // peerId -> Set of pending pings
     this.keepAliveResponses = new Map(); // peerId -> last response timestamp
     this.keepAliveTimeouts = new Map(); // peerId -> Set of timeout IDs
     this.isTabVisible = true;
-    this.keepAliveInterval = 30000; // 30 seconds for active tabs
+    this.keepAliveInterval = 25000; // 25 seconds for active tabs (under 30s NAT timeout)
     this.keepAliveIntervalHidden = 10000; // 10 seconds for inactive tabs
     this.keepAliveTimeout = 60000; // 60 seconds to wait for pong response
 
@@ -181,15 +185,17 @@ export class WebRTCManager extends EventEmitter {
       // Create offer
       try {
         const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        console.log(`📤 Created offer for ${peerId}`);
+        // Task 6.1: Apply IPv6 prioritization before setting local description
+        // This boosts IPv6 host candidate priorities to prefer direct IPv6 connections
+        const modifiedOffer = await this._setLocalDescriptionWithIPv6Priority(pc, offer);
+        console.log(`📤 Created offer for ${peerId} (IPv6 prioritized)`);
 
         // Send offer through bootstrap server
         this.emit('signal', {
           peerId,
           signal: {
             type: 'offer',
-            sdp: offer.sdp
+            sdp: modifiedOffer.sdp
           }
         });
       } catch (error) {
@@ -542,14 +548,16 @@ export class WebRTCManager extends EventEmitter {
         // Create answer
         console.log(`🔄 Creating answer for ${peerId}`);
         const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
+        // Task 6.1: Apply IPv6 prioritization before setting local description
+        // This boosts IPv6 host candidate priorities to prefer direct IPv6 connections
+        const modifiedAnswer = await this._setLocalDescriptionWithIPv6Priority(pc, answer);
 
-        console.log(`📤 Created answer for ${peerId}, local signaling state: ${pc.signalingState}`);
+        console.log(`📤 Created answer for ${peerId} (IPv6 prioritized), local signaling state: ${pc.signalingState}`);
         this.emit('signal', {
           peerId,
           signal: {
             type: 'answer',
-            sdp: answer.sdp
+            sdp: modifiedAnswer.sdp
           }
         });
 
@@ -1195,6 +1203,7 @@ export class WebRTCManager extends EventEmitter {
 
   /**
    * Handle incoming keep-alive pong from peer
+   * Task 4.4: Add RTT measurement to WebRTC path (existing keep-alive)
    */
   handleKeepAlivePong(peerId, pongMessage) {
     const roundTripTime = Date.now() - pongMessage.originalTimestamp;
@@ -1212,9 +1221,97 @@ export class WebRTCManager extends EventEmitter {
 
     // Update last response timestamp
     this.keepAliveResponses.set(peerId, Date.now());
+    
+    // Task 4.4: Store RTT measurement per peer
+    if (!this._rttHistory) {
+      this._rttHistory = new Map();
+    }
+    
+    let peerRttHistory = this._rttHistory.get(peerId);
+    if (!peerRttHistory) {
+      peerRttHistory = [];
+      this._rttHistory.set(peerId, peerRttHistory);
+    }
+    
+    peerRttHistory.push({
+      rtt: roundTripTime,
+      timestamp: Date.now()
+    });
+    
+    // Keep only last 10 samples per peer
+    while (peerRttHistory.length > 10) {
+      peerRttHistory.shift();
+    }
+    
+    // Calculate average RTT for this peer
+    const avgRtt = Math.round(
+      peerRttHistory.reduce((sum, s) => sum + s.rtt, 0) / peerRttHistory.length
+    );
+    
+    // Calculate jitter (standard deviation)
+    let jitter = null;
+    if (peerRttHistory.length >= 2) {
+      const variance = peerRttHistory.reduce(
+        (sum, s) => sum + Math.pow(s.rtt - avgRtt, 2), 0
+      ) / peerRttHistory.length;
+      jitter = Math.sqrt(variance);
+    }
+    
+    // Emit event for monitoring/PathTracker integration
+    this.emit('rttMeasured', {
+      peerId,
+      rtt: roundTripTime,
+      avgRtt,
+      jitter,
+      pingId: pongMessage.pingId
+    });
 
     // Clean up corresponding timeout (ping was successful)
     // Note: We can't easily match timeout to specific ping, but successful response means connection is healthy
+  }
+  
+  /**
+   * Get RTT statistics for a specific peer
+   * Task 4.4: RTT stats getter
+   * @param {string} peerId - Peer ID
+   * @returns {Object|null} RTT statistics { lastRtt, avgRtt, jitter, sampleCount } or null
+   */
+  getRttStats(peerId) {
+    if (!this._rttHistory) return null;
+    
+    const peerRttHistory = this._rttHistory.get(peerId);
+    if (!peerRttHistory || peerRttHistory.length === 0) return null;
+    
+    const lastRtt = peerRttHistory[peerRttHistory.length - 1].rtt;
+    const avgRtt = Math.round(
+      peerRttHistory.reduce((sum, s) => sum + s.rtt, 0) / peerRttHistory.length
+    );
+    
+    let jitter = null;
+    if (peerRttHistory.length >= 2) {
+      const variance = peerRttHistory.reduce(
+        (sum, s) => sum + Math.pow(s.rtt - avgRtt, 2), 0
+      ) / peerRttHistory.length;
+      jitter = Math.sqrt(variance);
+    }
+    
+    return {
+      lastRtt,
+      avgRtt,
+      jitter,
+      sampleCount: peerRttHistory.length
+    };
+  }
+  
+  /**
+   * Get the last measured RTT for a specific peer
+   * Task 4.4: Last RTT getter
+   * @param {string} peerId - Peer ID
+   * @returns {number|null} Last RTT in milliseconds, or null if not measured
+   */
+  getLastRtt(peerId) {
+    const stats = this.getRttStats(peerId);
+    return stats?.lastRtt || null;
   }
 
   /**
@@ -1453,5 +1550,132 @@ export class WebRTCManager extends EventEmitter {
     this.removeAllListeners();
 
     this.emit('destroyed');
+  }
+
+  /**
+   * Check if an address is a global IPv6 address
+   * Task 6.1: Used to detect IPv6 connections for path preference
+   * 
+   * Global unicast IPv6 addresses start with 2xxx: or 3xxx:
+   * This excludes link-local (fe80::), loopback (::1), and private addresses
+   * 
+   * @param {string} address - The IP address to check
+   * @returns {boolean} True if the address is a global IPv6 address
+   */
+  _isIPv6Address(address) {
+    if (!address) return false;
+    // Global unicast addresses start with 2 or 3
+    return /^[23][0-9a-f]{3}:/i.test(address);
+  }
+
+  /**
+   * Prioritize IPv6 host candidates over IPv4 in SDP
+   * Task 6.1: IPv6 bypasses NAT entirely, so it should be preferred
+   * 
+   * ICE candidate priorities in SDP are encoded in the 'a=candidate' lines.
+   * The priority is a 32-bit value where higher = more preferred.
+   * 
+   * Format: a=candidate:<foundation> <component> <protocol> <priority> <address> <port> typ <type> ...
+   * 
+   * This method boosts the priority of IPv6 host candidates by adding a large
+   * value to their existing priority, making them preferred over IPv4 candidates.
+   * 
+   * Why prioritize IPv6:
+   * - IPv6 addresses are globally routable (no NAT traversal needed)
+   * - Direct IPv6 connections have lower latency than STUN-discovered paths
+   * - IPv6 connections are more reliable (no NAT mapping timeouts)
+   * 
+   * @param {string} sdp - The SDP string to modify
+   * @returns {string} Modified SDP with boosted IPv6 candidate priorities
+   */
+  _prioritizeIPv6Candidates(sdp) {
+    if (!sdp) return sdp;
+
+    // Split SDP into lines for processing
+    const lines = sdp.split('\r\n');
+    const modifiedLines = [];
+    let ipv6CandidatesFound = 0;
+    let ipv4CandidatesFound = 0;
+
+    // Priority boost for IPv6 candidates
+    // ICE priority is a 32-bit unsigned integer (max ~4.3 billion)
+    // We add 2^24 (~16 million) to IPv6 host candidates to ensure they're preferred
+    // This is large enough to override type preference but not overflow
+    const IPV6_PRIORITY_BOOST = 16777216; // 2^24
+
+    for (const line of lines) {
+      // Check if this is a candidate line
+      if (line.startsWith('a=candidate:')) {
+        // Parse the candidate line
+        // Format: a=candidate:<foundation> <component> <protocol> <priority> <address> <port> typ <type> ...
+        const parts = line.split(' ');
+        
+        if (parts.length >= 8) {
+          const address = parts[4];
+          const candidateType = parts[7]; // 'host', 'srflx', 'relay'
+          
+          // Check if this is an IPv6 address (contains colons, not just port separator)
+          // IPv6 addresses contain multiple colons (e.g., 2001:db8::1)
+          // IPv4 addresses don't contain colons in the address part
+          const isIPv6 = address && address.includes(':') && this._isIPv6Address(address);
+          
+          if (isIPv6 && candidateType === 'host') {
+            // Boost priority for IPv6 host candidates
+            const currentPriority = parseInt(parts[3], 10);
+            if (!isNaN(currentPriority)) {
+              // Add boost but cap at max 32-bit unsigned value
+              const newPriority = Math.min(currentPriority + IPV6_PRIORITY_BOOST, 4294967295);
+              parts[3] = newPriority.toString();
+              
+              ipv6CandidatesFound++;
+              console.log(`🌐 IPv6 priority boost: ${address} (${candidateType}) ${currentPriority} → ${newPriority}`);
+            }
+            modifiedLines.push(parts.join(' '));
+          } else {
+            // Keep IPv4 and non-host candidates unchanged
+            if (!isIPv6 && candidateType === 'host') {
+              ipv4CandidatesFound++;
+            }
+            modifiedLines.push(line);
+          }
+        } else {
+          // Malformed candidate line, keep as-is
+          modifiedLines.push(line);
+        }
+      } else {
+        // Non-candidate line, keep as-is
+        modifiedLines.push(line);
+      }
+    }
+
+    if (ipv6CandidatesFound > 0) {
+      console.log(`🌐 IPv6 prioritization: boosted ${ipv6CandidatesFound} IPv6 host candidates over ${ipv4CandidatesFound} IPv4 host candidates`);
+    }
+
+    return modifiedLines.join('\r\n');
+  }
+
+  /**
+   * Create and set local description with IPv6 prioritization
+   * Task 6.1: Wrapper that applies IPv6 prioritization before setting local description
+   * 
+   * @param {RTCPeerConnection} pc - The peer connection
+   * @param {RTCSessionDescriptionInit} description - The offer or answer
+   * @returns {Promise<RTCSessionDescriptionInit>}
+   */
+  async _setLocalDescriptionWithIPv6Priority(pc, description) {
+    // Apply IPv6 prioritization to the SDP
+    const modifiedSdp = this._prioritizeIPv6Candidates(description.sdp);
+    
+    // Create modified description
+    const modifiedDescription = {
+      type: description.type,
+      sdp: modifiedSdp
+    };
+    
+    // Set the modified local description
+    await pc.setLocalDescription(modifiedDescription);
+    
+    return modifiedDescription;
   }
 }
