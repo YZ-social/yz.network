@@ -6928,8 +6928,17 @@ export class KademliaDHT extends EventEmitter {
 
         // Check if node has connection metadata before attempting connection
         const metadata = node.metadata;
-        if (!metadata || (!metadata.listeningAddress && !metadata.endpoint)) {
-          console.log(`⚠️ Skipping background connection to ${peerId.substring(0, 8)}... - no connection metadata available`);
+        const nodeType = metadata?.nodeType;
+        
+        // Browser peers don't have listeningAddress (they can't be WebSocket servers)
+        // They should be connected via WebRTC signaling instead
+        // Node.js peers need listeningAddress or publicWssAddress for WebSocket connections
+        if (nodeType === 'browser') {
+          // Browser peers are connected via WebRTC - they don't need listeningAddress
+          // Just need to have nodeType set so we know how to connect
+          console.log(`🌐 Browser peer ${peerId.substring(0, 8)}... - will use WebRTC signaling`);
+        } else if (!metadata || (!metadata.listeningAddress && !metadata.publicWssAddress && !metadata.endpoint)) {
+          console.log(`⚠️ Skipping background connection to ${peerId.substring(0, 8)}... - no connection metadata available (nodeType: ${nodeType || 'unknown'})`);
           return;
         }
 
