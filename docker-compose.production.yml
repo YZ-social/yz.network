@@ -219,6 +219,8 @@ services:
       - ./nginx-ssl.conf:/etc/nginx/conf.d/default.conf:ro
       # Mount Let's Encrypt certificates
       - /etc/letsencrypt:/etc/letsencrypt:ro
+      # Certbot webroot for ACME challenge renewal
+      - /var/www/certbot:/var/www/certbot:ro
     networks:
       yz-network:
         aliases:
