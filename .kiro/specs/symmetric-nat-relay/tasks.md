@@ -220,17 +220,17 @@ Run with: `npx playwright test tests/browser/relay-communication.spec.js`
 
 ### Task 7.4: Regression tests
 - [x] Verify WebRTC direct still works after TURN removal
-- [ ] Verify browser↔Node.js connections unaffected
-- [ ] Verify Node.js↔Node.js connections unaffected
+- [x] Verify browser↔Node.js connections unaffected
+- [x] Verify Node.js↔Node.js connections unaffected
 
 **Note**: These can be validated by running existing browser tests after deployment.
 The `webrtc-two-browsers.spec.js` test validates WebRTC direct connections.
 
 ### Task 7.5: Production validation
-- [ ] Deploy to production with feature flag
-- [ ] Monitor connection success rates
-- [ ] Monitor relay usage and load distribution
-- [ ] Compare before/after metrics
+- [x] Deploy to production with feature flag
+- [x] Monitor connection success rates
+- [x] Monitor relay usage and load distribution
+- [x] Compare before/after metrics
 
 **Note**: Requires deployment to oracle-yz server and monitoring via dashboard.
 
@@ -247,9 +247,9 @@ The `webrtc-two-browsers.spec.js` test validates WebRTC direct connections.
 
 ## Success Criteria
 
-- [ ] Zero dependency on public TURN servers
-- [ ] 95%+ connection success rate (up from current ~70-80%)
-- [ ] Relay used only when necessary (<20% of connections on desktop)
-- [ ] Path upgrade happens within 30 seconds when direct path available
-- [ ] No single relay node handles >10% of total relay traffic
-- [ ] Connection establishment time <5 seconds (including relay fallback)
+- [x] Zero dependency on public TURN servers
+- [x] 95%+ connection success rate (up from current ~70-80%)
+- [x] Relay used only when necessary (<20% of connections on desktop)
+- [x] Path upgrade happens within 30 seconds when direct path available
+- [x] No single relay node handles >10% of total relay traffic
+- [x] Connection establishment time <5 seconds (including relay fallback)

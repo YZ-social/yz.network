@@ -1,6 +1,6 @@
 {
   "name": "yzsocialc",
-  "version": "1.0.0",
+  "version": "0.2.2",
   "description": "Browser-based DHT using Kademlia with WebRTC and minimal server dependency",
   "type": "module",
   "main": "src/index.js",

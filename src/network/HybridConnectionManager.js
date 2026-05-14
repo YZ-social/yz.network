@@ -3225,6 +3225,9 @@ export class HybridConnectionManager extends EventEmitter {
         duration: Date.now() - this.connectionStartTime
       });
       
+      // Check if connection establishment exceeded the 5-second threshold
+      this._checkConnectionTimingThreshold();
+      
       // Flush any queued messages
       this._flushMessageQueue();
       
@@ -3276,6 +3279,9 @@ export class HybridConnectionManager extends EventEmitter {
             transport: 'webrtc',
             duration: Date.now() - this.connectionStartTime
           });
+          
+          // Check if connection establishment exceeded the 5-second threshold
+          this._checkConnectionTimingThreshold();
           
           this._flushMessageQueue();
           
@@ -5507,6 +5513,31 @@ export class HybridConnectionManager extends EventEmitter {
     this.emit('pathEventLogged', pathEvent);
     
     return pathEvent;
+  }
+
+  /**
+   * Check if connection establishment time exceeds the 5-second threshold.
+   * Logs a warning and emits a 'slowConnection' event for production monitoring.
+   * 
+   * Success criterion: Connection establishment time <5 seconds (including relay fallback)
+   * 
+   * @private
+   */
+  _checkConnectionTimingThreshold() {
+    if (!this.connectionStartTime) return;
+    
+    const duration = Date.now() - this.connectionStartTime;
+    const threshold = 5000;
+    
+    if (duration >= threshold) {
+      console.warn(`⚠️ HybridConnectionManager: Connection to ${this.peerId?.substring(0, 8)}... took ${duration}ms (exceeds ${threshold}ms threshold)`);
+      this.emit('slowConnection', {
+        peerId: this.peerId,
+        duration,
+        threshold,
+        transport: this.activeTransport
+      });
+    }
   }
 
   /**
